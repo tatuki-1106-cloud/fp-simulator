@@ -144,6 +144,8 @@ async def test_create_household_and_full_flow(client: AsyncClient) -> None:
     assert "保存基準" in r.text
     assert "保存変更" in r.text
     assert "保存済みプランを比較" in r.text
+    assert "差分（比較先 − 比較元）" in r.text
+    assert "収支差分" in r.text
 
     # 万が一シナリオ
     r = await client.get(f"/households/{household_id}/disaster")

@@ -53,23 +53,47 @@
 </form>
 {% endif %}
 
+{% macro signed(value) -%}
+  {% if value > 0 %}+{{ "{:,}".format(value) }}{% else %}{{ "{:,}".format(value) }}{% endif %}
+{%- endmacro %}
+
+{% macro delta_class(value) -%}
+  {% if value > 0 %}positive{% elif value < 0 %}negative{% else %}neutral{% endif %}
+{%- endmacro %}
+
 <h2>サマリー比較</h2>
 <table>
   <thead>
-    <tr><th>指標</th><th>{{ baseline.name }}</th><th>{{ alternative.name }}</th></tr>
+    <tr><th>指標</th><th>{{ baseline.name }}</th><th>{{ alternative.name }}</th><th>差分（比較先 − 比較元）</th></tr>
   </thead>
   <tbody>
-    <tr><th>物価上昇率</th><td>{{ baseline.inflation_rate }}</td><td>{{ alternative.inflation_rate }}</td></tr>
-    <tr><th>運用利回り</th><td>{{ baseline.investment_return_rate }}</td><td>{{ alternative.investment_return_rate }}</td></tr>
-    <tr><th>最低貯蓄残高</th><td>{{ "{:,}".format(baseline.min_balance) }}円</td><td>{{ "{:,}".format(alternative.min_balance) }}円</td></tr>
-    <tr><th>最終貯蓄残高</th><td>{{ "{:,}".format(baseline.final_balance) }}円</td><td>{{ "{:,}".format(alternative.final_balance) }}円</td></tr>
+    <tr><th>物価上昇率</th><td>{{ baseline.inflation_rate }}</td><td>{{ alternative.inflation_rate }}</td><td>{{ alternative.inflation_rate - baseline.inflation_rate }}</td></tr>
+    <tr><th>運用利回り</th><td>{{ baseline.investment_return_rate }}</td><td>{{ alternative.investment_return_rate }}</td><td>{{ alternative.investment_return_rate - baseline.investment_return_rate }}</td></tr>
+    <tr><th>最低貯蓄残高</th><td>{{ "{:,}".format(baseline.min_balance) }}円</td><td>{{ "{:,}".format(alternative.min_balance) }}円</td><td class="{{ delta_class(deltas.min_balance) }}">{{ signed(deltas.min_balance) }}円</td></tr>
+    <tr><th>最終貯蓄残高</th><td>{{ "{:,}".format(baseline.final_balance) }}円</td><td>{{ "{:,}".format(alternative.final_balance) }}円</td><td class="{{ delta_class(deltas.final_balance) }}">{{ signed(deltas.final_balance) }}円</td></tr>
+    <tr>
+      <th>赤字開始</th>
+      <td>{{ baseline.negative_start_month or "なし" }}</td>
+      <td>{{ alternative.negative_start_month or "なし" }}</td>
+      <td>
+        {% if baseline.negative_start_month is none and alternative.negative_start_month is none %}
+          変化なし
+        {% elif baseline.negative_start_month is none %}
+          新たに赤字化
+        {% elif alternative.negative_start_month is none %}
+          赤字解消
+        {% else %}
+          {{ deltas.negative_start_month.days }}日
+        {% endif %}
+      </td>
+    </tr>
   </tbody>
 </table>
 
 <h2>年次比較</h2>
 <table>
   <thead>
-    <tr><th>年</th><th>現行プラン収支</th><th>現行プラン年末残高</th><th>{{ alternative.name }}収支</th><th>{{ alternative.name }}年末残高</th></tr>
+    <tr><th>年</th><th>{{ baseline.name }}収支</th><th>{{ baseline.name }}年末残高</th><th>{{ alternative.name }}収支</th><th>{{ alternative.name }}年末残高</th><th>収支差分</th><th>残高差分</th></tr>
   </thead>
   <tbody>
   {% for item in years %}
@@ -79,8 +103,11 @@
       <td>{{ "{:,}".format(item.baseline.balance_end) }}</td>
       <td>{{ "{:,}".format(item.alternative.net) }}</td>
       <td>{{ "{:,}".format(item.alternative.balance_end) }}</td>
+      <td class="{{ delta_class(item.alternative.net - item.baseline.net) }}">{{ signed(item.alternative.net - item.baseline.net) }}</td>
+      <td class="{{ delta_class(item.alternative.balance_end - item.baseline.balance_end) }}">{{ signed(item.alternative.balance_end - item.baseline.balance_end) }}</td>
     </tr>
   {% endfor %}
   </tbody>
 </table>
+<p class="muted">差分は「比較先 − 比較元」です。残高差分はプラス、赤字開始は遅いほど改善です。</p>
 {% endblock %}

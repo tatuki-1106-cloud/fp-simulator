@@ -732,12 +732,17 @@ async def compare_plans(
 
     def metrics(result) -> dict:
         balances = [month.balance for month in result.monthly]
+        negative_month = next(
+            (month.date for month in result.monthly if month.balance < 0),
+            None,
+        )
         return {
             "min_balance": min(balances) if balances else 0,
             "final_balance": balances[-1] if balances else 0,
             "min_balance_month": (
                 result.monthly[balances.index(min(balances))].date if balances else None
             ),
+            "negative_start_month": negative_month,
             "yearly": _yearly_summary(result.monthly),
         }
 
@@ -776,6 +781,22 @@ async def compare_plans(
                 **alternative_metrics,
             },
             "years": years,
+            "deltas": {
+                "min_balance": alternative_metrics["min_balance"] - baseline_metrics["min_balance"],
+                "final_balance": alternative_metrics["final_balance"] - baseline_metrics["final_balance"],
+                "negative_start_month": (
+                    alternative_metrics["negative_start_month"]
+                    if baseline_metrics["negative_start_month"] is None
+                    else (
+                        None
+                        if alternative_metrics["negative_start_month"] is None
+                        else (
+                            alternative_metrics["negative_start_month"]
+                            - baseline_metrics["negative_start_month"]
+                        )
+                    )
+                ),
+            },
             "active_q": "compare",
         },
     )
