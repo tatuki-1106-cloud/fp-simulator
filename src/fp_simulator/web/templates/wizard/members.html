@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% from "lifemap.html" import lifemap %}
+{% block content %}
+<h1>Q1. ご家族 — {{ household.name }}</h1>
+{{ lifemap(household) }}
+
+<h2>登録済みメンバー</h2>
+{% if household.members %}
+<table>
+  <thead><tr><th>氏名</th><th>続柄</th><th>生年月日</th><th>想定寿命</th><th>居住地</th><th></th></tr></thead>
+  <tbody>
+  {% for m in household.members %}
+    <tr>
+      <td>{{ m.name }}</td>
+      <td>{{ m.relationship.value }}</td>
+      <td>{{ m.birth_date }}</td>
+      <td>{{ m.life_expectancy_age }}才</td>
+      <td>{{ m.prefecture }}</td>
+      <td>
+        <form method="post" action="/households/{{ household.id }}/members/{{ m.id }}/delete" style="display:inline">
+          <button type="submit">削除</button>
+        </form>
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
+<h2>メンバー追加</h2>
+<form method="post" action="/households/{{ household.id }}/members">
+  <p><label>氏名: <input type="text" name="name" required></label></p>
+  <p><label>続柄:
+    <select name="relationship">
+      {% for r in relationships %}<option value="{{ r.value }}">{{ r.value }}</option>{% endfor %}
+    </select></label></p>
+  <p><label>生年月日: <input type="date" name="birth_date" required class="input-highlight"></label>
+     <small style="color:#666;">例: 1996-04-01(平成8年)</small></p>
+  <p><label>性別: <select name="gender"><option value="">—</option><option value="男">男</option><option value="女">女</option></select></label></p>
+  <p><label>想定寿命: <input type="number" name="life_expectancy_age" value="90" class="input-highlight"></label>才</p>
+  <p><label>居住地(都道府県): <input type="text" name="prefecture" value="東京都"></label></p>
+  <p><button type="submit">追加</button></p>
+</form>
+{% endblock %}

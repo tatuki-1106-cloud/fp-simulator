@@ -1,0 +1,68 @@
+# 公的年金パラメータ
+# 出典: 日本年金機構
+
+- path: 年金.老齢基礎年金.満額
+  description: 老齢基礎年金の満額(年額)。40年(480月)加入時
+  values:
+    - from: 2024-04-01
+      value: 816000  # 令和6年度
+      source: https://www.nenkin.go.jp/oshirase/taisetu/2024/20240424.html
+    - from: 2025-04-01
+      value: 831700  # 令和7年度
+      source: https://www.nenkin.go.jp/oshirase/taisetu/2025/
+
+- path: 年金.老齢基礎年金.満額月数
+  description: 老齢基礎年金の満額に必要な加入月数
+  values:
+    - from: 2013-01-01
+      value: 480
+      source: https://www.nenkin.go.jp/service/kounen/hokenryo/hokenryo.html
+
+- path: 年金.老齢厚生年金.報酬比例乗率
+  description: 老齢厚生年金(報酬比例部分)の乗率(2003年4月以降の加入期間)
+  values:
+    - from: 2003-04-01
+      value: 0.005481
+      source: https://www.nenkin.go.jp/service/kounen/hokenryo/hokenryo.html
+
+- path: 年金.老齢厚生年金.定額部分単価
+  description: 老齢厚生年金の定額部分の単価(2024年度)
+  values:
+    - from: 2024-04-01
+      value: 1701  # 円×加入月数
+      source: https://www.nenkin.go.jp/service/kounen/hokenryo/hokenryo.html
+
+- path: 年金.繰上げ.減額率
+  description: 繰上げ受給の1ヶ月あたり減額率(2022年4月以降)
+  values:
+    - from: 2022-04-01
+      value: 0.004
+      source: https://www.nenkin.go.jp/service/kounen/hokenryo/hokenryo.html
+
+- path: 年金.繰下げ.増額率
+  description: 繰下げ受給の1ヶ月あたり増額率
+  values:
+    - from: 2013-01-01
+      value: 0.007
+      source: https://www.nenkin.go.jp/service/kounen/hokenryo/hokenryo.html
+
+- path: 年金.受給開始年齢.標準
+  description: 老齢年金の標準受給開始年齢
+  values:
+    - from: 2013-01-01
+      value: 65
+      source: https://www.nenkin.go.jp/service/kounen/hokenryo/hokenryo.html
+
+- path: 年金.加給年金.配偶者
+  description: 加給年金額(配偶者、年額)
+  values:
+    - from: 2024-04-01
+      value: 408100
+      source: https://www.nenkin.go.jp/service/kounen/hokenryo/hokenryo.html
+
+- path: 年金.再評価率
+  description: 将来の標準報酬月額に適用する再評価率(最新値を将来にも適用)
+  values:
+    - from: 2024-04-01
+      value: 1.0  # 実際は年度ごとに改定。将来分は最新値を適用
+      source: https://www.nenkin.go.jp/service/kounen/hokenryo/hokenryo.html

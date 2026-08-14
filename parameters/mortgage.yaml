@@ -1,0 +1,60 @@
+# 住宅ローン関連パラメータ
+# 出典: 国税庁・国土交通省等
+
+- path: 住宅ローン控除.控除率
+  description: 住宅ローン控除の控除率(年末残高に対する率)
+  values:
+    - from: 2022-01-01
+      value: 0.007  # 0.7%(2022年度税制改正)
+      source: https://www.nta.go.jp/taxes/shiraberu/taxanswer/shotoku/1213.htm
+
+- path: 住宅ローン控除.借入限度額.新築
+  description: 住宅ローン控除の借入限度額(新築・一般住宅)
+  values:
+    - from: 2022-01-01
+      value: 30000000  # 3,000万円(一般住宅)
+      source: https://www.nta.go.jp/taxes/shiraberu/taxanswer/shotoku/1213.htm
+
+- path: 住宅ローン控除.借入限度額.認定住宅
+  description: 住宅ローン控除の借入限度額(認定長期優良住宅等)
+  values:
+    - from: 2022-01-01
+      value: 50000000  # 5,000万円
+      source: https://www.nta.go.jp/taxes/shiraberu/taxanswer/shotoku/1213.htm
+
+- path: 住宅ローン控除.控除期間.新築
+  description: 住宅ローン控除の控除期間(新築)
+  values:
+    - from: 2022-01-01
+      value: 13  # 13年
+      source: https://www.nta.go.jp/taxes/shiraberu/taxanswer/shotoku/1213.htm
+
+- path: 住宅ローン控除.控除期間.中古
+  description: 住宅ローン控除の控除期間(中古)
+  values:
+    - from: 2022-01-01
+      value: 10  # 10年
+      source: https://www.nta.go.jp/taxes/shiraberu/taxanswer/shotoku/1213.htm
+
+- path: 住宅ローン控除.住民税上限
+  description: 住宅ローン控除の住民税からの控除上限(前年課税所得の5%、上限97,500円)
+  values:
+    - from: 2014-04-01
+      value:
+        rate: 0.05
+        cap: 97500
+      source: https://www.nta.go.jp/taxes/shiraberu/taxanswer/shotoku/1213.htm
+
+- path: 変動金利.5年ルール
+  description: 変動金利の「5年ルール」(返済額の見直しは5年ごと)
+  values:
+    - from: 2013-01-01
+      value: true
+      source: https://www.mhlw.go.jp/ (一般的な住宅ローン商品の仕組み)
+
+- path: 変動金利.125パーセントルール
+  description: 変動金利の「125%ルール」(返済額の上限は前回の125%)
+  values:
+    - from: 2013-01-01
+      value: 1.25
+      source: https://www.mhlw.go.jp/ (一般的な住宅ローン商品の仕組み)

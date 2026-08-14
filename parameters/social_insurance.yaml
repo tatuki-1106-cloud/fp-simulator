@@ -1,0 +1,75 @@
+# 社会保険料パラメータ
+# 厚生年金・健康保険(協会けんぽ)・介護保険・雇用保険
+# 出典: 日本年金機構、協会けんぽ、厚生労働省
+
+- path: 社会保険.厚生年金.料率
+  description: 厚生年金保険料率(労使折半前)。2017年9月以降18.3%で固定
+  values:
+    - from: 2017-09-01
+      value: 0.183
+      source: https://www.nenkin.go.jp/service/kounen/hokenryo/oshirase/20170522.html
+
+- path: 社会保険.健康保険.料率
+  description: 協会けんぽ健康保険料率(労使折半前)。都道府県別
+  values:
+    - from: 2024-03-01
+      value:
+        東京都: 0.0998
+        神奈川県: 0.1001
+        大阪府: 0.1032
+        愛知県: 0.0983
+        北海道: 0.1020
+        福岡県: 0.1013
+      source: https://www.kyoukaikenpo.or.jp/g3/cat330/sb3130/hokenryou/
+    - from: 2025-03-01
+      value:
+        東京都: 0.0991
+        神奈川県: 0.0992
+        大阪府: 0.1024
+        愛知県: 0.0975
+        北海道: 0.1013
+        福岡県: 0.1007
+      source: https://www.kyoukaikenpo.or.jp/g3/cat330/sb3130/hokenryou/
+
+- path: 社会保険.介護保険.料率
+  description: 介護保険料率(40〜64歳、労使折半前)
+  values:
+    - from: 2024-03-01
+      value: 0.0160
+      source: https://www.kyoukaikenpo.or.jp/g3/cat330/sb3130/hokenryou/
+    - from: 2025-03-01
+      value: 0.0159
+      source: https://www.kyoukaikenpo.or.jp/g3/cat330/sb3130/hokenryou/
+
+- path: 社会保険.雇用保険.労働者負担率
+  description: 雇用保険の労働者負担率(一般の事業)
+  values:
+    - from: 2024-04-01
+      value: 0.006
+      source: https://www.mhlw.go.jp/stf/seisakunitsuite/bunya/0000108634.html
+    - from: 2025-04-01
+      value: 0.0055
+      source: https://www.mhlw.go.jp/stf/seisakunitsuite/bunya/0000108634.html
+
+- path: 社会保険.標準報酬月額.改定月
+  description: 標準報酬月額の定時決定(算定)が反映される月
+  values:
+    - from: 2013-01-01
+      value: 9  # 9月改定
+      source: https://www.nenkin.go.jp/service/kounen/hokenryo/hokenryo.html
+
+- path: 社会保険.介護保険.対象年齢
+  description: 介護保険第2号被保険者の年齢範囲
+  values:
+    - from: 2013-01-01
+      value:
+        min_age: 40
+        max_age: 64
+      source: https://www.mhlw.go.jp/stf/seisakunitsuite/bunya/hukushi_kaigo/kaigo_koureisha/index.html
+
+- path: 社会保険.労使折半
+  description: 厚生年金・健康保険・介護保険は労使折半(本人負担1/2)
+  values:
+    - from: 2013-01-01
+      value: 0.5
+      source: https://www.nenkin.go.jp/service/kounen/hokenryo/hokenryo.html

@@ -1,0 +1,139 @@
+# 所得税パラメータ(出典: 国税庁等)
+# 各エントリは適用開始日(from)と出典URLを必須とする
+
+- path: 所得税.基礎控除.控除額
+  description: 所得税の基礎控除額(合計所得金額2,400万円以下の場合)
+  values:
+    - from: 2013-01-01
+      value: 380000
+      source: https://www.nta.go.jp/taxes/shiraberu/taxanswer/shotoku/1199.htm
+    - from: 2020-01-01
+      value: 480000
+      source: https://www.nta.go.jp/taxes/shiraberu/taxanswer/shotoku/1199.htm
+    - from: 2025-01-01
+      value: 580000  # 令和7年度税制改正(最大)
+      source: https://www.nta.go.jp/taxes/shiraberu/taxanswer/shotoku/1199.htm
+
+- path: 所得税.給与所得控除.最低保障額
+  description: 給与所得控除の最低保障額(給与収入162.5万円以下)
+  values:
+    - from: 2013-01-01
+      value: 650000
+      source: https://www.nta.go.jp/taxes/shiraberu/taxanswer/shotoku/1410.htm
+    - from: 2020-01-01
+      value: 550000
+      source: https://www.nta.go.jp/taxes/shiraberu/taxanswer/shotoku/1410.htm
+    - from: 2025-01-01
+      value: 650000  # 令和7年度税制改正で引き上げ
+      source: https://www.nta.go.jp/taxes/shiraberu/taxanswer/shotoku/1410.htm
+
+# 給与所得控除の速算表(収入金額の上限/控除額 or 率)
+- path: 所得税.給与所得控除.速算表
+  description: 給与所得控除の速算表。上限を超えた部分に率を適用し、加算額を足す
+  values:
+    - from: 2020-01-01
+      value:
+        brackets:
+          - up_to: 1625000
+            type: fixed
+            amount: 550000
+          - up_to: 1800000
+            type: rate_plus
+            rate: 0.4
+            subtract: 100000
+          - up_to: 3600000
+            type: rate_plus
+            rate: 0.3
+            subtract: -80000
+          - up_to: 6600000
+            type: rate_plus
+            rate: 0.2
+            subtract: -440000
+          - up_to: 8500000
+            type: rate_plus
+            rate: 0.1
+            subtract: -1100000
+          - up_to: null
+            type: fixed
+            amount: 1950000
+      source: https://www.nta.go.jp/taxes/shiraberu/taxanswer/shotoku/1410.htm
+    # 令和7年度税制改正: 最低保障額が55万→65万に引き上げ
+    - from: 2025-01-01
+      value:
+        brackets:
+          - up_to: 1900000
+            type: fixed
+            amount: 650000
+          - up_to: 3600000
+            type: rate_plus
+            rate: 0.3
+            subtract: -80000
+          - up_to: 6600000
+            type: rate_plus
+            rate: 0.2
+            subtract: -440000
+          - up_to: 8500000
+            type: rate_plus
+            rate: 0.1
+            subtract: -1100000
+          - up_to: null
+            type: fixed
+            amount: 1950000
+      source: https://www.nta.go.jp/taxes/shiraberu/taxanswer/shotoku/1410.htm
+
+- path: 所得税.税率.速算表
+  description: 所得税の超過累進税率(課税所得金額に対する)
+  values:
+    - from: 2015-01-01
+      value:
+        brackets:
+          - up_to: 1950000
+            rate: 0.05
+            deduction: 0
+          - up_to: 3300000
+            rate: 0.10
+            deduction: 97500
+          - up_to: 6950000
+            rate: 0.20
+            deduction: 427500
+          - up_to: 9000000
+            rate: 0.23
+            deduction: 636000
+          - up_to: 18000000
+            rate: 0.33
+            deduction: 1536000
+          - up_to: 40000000
+            rate: 0.40
+            deduction: 2796000
+          - up_to: null
+            rate: 0.45
+            deduction: 4796000
+      source: https://www.nta.go.jp/taxes/shiraberu/taxanswer/shotoku/2260.htm
+
+- path: 所得税.復興特別所得税率
+  description: 復興特別所得税(所得税額に対する付加税、2037年まで)
+  values:
+    - from: 2013-01-01
+      value: 0.021
+      source: https://www.nta.go.jp/taxes/shiraberu/taxanswer/shotoku/2260.htm
+
+- path: 所得税.配偶者控除.本人所得900万以下
+  description: 配偶者控除(一般の控除対象配偶者、本人合計所得900万円以下)
+  values:
+    - from: 2018-01-01
+      value: 380000
+      source: https://www.nta.go.jp/taxes/shiraberu/taxanswer/shotoku/1191.htm
+
+- path: 所得税.扶養控除.一般
+  description: 一般の控除対象扶養親族(16歳以上)の控除額
+  values:
+    - from: 2013-01-01
+      value: 380000
+      source: https://www.nta.go.jp/taxes/shiraberu/taxanswer/shotoku/1180.htm
+
+- path: 所得税.社会保険料控除
+  description: 社会保険料控除は支払額の全額
+  values:
+    - from: 2013-01-01
+      value: "full"
+      source: https://www.nta.go.jp/taxes/shiraberu/taxanswer/shotoku/1130.htm

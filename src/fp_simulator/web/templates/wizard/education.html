@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% from "lifemap.html" import lifemap %}
+{% block content %}
+<h1>Q5. 教育費 — {{ household.name }}</h1>
+{{ lifemap(household) }}
+
+{% if household.education_plans %}
+<table>
+  <thead><tr><th>対象者</th><th>進学パス</th><th>習い事</th></tr></thead>
+  <tbody>
+  {% for e in household.education_plans %}
+  {% set member = household.members | selectattr("id", "equalto", e.member_id) | first %}
+    <tr>
+      <td>{{ member.name if member else e.member_id }}</td>
+      <td>{{ e.path }}</td>
+      <td>{{ "あり" if e.include_lessons else "なし" }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
+<h2>教育費を追加</h2>
+<form method="post" action="/households/{{ household.id }}/education">
+  <p><label>対象の子:
+    <select name="member_id">
+      {% for m in household.members if m.relationship.value == "子" %}<option value="{{ m.id }}">{{ m.name }}</option>{% endfor %}
+    </select></label></p>
+  <p><label>進学パス:
+    <select name="path">
+      <option value="公立">公立(幼稚園〜大学国立)</option>
+      <option value="私立">私立(幼稚園〜大学私立)</option>
+    </select></label></p>
+  <p><label><input type="checkbox" name="include_lessons" value="1"> 習い事を含める</label></p>
+  <p><button type="submit">追加</button></p>
+</form>
+{% endblock %}

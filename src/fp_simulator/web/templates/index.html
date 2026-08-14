@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>FPシミュレーター</h1>
+<p>ライフプラン・キャッシュフローシミュレーション</p>
+
+<p><a href="/households/new" style="display:inline-block;background:#1a3a5c;color:#fff;padding:0.6rem 1.2rem;border-radius:4px;text-decoration:none;">+ 新しい世帯を作成</a></p>
+
+{% if households %}
+<h2>世帯一覧</h2>
+<table>
+  <thead><tr><th>ID</th><th>名前</th><th>更新日時</th><th></th></tr></thead>
+  <tbody>
+  {% for h in households %}
+    <tr>
+      <td>{{ h.id[:8] }}</td>
+      <td><a href="/households/{{ h.id }}/members">{{ h.name }}</a></td>
+      <td>{{ h.updated_at[:16] }}</td>
+      <td><a href="/households/{{ h.id }}/simulate">シミュレーション</a></td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
+<p style="margin-top:2rem;"><a href="/debug/parameters">パラメータ確認(開発用)</a></p>
+{% endblock %}

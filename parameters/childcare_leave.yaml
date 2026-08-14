@@ -1,0 +1,51 @@
+﻿# 産休・育休パラメータ
+# 出典: 厚生労働省
+
+- path: 産休育休.出産手当金.給付率
+  description: 出産手当金の給付率(標準報酬日額に対する)
+  values:
+    - from: 2013-01-01
+      value: 0.6667  # 2/3
+      source: https://www.mhlw.go.jp/stf/seisakunitsuite/bunya/koyou_roudou/koyou/kyufu/index.html
+
+- path: 産休育休.産前休業.日数
+  description: 産前休業の日数
+  values:
+    - from: 2013-01-01
+      value: 42
+      source: https://www.mhlw.go.jp/stf/seisakunitsuite/bunya/koyou_roudou/koyou/kyufu/index.html
+
+- path: 産休育休.産後休業.日数
+  description: 産後休業の日数
+  values:
+    - from: 2013-01-01
+      value: 56
+      source: https://www.mhlw.go.jp/stf/seisakunitsuite/bunya/koyou_roudou/koyou/kyufu/index.html
+
+- path: 産休育休.育児休業給付金.給付率.最初の180日
+  description: 育児休業給付金の給付率(休業開始から180日目まで)
+  values:
+    - from: 2013-01-01
+      value: 0.67
+      source: https://www.mhlw.go.jp/stf/seisakunitsuite/bunya/koyou_roudou/koyou/kyufu/index.html
+
+- path: 産休育休.育児休業給付金.給付率.181日以降
+  description: 育児休業給付金の給付率(181日目以降)
+  values:
+    - from: 2013-01-01
+      value: 0.50
+      source: https://www.mhlw.go.jp/stf/seisakunitsuite/bunya/koyou_roudou/koyou/kyufu/index.html
+
+- path: 産休育休.育児休業給付金.支給月
+  description: 育児休業給付金の支給タイミング(2ヶ月ごと)
+  values:
+    - from: 2013-01-01
+      value: 2
+      source: https://www.mhlw.go.jp/stf/seisakunitsuite/bunya/koyou_roudou/koyou/kyufu/index.html
+
+- path: 産休育休.社会保険料免除
+  description: 産前産後休業・育児休業中は社会保険料が免除される
+  values:
+    - from: 2013-01-01
+      value: true
+      source: https://www.kyoukaikenpo.or.jp/g3/cat330/sb3170/

@@ -1,0 +1,86 @@
+﻿# 教育費パラメータ
+# 出典: 文部科学省「子供の学習費調査」等
+
+- path: 教育費.幼稚園.公立
+  description: 幼稚園(公立)の年間費用
+  values:
+    - from: 2013-01-01
+      value: 223000
+      source: https://www.mext.go.jp/b_menu/toukei/chousa01/kihon/1268095.htm
+
+- path: 教育費.幼稚園.私立
+  description: 幼稚園(私立)の年間費用
+  values:
+    - from: 2013-01-01
+      value: 526000
+      source: https://www.mext.go.jp/b_menu/toukei/chousa01/kihon/1268095.htm
+
+- path: 教育費.小学校.公立
+  description: 小学校(公立)の年間費用
+  values:
+    - from: 2013-01-01
+      value: 321000
+      source: https://www.mext.go.jp/b_menu/toukei/chousa01/kihon/1268095.htm
+
+- path: 教育費.小学校.私立
+  description: 小学校(私立)の年間費用
+  values:
+    - from: 2013-01-01
+      value: 1598000
+      source: https://www.mext.go.jp/b_menu/toukei/chousa01/kihon/1268095.htm
+
+- path: 教育費.中学校.公立
+  description: 中学校(公立)の年間費用
+  values:
+    - from: 2013-01-01
+      value: 488000
+      source: https://www.mext.go.jp/b_menu/toukei/chousa01/kihon/1268095.htm
+
+- path: 教育費.中学校.私立
+  description: 中学校(私立)の年間費用
+  values:
+    - from: 2013-01-01
+      value: 1406000
+      source: https://www.mext.go.jp/b_menu/toukei/chousa01/kihon/1268095.htm
+
+- path: 教育費.高校.公立
+  description: 高等学校(公立)の年間費用
+  values:
+    - from: 2013-01-01
+      value: 457000
+      source: https://www.mext.go.jp/b_menu/toukei/chousa01/kihon/1268095.htm
+
+- path: 教育費.高校.私立
+  description: 高等学校(私立)の年間費用
+  values:
+    - from: 2013-01-01
+      value: 969000
+      source: https://www.mext.go.jp/b_menu/toukei/chousa01/kihon/1268095.htm
+
+- path: 教育費.大学.国立
+  description: 大学(国立)の年間費用(授業料+入学金按分)
+  values:
+    - from: 2013-01-01
+      value: 535800
+      source: https://www.mext.go.jp/a_menu/koutou/shinkou/07021403/1412492.htm
+
+- path: 教育費.大学.私立文系
+  description: 大学(私立文系)の年間費用
+  values:
+    - from: 2013-01-01
+      value: 800000
+      source: https://www.mext.go.jp/a_menu/koutou/shinkou/07021403/1412492.htm
+
+- path: 教育費.大学.私立理系
+  description: 大学(私立理系)の年間費用
+  values:
+    - from: 2013-01-01
+      value: 1100000
+      source: https://www.mext.go.jp/a_menu/koutou/shinkou/07021403/1412492.htm
+
+- path: 教育費.習い事
+  description: 習い事・塾の年間費用(平均)
+  values:
+    - from: 2013-01-01
+      value: 200000
+      source: https://www.mext.go.jp/b_menu/toukei/chousa01/kihon/1268095.htm

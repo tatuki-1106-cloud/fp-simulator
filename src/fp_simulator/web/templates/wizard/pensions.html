@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% from "lifemap.html" import lifemap %}
+{% block content %}
+<h1>Q3. 年金 — {{ household.name }}</h1>
+{{ lifemap(household) }}
+
+{% if household.pension_records %}
+<table>
+  <thead><tr><th>対象者</th><th>国民年金(月数)</th><th>厚生年金(月数)</th><th>平均標準報酬額</th><th>受給開始</th></tr></thead>
+  <tbody>
+  {% for p in household.pension_records %}
+  {% set member = household.members | selectattr("id", "equalto", p.member_id) | first %}
+    <tr>
+      <td>{{ member.name if member else p.member_id }}</td>
+      <td>{{ p.kokumin_months }}月</td>
+      <td>{{ p.kousei_months }}月</td>
+      <td>{{ "{:,}".format(p.avg_standard_remuneration) }}円</td>
+      <td>{{ p.start_age }}才</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
+<h2>年金加入記録を追加</h2>
+<form method="post" action="/households/{{ household.id }}/pensions">
+  <p><label>対象者:
+    <select name="member_id">
+      {% for m in household.members %}<option value="{{ m.id }}">{{ m.name }}({{ m.relationship.value }})</option>{% endfor %}
+    </select></label></p>
+  <p><label>国民年金加入月数: <input type="number" name="kokumin_months" value="480"></label>(480=40年満額)</p>
+  <p><label>厚生年金加入月数: <input type="number" name="kousei_months" value="0"></label></p>
+  <p><label>平均標準報酬額: <input type="number" name="avg_standard_remuneration" value="0"></label>円</p>
+  <p><label>受給開始年齢: <input type="number" name="start_age" value="65"></label></p>
+  <p><button type="submit">追加</button></p>
+</form>
+{% endblock %}

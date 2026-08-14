@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.env
+*.sqlite3
+*.db
+*.db-shm
+*.db-wal
+.litestream/
+dist/
+build/
+.pytest_cache/
+.ruff_cache/
+.DS_Store
+Thumbs.db

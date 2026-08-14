@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% from "lifemap.html" import lifemap %}
+{% block content %}
+<h1>シミュレーション結果 — {{ household.name }}</h1>
+{{ lifemap(household) }}
+
+<h2>サマリー</h2>
+<table>
+  <tr><th>最低貯蓄残高</th><td>{{ "{:,}".format(min_balance) }}円 ({{ min_balance_month }})</td></tr>
+  <tr><th>最終貯蓄残高</th><td>{{ "{:,}".format(final_balance) }}円</td></tr>
+  <tr><th>判定</th><td>
+    {% if min_balance < 0 %}
+      <strong style="color:#c00;">貯蓄が枯渇する時期があります</strong>
+    {% else %}
+      <strong style="color:#080;">生涯、貯蓄が赤字になることはありません</strong>
+    {% endif %}
+  </td></tr>
+</table>
+
+<h2>貯蓄残高推移</h2>
+<canvas id="balanceChart" height="100"></canvas>
+
+<h2>前提条件</h2>
+<p style="font-size:0.9rem;color:#555;">
+  物価上昇率: {{ household.assumptions.inflation_rate }}% / 運用利回り: {{ household.assumptions.investment_return_rate }}%
+</p>
+
+<h2>年次キャッシュフロー</h2>
+<table>
+  <thead>
+    <tr><th>年</th><th>年齢</th><th>収入</th><th>支出</th><th>税・社保</th><th>収支</th><th>年末残高</th></tr>
+  </thead>
+  <tbody>
+  {% for y in yearly %}
+    <tr {% if y.balance_end < 0 %}style="color:#c00;background:#fff5f5;"{% endif %}>
+      <td><a href="/households/{{ household.id }}/simulate/monthly?year={{ y.year }}">{{ y.year }}</a></td>
+      <td>{{ y.age }}</td>
+      <td>{{ "{:,}".format(y.income) }}</td>
+      <td>{{ "{:,}".format(y.expense) }}</td>
+      <td>{{ "{:,}".format(y.tax_si) }}</td>
+      <td>{{ "{:,}".format(y.net) }}</td>
+      <td>{{ "{:,}".format(y.balance_end) }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+<script>
+const ctx = document.getElementById('balanceChart');
+new Chart(ctx, {
+  type: 'line',
+  data: {
+    labels: {{ labels | tojson }},
+    datasets: [{
+      label: '貯蓄残高',
+      data: {{ balances | tojson }},
+      borderColor: '#1a3a5c',
+      fill: false,
+      pointRadius: 0,
+    }]
+  },
+  options: {
+    scales: {
+      x: { ticks: { maxTicksLimit: 20 } },
+      y: { ticks: { callback: v => (v/10000).toLocaleString() + '万円' } }
+    }
+  }
+});
+</script>
+{% endblock %}

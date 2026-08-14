@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% from "lifemap.html" import lifemap %}
+{% block content %}
+<h1>Q11. 貯蓄・資産 — {{ household.name }}</h1>
+{{ lifemap(household) }}
+
+{% if household.accounts %}
+<table>
+  <thead><tr><th>口座名</th><th>月初残高</th><th>金利(年)</th></tr></thead>
+  <tbody>
+  {% for a in household.accounts %}
+    <tr>
+      <td>{{ a.name }}</td>
+      <td>{{ "{:,}".format(a.balance) }}円</td>
+      <td>{{ a.interest_rate }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
+<h2>口座を追加</h2>
+<form method="post" action="/households/{{ household.id }}/accounts">
+  <p><label>口座名: <input type="text" name="name" required placeholder="例: 普通預金"></label></p>
+  <p><label>月初残高: <input type="number" name="balance" required></label>円</p>
+  <p><label>金利(年率): <input type="number" name="interest_rate" value="0" step="0.001"></label>(例: 0.001 = 0.1%)</p>
+  <p><button type="submit">追加</button></p>
+</form>
+
+<hr style="margin: 2rem 0;">
+
+<h2>iDeCo設定</h2>
+{% if household.ideco_plans %}
+<table>
+  <thead><tr><th>対象者</th><th>月額掛金</th><th>運用利回り</th></tr></thead>
+  <tbody>
+  {% for p in household.ideco_plans %}
+  {% set member = household.members | selectattr("id", "equalto", p.member_id) | first %}
+    <tr><td>{{ member.name if member else p.member_id }}</td><td>{{ "{:,}".format(p.monthly_contribution) }}円</td><td>{{ p.annual_return_rate }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+<form method="post" action="/households/{{ household.id }}/ideco">
+  <p><label>対象者:
+    <select name="member_id">
+      {% for m in household.members %}<option value="{{ m.id }}">{{ m.name }}</option>{% endfor %}
+    </select></label></p>
+  <p><label>月額掛金: <input type="number" name="monthly_contribution" value="23000"></label>円</p>
+  <p><label>運用利回り(年率): <input type="number" name="annual_return_rate" value="0" step="0.01"></label></p>
+  <p><button type="submit">iDeCoを追加</button></p>
+</form>
+
+<h2>NISA設定</h2>
+{% if household.nisa_plans %}
+<table>
+  <thead><tr><th>対象者</th><th>月額投資</th><th>運用利回り</th></tr></thead>
+  <tbody>
+  {% for p in household.nisa_plans %}
+  {% set member = household.members | selectattr("id", "equalto", p.member_id) | first %}
+    <tr><td>{{ member.name if member else p.member_id }}</td><td>{{ "{:,}".format(p.monthly_investment) }}円</td><td>{{ p.annual_return_rate }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+<form method="post" action="/households/{{ household.id }}/nisa">
+  <p><label>対象者:
+    <select name="member_id">
+      {% for m in household.members %}<option value="{{ m.id }}">{{ m.name }}</option>{% endfor %}
+    </select></label></p>
+  <p><label>月額投資: <input type="number" name="monthly_investment" value="0"></label>円</p>
+  <p><label>運用利回り(年率): <input type="number" name="annual_return_rate" value="0" step="0.01"></label></p>
+  <p><button type="submit">NISAを追加</button></p>
+</form>
+{% endblock %}

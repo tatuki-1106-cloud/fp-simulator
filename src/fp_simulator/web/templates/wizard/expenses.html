@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% from "lifemap.html" import lifemap %}
+{% block content %}
+<h1>Q4. 生活費 — {{ household.name }}</h1>
+{{ lifemap(household) }}
+
+{% if household.expenses %}
+<table>
+  <thead><tr><th>内容</th><th>月額</th><th>期間(世帯主年齢)</th></tr></thead>
+  <tbody>
+  {% for e in household.expenses %}
+    <tr>
+      <td>{{ e.name }}</td>
+      <td>{{ "{:,}".format(e.monthly_amount) }}円</td>
+      <td>{{ e.start_age }}才〜{{ e.end_age if e.end_age else "生涯" }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
+<h2>支出を追加</h2>
+<form method="post" action="/households/{{ household.id }}/expenses">
+  <p><label>内容: <input type="text" name="name" value="生活費"></label></p>
+  <p><label>月額: <input type="number" name="monthly_amount" required></label>円</p>
+  <p><label>開始年齢: <input type="number" name="start_age" value="0"></label>
+     <label>終了年齢(0=生涯): <input type="number" name="end_age" value="0"></label></p>
+  <p><button type="submit">追加</button></p>
+</form>
+{% endblock %}

@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% from "lifemap.html" import lifemap %}
+{% block content %}
+<h1>{{ year }}年 月次キャッシュフロー — {{ household.name }}</h1>
+{{ lifemap(household) }}
+<p><a href="/households/{{ household.id }}/simulate">← 年次キャッシュフローに戻る</a></p>
+
+<table>
+  <thead>
+    <tr>
+      <th>年月</th><th>年齢</th><th>収入</th><th>税・社保</th>
+      <th>支出</th><th>収支</th><th>月末残高</th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for m in monthly %}
+    <tr {% if m.balance < 0 %}style="color:#c00;background:#fff5f5;"{% endif %}>
+      <td>{{ m.date.year }}/{{ "%02d" | format(m.date.month) }}</td>
+      <td>{{ m.age }}</td>
+      <td>{{ "{:,}".format(m.total_income) }}</td>
+      <td>{{ "{:,}".format(m.total_tax_si) }}</td>
+      <td>{{ "{:,}".format(m.total_expense) }}</td>
+      <td>{{ "{:,}".format(m.net) }}</td>
+      <td>{{ "{:,}".format(m.balance) }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

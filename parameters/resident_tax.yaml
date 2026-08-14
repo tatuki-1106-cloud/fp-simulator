@@ -1,0 +1,40 @@
+# 住民税(個人住民税)パラメータ
+# 出典: 総務省・自治体等
+
+- path: 住民税.所得割.税率
+  description: 個人住民税の所得割の標準税率(市町村6%+都道府県4%)
+  values:
+    - from: 2013-01-01
+      value: 0.10
+      source: https://www.soumu.go.jp/main_sosiki/jichi_zeisei/czaisei/czaisei_seido/140310.html
+
+- path: 住民税.均等割.標準
+  description: 個人住民税の均等割標準額(市町村3,000円+都道府県1,000円)
+  values:
+    - from: 2024-01-01
+      value: 4000  # 森林環境税(国税)1,000円別途
+      source: https://www.soumu.go.jp/main_sosiki/jichi_zeisei/czaisei/czaisei_seido/140310.html
+
+- path: 住民税.森林環境税
+  description: 森林環境税(国税、2024年度〜、年額1,000円)
+  values:
+    - from: 2024-01-01
+      value: 1000
+      source: https://www.soumu.go.jp/main_sosiki/jichi_zeisei/czaisei/czaisei_seido/140310.html
+
+- path: 住民税.基礎控除
+  description: 住民税の基礎控除額(合計所得2,400万円以下)
+  values:
+    - from: 2021-01-01
+      value: 430000
+      source: https://www.soumu.go.jp/main_sosiki/jichi_zeisei/czaisei/czaisei_seido/140310.html
+
+- path: 住民税.徴収サイクル
+  description: 普通徴収(年6月〜翌年5月)・特別徴収(給与から月次天引き)の月次モデル
+  values:
+    - from: 2013-01-01
+      value:
+        type: 特別徴収
+        start_month: 6
+        months: 12
+      source: https://www.soumu.go.jp/main_sosiki/jichi_zeisei/czaisei/czaisei_seido/140310.html

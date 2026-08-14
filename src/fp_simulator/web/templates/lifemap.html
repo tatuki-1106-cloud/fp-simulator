@@ -1,0 +1,21 @@
+{% macro lifemap(household) %}
+{% if household.members %}
+<div class="lifemap">
+  <strong>ライフマップ</strong> ({{ household.assumptions.base_year }}年{{ household.assumptions.base_month }}月現在)
+  <div class="lifemap-timeline">
+    {% set base_year = household.assumptions.base_year %}
+    {% for offset in [0, 10, 20, 30, 40, 50, 60] %}
+    <div class="lifemap-year">
+      {{ base_year + offset }}年{% if offset == 0 %}(現在){% else %}({{ offset }}年後){% endif %}
+      {% for m in household.members %}
+        {% set age = base_year + offset - m.birth_date.year %}
+        {% if age >= 0 and age <= m.life_expectancy_age %}
+        <div class="lifemap-event">{{ m.name }} {{ age }}才</div>
+        {% endif %}
+      {% endfor %}
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+{% endmacro %}

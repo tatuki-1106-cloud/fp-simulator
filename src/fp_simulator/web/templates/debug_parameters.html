@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>パラメータ確認({{ date }} 時点)</h1>
+<table>
+  <thead><tr><th>パス</th><th>値</th><th>出典</th></tr></thead>
+  <tbody>
+  {% for path, entry in snapshot.items() %}
+    <tr>
+      <td>{{ path }}</td>
+      <td><code>{{ entry.value }}</code></td>
+      <td><a href="{{ entry.source }}" target="_blank" rel="noopener">出典</a></td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

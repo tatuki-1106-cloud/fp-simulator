@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% from "lifemap.html" import lifemap %}
+{% block content %}
+<h1>Q10. 保険 — {{ household.name }}</h1>
+{{ lifemap(household) }}
+
+{% if household.insurances %}
+<table>
+  <thead><tr><th>名前</th><th>被保険者</th><th>月額保険料</th><th>期間</th><th>死亡保険金</th></tr></thead>
+  <tbody>
+  {% for i in household.insurances %}
+  {% set insured = household.members | selectattr("id", "equalto", i.insured_member_id) | first %}
+    <tr>
+      <td>{{ i.name }}</td>
+      <td>{{ insured.name if insured else i.insured_member_id }}</td>
+      <td>{{ "{:,}".format(i.monthly_premium) }}円</td>
+      <td>{{ i.start_year }}/{{ i.start_month }}〜{{ i.end_year }}/{{ i.end_month }}</td>
+      <td>{{ "{:,}".format(i.death_benefit) }}円</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
+<h2>保険を追加</h2>
+<form method="post" action="/households/{{ household.id }}/insurance">
+  <p><label>名前: <input type="text" name="name" required></label></p>
+  <p><label>被保険者:
+    <select name="insured_member_id">
+      {% for m in household.members %}<option value="{{ m.id }}">{{ m.name }}</option>{% endfor %}
+    </select></label></p>
+  <p><label>支払者:
+    <select name="payer_member_id">
+      {% for m in household.members %}<option value="{{ m.id }}">{{ m.name }}</option>{% endfor %}
+    </select></label></p>
+  <p><label>月額保険料: <input type="number" name="monthly_premium" required></label>円</p>
+  <p><label>開始: <input type="number" name="start_year" value="2026">年<input type="number" name="start_month" value="1" min="1" max="12">月</label></p>
+  <p><label>終了: <input type="number" name="end_year" value="2060">年<input type="number" name="end_month" value="12" min="1" max="12">月</label></p>
+  <p><label>死亡保険金: <input type="number" name="death_benefit" value="0"></label>円</p>
+  <p><button type="submit">追加</button></p>
+</form>
+{% endblock %}

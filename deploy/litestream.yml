@@ -1,0 +1,10 @@
+# Litestream設定: SQLiteをCloud Storageへ継続レプリケーション
+# 使い方: litestream replicate -config deploy/litestream.yml
+
+dbs:
+  - path: /app/data/fp_simulator.db
+    replicas:
+      - type: gcs
+        bucket: fp-simulator-backup-168688416857
+        path: fp_simulator.db
+        # 認証はCloud Runのサービスアカウント(Application Default Credentials)を使用

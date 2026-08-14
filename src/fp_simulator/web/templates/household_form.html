@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>世帯の新規作成</h1>
+<form method="post" action="/households/new">
+  <p><label>世帯名: <input type="text" name="name" required placeholder="例: 山田家"></label></p>
+  <p><label>基準年: <input type="number" name="base_year" value="2026"></label>
+     <label>基準月: <input type="number" name="base_month" value="1" min="1" max="12"></label></p>
+  <p><button type="submit">作成して家族設定へ</button></p>
+</form>
+{% endblock %}

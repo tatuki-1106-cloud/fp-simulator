@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% from "lifemap.html" import lifemap %}
+{% block content %}
+<h1>Q2. 収入 — {{ household.name }}</h1>
+{{ lifemap(household) }}
+
+{% if household.incomes %}
+<table>
+  <thead><tr><th>名前</th><th>対象者</th><th>種別</th><th>期間</th><th>月額(額面)</th><th>賞与</th><th>退職金</th><th></th></tr></thead>
+  <tbody>
+  {% for i in household.incomes %}
+  {% set member = household.members | selectattr("id", "equalto", i.member_id) | first %}
+    <tr>
+      <td>{{ i.name }}</td>
+      <td>{{ member.name if member else i.member_id }}</td>
+      <td>{{ i.social_insurance_type.value }}</td>
+      <td>{{ i.start_age }}才〜{{ i.end_age }}才</td>
+      <td>{{ "{:,}".format(i.monthly_amount) }}円</td>
+      <td>{{ "{:,}".format(i.bonus_amount) }}円×{{ i.bonus_months | length }}回</td>
+      <td>{{ "{:,}".format(i.retirement_allowance) }}円({{ i.retirement_age }}才)</td>
+      <td>
+        <form method="post" action="/households/{{ household.id }}/incomes/{{ i.id }}/delete" style="display:inline">
+          <button type="submit">削除</button>
+        </form>
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
+<h2>収入を追加</h2>
+<form method="post" action="/households/{{ household.id }}/incomes">
+  <p><label>対象者:
+    <select name="member_id">
+      {% for m in household.members %}<option value="{{ m.id }}">{{ m.name }}({{ m.relationship.value }})</option>{% endfor %}
+    </select></label></p>
+  <p><label>名前: <input type="text" name="name" value="給与"></label></p>
+  <p><label>種別:
+    <select name="social_insurance_type">
+      {% for t in si_types %}<option value="{{ t.value }}">{{ t.value }}</option>{% endfor %}
+    </select></label></p>
+  <p><label>開始年齢: <input type="number" name="start_age" value="0"></label>
+     <label>終了年齢: <input type="number" name="end_age" value="60"></label></p>
+  <p><label>月額(額面): <input type="number" name="monthly_amount" required></label>円</p>
+  <p><label>賞与(1回あたり): <input type="number" name="bonus_amount" value="0"></label>円(6月・12月)</p>
+  <p><label>退職金(額面): <input type="number" name="retirement_allowance" value="0"></label>円
+     <label>退職年齢: <input type="number" name="retirement_age" value="60"></label></p>
+  <p><button type="submit">追加</button></p>
+</form>
+{% endblock %}

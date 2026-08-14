@@ -1,0 +1,72 @@
+﻿# iDeCo・NISA・確定拠出年金パラメータ
+# 出典: 国税庁・金融庁・厚生労働省
+
+- path: iDeCo.掛金上限.第1号
+  description: "iDeCo掛金上限(第1号被保険者: 自営業等)"
+  values:
+    - from: 2017-01-01
+      value: 68000
+      source: https://www.ideco-koushiki.jp/guide/column/starting-ideco-01.html
+
+- path: iDeCo.掛金上限.第2号
+  description: "iDeCo掛金上限(第2号被保険者: 会社員・公務員、企業年金なし)"
+  values:
+    - from: 2017-01-01
+      value: 23000
+      source: https://www.ideco-koushiki.jp/guide/column/starting-ideco-01.html
+
+- path: iDeCo.掛金上限.第3号
+  description: "iDeCo掛金上限(第3号被保険者: 専業主婦等)"
+  values:
+    - from: 2017-01-01
+      value: 23000
+      source: https://www.ideco-koushiki.jp/guide/column/starting-ideco-01.html
+
+- path: iDeCo.受取開始年齢.最小
+  description: "iDeCoの受取開始可能年齢(最小)"
+  values:
+    - from: 2022-04-01
+      value: 60
+      source: https://www.ideco-koushiki.jp/guide/column/starting-ideco-01.html
+
+- path: iDeCo.受取開始年齢.最大
+  description: "iDeCoの受取開始可能年齢(最大)"
+  values:
+    - from: 2022-04-01
+      value: 75
+      source: https://www.ideco-koushiki.jp/guide/column/starting-ideco-01.html
+
+- path: NISA.年間投資上限
+  description: 新NISAの年間投資上限(つみたて投資枠+成長投資枠)
+  values:
+    - from: 2024-01-01
+      value: 3600000
+      source: https://www.fsa.go.jp/policy/nisa2/index.html
+
+- path: NISA.非課税保有限度額
+  description: 新NISAの非課税保有限度額(生涯)
+  values:
+    - from: 2024-01-01
+      value: 18000000
+      source: https://www.fsa.go.jp/policy/nisa2/index.html
+
+- path: NISA.つみたて枠.年間上限
+  description: 新NISAのつみたて投資枠(年間)
+  values:
+    - from: 2024-01-01
+      value: 1200000
+      source: https://www.fsa.go.jp/policy/nisa2/index.html
+
+- path: NISA.成長投資枠.年間上限
+  description: 新NISAの成長投資枠(年間)
+  values:
+    - from: 2024-01-01
+      value: 2400000
+      source: https://www.fsa.go.jp/policy/nisa2/index.html
+
+- path: 税制.小規模企業共済等掛金控除
+  description: "iDeCo掛金は全額所得控除(小規模企業共済等掛金控除)"
+  values:
+    - from: 2013-01-01
+      value: "full"
+      source: https://www.nta.go.jp/taxes/shiraberu/taxanswer/shotoku/1135.htm

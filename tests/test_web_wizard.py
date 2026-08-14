@@ -1,0 +1,118 @@
+"""Webウィザードの統合テスト."""
+
+from __future__ import annotations
+
+import os
+import tempfile
+
+import pytest
+from httpx import ASGITransport, AsyncClient
+
+# テスト用に一時DBを使う
+os.environ["FP_DB_PATH"] = tempfile.mktemp(suffix=".db")
+
+from fp_simulator.web.main import app
+from fp_simulator.db.database import init_db
+
+
+@pytest.fixture()
+async def client() -> AsyncClient:
+    await init_db()
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        yield c
+
+
+async def test_create_household_and_full_flow(client: AsyncClient) -> None:
+    """世帯作成→家族→収入→年金→支出→資産→シミュレーションの一連の流れ."""
+    # 1. 世帯作成
+    r = await client.post(
+        "/households/new", data={"name": "テスト世帯", "base_year": 2026, "base_month": 1}
+    )
+    assert r.status_code == 303
+    location = r.headers["location"]
+    household_id = location.split("/")[2]
+
+    # 2. 家族追加(世帯主)
+    r = await client.post(
+        f"/households/{household_id}/members",
+        data={
+            "name": "たろう",
+            "relationship": "世帯主",
+            "birth_date": "1996-04-01",
+            "gender": "男",
+            "life_expectancy_age": 90,
+            "prefecture": "東京都",
+        },
+    )
+    assert r.status_code == 303
+
+    # メンバーIDを取得するため一覧を確認
+    r = await client.get(f"/households/{household_id}/members")
+    assert r.status_code == 200
+    assert "たろう" in r.text
+
+    # 3. 収入追加
+    from fp_simulator.db.database import get_household
+
+    household = await get_household(household_id)
+    husband_id = household.members[0].id
+
+    r = await client.post(
+        f"/households/{household_id}/incomes",
+        data={
+            "member_id": husband_id,
+            "name": "会社員",
+            "social_insurance_type": "給与(厚生年金)",
+            "start_age": 29,
+            "end_age": 60,
+            "monthly_amount": 300000,
+            "bonus_amount": 500000,
+            "retirement_allowance": 20000000,
+            "retirement_age": 60,
+        },
+    )
+    assert r.status_code == 303
+
+    # 4. 年金追加
+    r = await client.post(
+        f"/households/{household_id}/pensions",
+        data={
+            "member_id": husband_id,
+            "kokumin_months": 480,
+            "kousei_months": 456,
+            "avg_standard_remuneration": 300000,
+            "start_age": 65,
+        },
+    )
+    assert r.status_code == 303
+
+    # 5. 支出追加
+    r = await client.post(
+        f"/households/{household_id}/expenses",
+        data={"name": "生活費", "monthly_amount": 200000, "start_age": 0, "end_age": 0},
+    )
+    assert r.status_code == 303
+
+    # 6. 資産追加
+    r = await client.post(
+        f"/households/{household_id}/accounts",
+        data={"name": "普通預金", "balance": 3000000, "interest_rate": 0.0},
+    )
+    assert r.status_code == 303
+
+    # 7. シミュレーション実行
+    r = await client.get(f"/households/{household_id}/simulate")
+    assert r.status_code == 200
+    assert "シミュレーション結果" in r.text
+    assert "貯蓄残高推移" in r.text
+    assert "年次キャッシュフロー" in r.text
+    # 残高が表示されている
+    assert "最低貯蓄残高" in r.text
+
+    # 年次行から月次明細へドリルダウン
+    r = await client.get(f"/households/{household_id}/simulate/monthly?year=2026")
+    assert r.status_code == 200
+    assert "2026年 月次キャッシュフロー" in r.text
+    assert "月末残高" in r.text
+    assert "2026/01" in r.text

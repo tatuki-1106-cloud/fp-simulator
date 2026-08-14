@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% from "lifemap.html" import lifemap %}
+{% block content %}
+<h1>Q9. ローン — {{ household.name }}</h1>
+{{ lifemap(household) }}
+
+{% if household.loans %}
+<table>
+  <thead><tr><th>名前</th><th>対象者</th><th>借入額</th><th>金利</th><th>期間</th><th>返済方式</th><th>開始</th></tr></thead>
+  <tbody>
+  {% for l in household.loans %}
+  {% set member = household.members | selectattr("id", "equalto", l.member_id) | first %}
+    <tr>
+      <td>{{ l.name }}</td>
+      <td>{{ member.name if member else l.member_id }}</td>
+      <td>{{ "{:,}".format(l.principal) }}円</td>
+      <td>{{ l.annual_rate }}</td>
+      <td>{{ l.years }}年</td>
+      <td>{{ l.repayment_type }}</td>
+      <td>{{ l.start_year }}/{{ l.start_month }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
+<h2>ローンを追加</h2>
+<form method="post" action="/households/{{ household.id }}/loans">
+  <p><label>対象者:
+    <select name="member_id">
+      {% for m in household.members %}<option value="{{ m.id }}">{{ m.name }}({{ m.relationship.value }})</option>{% endfor %}
+    </select></label></p>
+  <p><label>名前: <input type="text" name="name" value="住宅ローン"></label></p>
+  <p><label>借入額: <input type="number" name="principal" required></label>円</p>
+  <p><label>年利: <input type="number" name="annual_rate" step="0.001" value="0.015"></label>(例: 0.015 = 1.5%)</p>
+  <p><label>返済期間: <input type="number" name="years" value="35"></label>年</p>
+  <p><label>返済方式:
+    <select name="repayment_type">
+      <option value="元利均等">元利均等</option>
+      <option value="元金均等">元金均等</option>
+    </select></label></p>
+  <p><label>開始年: <input type="number" name="start_year" value="2026"></label>
+     <label>開始月: <input type="number" name="start_month" value="1" min="1" max="12"></label></p>
+  <p><label>ボーナス払い(1回): <input type="number" name="bonus_amount" value="0"></label>円(6月・12月)</p>
+  <p><button type="submit">追加</button></p>
+</form>
+{% endblock %}
