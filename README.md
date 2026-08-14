@@ -87,3 +87,17 @@ OAuthクライアントの設定反映には数分かかる場合があります
 ### バックアップ(Litestream)
 
 `deploy/litestream.yml` を参照。Cloud StorageバケットへSQLiteを継続レプリケーションします。
+
+### 運用監視
+
+Cloud Runの5xxレスポンスをCloud Monitoringで監視します。アラートポリシーは次のファイルから作成できます。
+
+```powershell
+gcloud monitoring policies create `
+  --project fp-simulator `
+  --policy-from-file deploy/monitoring/cloud-run-5xx-alert-policy.json
+```
+
+通知先を追加する場合は、Cloud Monitoringの「アラート」→「通知チャンネル」からメール等を登録し、作成したポリシーに割り当てます。メール通知は所有者による確認が必要です。
+
+`/healthz` はIAP/Cloud Runフロントエンド経由で汎用404になる環境があるため、現時点では公開Uptime Checkの対象にしません。可用性はCloud Runのリクエスト・エラーメトリクス、ログ、リビジョン状態で確認します。
