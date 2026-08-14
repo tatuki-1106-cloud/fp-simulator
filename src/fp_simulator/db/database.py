@@ -52,6 +52,13 @@ CREATE TABLE IF NOT EXISTS audit_logs (
 );
 """
 
+CREATE_MIGRATIONS_TABLE = """
+CREATE TABLE IF NOT EXISTS migrations (
+    name TEXT PRIMARY KEY,
+    applied_at TEXT NOT NULL
+);
+"""
+
 
 async def init_db() -> None:
     """テーブルを初期化."""
@@ -59,6 +66,7 @@ async def init_db() -> None:
         await db.execute(CREATE_TABLE)
         await db.execute(CREATE_PLANS_TABLE)
         await db.execute(CREATE_AUDIT_LOGS_TABLE)
+        await db.execute(CREATE_MIGRATIONS_TABLE)
         await db.commit()
 
 
@@ -109,13 +117,22 @@ async def list_households(owner_email: str | None = None) -> list[dict]:
     return households
 
 
+_MIGRATION_OWNER_ASSIGNMENT = "assign_owner_to_unowned"
+
+
 async def assign_owner_to_unowned(owner_email: str) -> int:
-    """所有者未設定の既存世帯を指定メールアドレスへ割り当てる."""
+    """所有者未設定の既存世帯を指定メールアドレスへ割り当てる（一度だけ実行）."""
     normalized_email = owner_email.strip().lower()
     if not normalized_email:
         raise ValueError("owner_email must not be empty")
 
     async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT name FROM migrations WHERE name = ?", (_MIGRATION_OWNER_ASSIGNMENT,)
+        ) as cursor:
+            if await cursor.fetchone() is not None:
+                return 0
+
         async with db.execute("SELECT id, data FROM households") as cursor:
             rows = await cursor.fetchall()
 
@@ -130,16 +147,23 @@ async def assign_owner_to_unowned(owner_email: str) -> int:
                 (household.model_dump_json(), household_id),
             )
             updated_count += 1
+
+        await db.execute(
+            "INSERT INTO migrations (name, applied_at) VALUES (?, ?)",
+            (
+                _MIGRATION_OWNER_ASSIGNMENT,
+                datetime.datetime.now(datetime.UTC).isoformat(),
+            ),
+        )
         await db.commit()
     return updated_count
 
 
 async def delete_household(household_id: str) -> None:
-    """世帯を削除."""
+    """世帯を削除。監査ログは証跡として残す."""
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("DELETE FROM households WHERE id = ?", (household_id,))
         await db.execute("DELETE FROM plans WHERE household_id = ?", (household_id,))
-        await db.execute("DELETE FROM audit_logs WHERE household_id = ?", (household_id,))
         await db.commit()
 
 

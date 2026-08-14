@@ -99,12 +99,12 @@
   {% for item in years %}
     <tr>
       <td>{{ item.year }}</td>
-      <td>{{ "{:,}".format(item.baseline.net) }}</td>
-      <td>{{ "{:,}".format(item.baseline.balance_end) }}</td>
-      <td>{{ "{:,}".format(item.alternative.net) }}</td>
-      <td>{{ "{:,}".format(item.alternative.balance_end) }}</td>
-      <td class="{{ delta_class(item.alternative.net - item.baseline.net) }}">{{ signed(item.alternative.net - item.baseline.net) }}</td>
-      <td class="{{ delta_class(item.alternative.balance_end - item.baseline.balance_end) }}">{{ signed(item.alternative.balance_end - item.baseline.balance_end) }}</td>
+      <td>{% if item.baseline %}{{ "{:,}".format(item.baseline.net) }}{% else %}-{% endif %}</td>
+      <td>{% if item.baseline %}{{ "{:,}".format(item.baseline.balance_end) }}{% else %}-{% endif %}</td>
+      <td>{% if item.alternative %}{{ "{:,}".format(item.alternative.net) }}{% else %}-{% endif %}</td>
+      <td>{% if item.alternative %}{{ "{:,}".format(item.alternative.balance_end) }}{% else %}-{% endif %}</td>
+      <td>{% if item.baseline and item.alternative %}{{ signed(item.alternative.net - item.baseline.net) }}{% else %}-{% endif %}</td>
+      <td>{% if item.baseline and item.alternative %}{{ signed(item.alternative.balance_end - item.baseline.balance_end) }}{% else %}-{% endif %}</td>
     </tr>
   {% endfor %}
   </tbody>

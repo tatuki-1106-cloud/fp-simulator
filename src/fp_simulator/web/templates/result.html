@@ -47,7 +47,7 @@
   <tbody>
   {% for y in yearly %}
     <tr {% if y.balance_end < 0 %}style="color:#c00;background:#fff5f5;"{% endif %}>
-      <td><a href="/households/{{ household.id }}/simulate/monthly?year={{ y.year }}">{{ y.year }}</a></td>
+      <td><a href="/households/{{ household.id }}/simulate/monthly?year={{ y.year }}{% if plan_id %}&plan_id={{ plan_id }}{% endif %}">{{ y.year }}</a></td>
       <td>{{ y.age }}</td>
       <td>{{ "{:,}".format(y.income) }}</td>
       <td>{{ "{:,}".format(y.expense) }}</td>

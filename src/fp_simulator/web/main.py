@@ -271,6 +271,7 @@ async def members_edit(request: Request, household_id: str) -> HTMLResponse:
 
 @app.post("/households/{household_id}/members")
 async def members_add(
+    request: Request,
     household_id: str,
     name: str = Form(...),
     relationship: Relationship = Form(...),
@@ -295,16 +296,32 @@ async def members_add(
         )
     )
     await save_household(household)
+    await add_audit_log(
+        household_id,
+        getattr(request.state, "authenticated_email", None) or "web-user",
+        "web",
+        "household.member.add",
+        details={"name": name, "relationship": str(relationship)},
+    )
     return RedirectResponse(f"/households/{household_id}/members", status_code=303)
 
 
 @app.post("/households/{household_id}/members/{member_id}/delete")
-async def members_delete(household_id: str, member_id: str) -> RedirectResponse:
+async def members_delete(request: Request, household_id: str, member_id: str) -> RedirectResponse:
     household = await get_household(household_id)
     if household is None:
         return RedirectResponse("/", status_code=303)
+    removed = next((m for m in household.members if m.id == member_id), None)
     household.members = [m for m in household.members if m.id != member_id]
     await save_household(household)
+    await add_audit_log(
+        household_id,
+        getattr(request.state, "authenticated_email", None) or "web-user",
+        "web",
+        "household.member.delete",
+        member_id,
+        {"name": removed.name} if removed else {},
+    )
     return RedirectResponse(f"/households/{household_id}/members", status_code=303)
 
 
@@ -328,6 +345,7 @@ async def incomes_edit(request: Request, household_id: str) -> HTMLResponse:
 
 @app.post("/households/{household_id}/incomes")
 async def incomes_add(
+    request: Request,
     household_id: str,
     member_id: str = Form(...),
     name: str = Form("給与"),
@@ -359,16 +377,32 @@ async def incomes_add(
         )
     )
     await save_household(household)
+    await add_audit_log(
+        household_id,
+        getattr(request.state, "authenticated_email", None) or "web-user",
+        "web",
+        "household.income.add",
+        details={"name": name, "monthly_amount": monthly_amount},
+    )
     return RedirectResponse(f"/households/{household_id}/incomes", status_code=303)
 
 
 @app.post("/households/{household_id}/incomes/{income_id}/delete")
-async def incomes_delete(household_id: str, income_id: str) -> RedirectResponse:
+async def incomes_delete(request: Request, household_id: str, income_id: str) -> RedirectResponse:
     household = await get_household(household_id)
     if household is None:
         return RedirectResponse("/", status_code=303)
+    removed = next((i for i in household.incomes if i.id == income_id), None)
     household.incomes = [i for i in household.incomes if i.id != income_id]
     await save_household(household)
+    await add_audit_log(
+        household_id,
+        getattr(request.state, "authenticated_email", None) or "web-user",
+        "web",
+        "household.income.delete",
+        income_id,
+        {"name": removed.name} if removed else {},
+    )
     return RedirectResponse(f"/households/{household_id}/incomes", status_code=303)
 
 
@@ -385,6 +419,7 @@ async def pensions_edit(request: Request, household_id: str) -> HTMLResponse:
 
 @app.post("/households/{household_id}/pensions")
 async def pensions_add(
+    request: Request,
     household_id: str,
     member_id: str = Form(...),
     kokumin_months: int = Form(480),
@@ -407,6 +442,13 @@ async def pensions_add(
         )
     )
     await save_household(household)
+    await add_audit_log(
+        household_id,
+        getattr(request.state, "authenticated_email", None) or "web-user",
+        "web",
+        "household.pension.add",
+        details={"kokumin_months": kokumin_months, "kousei_months": kousei_months},
+    )
     return RedirectResponse(f"/households/{household_id}/pensions", status_code=303)
 
 
@@ -423,6 +465,7 @@ async def expenses_edit(request: Request, household_id: str) -> HTMLResponse:
 
 @app.post("/households/{household_id}/expenses")
 async def expenses_add(
+    request: Request,
     household_id: str,
     name: str = Form("生活費"),
     monthly_amount: int = Form(...),
@@ -443,6 +486,13 @@ async def expenses_add(
         )
     )
     await save_household(household)
+    await add_audit_log(
+        household_id,
+        getattr(request.state, "authenticated_email", None) or "web-user",
+        "web",
+        "household.expense.add",
+        details={"name": name, "monthly_amount": monthly_amount},
+    )
     return RedirectResponse(f"/households/{household_id}/expenses", status_code=303)
 
 
@@ -459,6 +509,7 @@ async def accounts_edit(request: Request, household_id: str) -> HTMLResponse:
 
 @app.post("/households/{household_id}/accounts")
 async def accounts_add(
+    request: Request,
     household_id: str,
     name: str = Form(...),
     balance: int = Form(...),
@@ -472,6 +523,13 @@ async def accounts_add(
         Account(id=str(uuid.uuid4()), name=name, balance=balance, interest_rate=interest_rate)
     )
     await save_household(household)
+    await add_audit_log(
+        household_id,
+        getattr(request.state, "authenticated_email", None) or "web-user",
+        "web",
+        "household.account.add",
+        details={"name": name, "balance": balance},
+    )
     return RedirectResponse(f"/households/{household_id}/accounts", status_code=303)
 
 
@@ -488,6 +546,7 @@ async def loans_edit(request: Request, household_id: str) -> HTMLResponse:
 
 @app.post("/households/{household_id}/loans")
 async def loans_add(
+    request: Request,
     household_id: str,
     member_id: str = Form(...),
     name: str = Form("住宅ローン"),
@@ -519,6 +578,13 @@ async def loans_add(
         )
     )
     await save_household(household)
+    await add_audit_log(
+        household_id,
+        getattr(request.state, "authenticated_email", None) or "web-user",
+        "web",
+        "household.loan.add",
+        details={"name": name, "principal": principal},
+    )
     return RedirectResponse(f"/households/{household_id}/loans", status_code=303)
 
 
@@ -534,6 +600,7 @@ async def education_edit(request: Request, household_id: str) -> HTMLResponse:
 
 @app.post("/households/{household_id}/education")
 async def education_add(
+    request: Request,
     household_id: str,
     member_id: str = Form(...),
     path: str = Form("公立"),
@@ -551,6 +618,13 @@ async def education_add(
         )
     )
     await save_household(household)
+    await add_audit_log(
+        household_id,
+        getattr(request.state, "authenticated_email", None) or "web-user",
+        "web",
+        "household.education.add",
+        details={"path": path},
+    )
     return RedirectResponse(f"/households/{household_id}/education", status_code=303)
 
 
@@ -566,6 +640,7 @@ async def insurance_edit(request: Request, household_id: str) -> HTMLResponse:
 
 @app.post("/households/{household_id}/insurance")
 async def insurance_add(
+    request: Request,
     household_id: str,
     name: str = Form(...),
     insured_member_id: str = Form(...),
@@ -595,11 +670,19 @@ async def insurance_add(
         )
     )
     await save_household(household)
+    await add_audit_log(
+        household_id,
+        getattr(request.state, "authenticated_email", None) or "web-user",
+        "web",
+        "household.insurance.add",
+        details={"name": name, "monthly_premium": monthly_premium},
+    )
     return RedirectResponse(f"/households/{household_id}/insurance", status_code=303)
 
 
 @app.post("/households/{household_id}/ideco")
 async def ideco_add(
+    request: Request,
     household_id: str,
     member_id: str = Form(...),
     initial_balance: int = Form(0),
@@ -619,11 +702,19 @@ async def ideco_add(
         )
     )
     await save_household(household)
+    await add_audit_log(
+        household_id,
+        getattr(request.state, "authenticated_email", None) or "web-user",
+        "web",
+        "household.ideco.add",
+        details={"monthly_contribution": monthly_contribution},
+    )
     return RedirectResponse(f"/households/{household_id}/accounts", status_code=303)
 
 
 @app.post("/households/{household_id}/nisa")
 async def nisa_add(
+    request: Request,
     household_id: str,
     member_id: str = Form(...),
     initial_balance: int = Form(0),
@@ -643,11 +734,28 @@ async def nisa_add(
         )
     )
     await save_household(household)
+    await add_audit_log(
+        household_id,
+        getattr(request.state, "authenticated_email", None) or "web-user",
+        "web",
+        "household.nisa.add",
+        details={"monthly_investment": monthly_investment},
+    )
     return RedirectResponse(f"/households/{household_id}/accounts", status_code=303)
 
 
 @app.post("/households/{household_id}/delete")
-async def household_delete(household_id: str) -> RedirectResponse:
+async def household_delete(request: Request, household_id: str) -> RedirectResponse:
+    household = await get_household(household_id)
+    if household is not None:
+        await add_audit_log(
+            household_id,
+            getattr(request.state, "authenticated_email", None) or "web-user",
+            "web",
+            "household.delete",
+            household_id,
+            {"name": household.name},
+        )
     await delete_household(household_id)
     return RedirectResponse("/", status_code=303)
 
@@ -965,15 +1073,15 @@ async def compare_plans(
 
     baseline_metrics = metrics(baseline_result)
     alternative_metrics = metrics(alternative_result)
+    baseline_by_year = {item["year"]: item for item in baseline_metrics["yearly"]}
+    alternative_by_year = {item["year"]: item for item in alternative_metrics["yearly"]}
     years = [
         {
-            "year": baseline["year"],
-            "baseline": baseline,
-            "alternative": alternative,
+            "year": year,
+            "baseline": baseline_by_year.get(year),
+            "alternative": alternative_by_year.get(year),
         }
-        for baseline, alternative in zip(
-            baseline_metrics["yearly"], alternative_metrics["yearly"], strict=True
-        )
+        for year in sorted(set(baseline_by_year) | set(alternative_by_year))
     ]
 
     return templates.TemplateResponse(
@@ -1080,16 +1188,20 @@ async def disaster_scenarios(
 
 @app.get("/households/{household_id}/simulate/monthly", response_class=HTMLResponse)
 async def monthly_simulation_result(
-    request: Request, household_id: str, year: int
+    request: Request, household_id: str, year: int, plan_id: str | None = None
 ) -> HTMLResponse:
     """指定年の月次キャッシュフローを表示."""
     household = await get_household(household_id)
     if household is None:
         return RedirectResponse("/", status_code=303)
+    selected_plan = await get_plan(household_id, plan_id) if plan_id else None
+    if plan_id and selected_plan is None:
+        return RedirectResponse(f"/households/{household_id}/plans", status_code=303)
+    simulation_household = selected_plan or household
 
     from fp_simulator.engine.cashflow import simulate
 
-    result = simulate(get_store(), household)
+    result = simulate(get_store(), simulation_household)
     monthly = [m for m in result.monthly if m.date.year == year]
     if not monthly:
         return HTMLResponse("指定された年のシミュレーション結果がありません", status_code=404)
@@ -1100,6 +1212,8 @@ async def monthly_simulation_result(
         {
             "title": f"{year}年 月次キャッシュフロー",
             "household": household,
+            "simulation_household": simulation_household,
+            "plan_id": plan_id,
             "year": year,
             "monthly": monthly,
             "active_q": "sim",

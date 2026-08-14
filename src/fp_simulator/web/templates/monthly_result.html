@@ -1,9 +1,9 @@
 {% extends "base.html" %}
 {% from "lifemap.html" import lifemap %}
 {% block content %}
-<h1>{{ year }}年 月次キャッシュフロー — {{ household.name }}</h1>
-{{ lifemap(household) }}
-<p><a href="/households/{{ household.id }}/simulate">← 年次キャッシュフローに戻る</a></p>
+<h1>{{ year }}年 月次キャッシュフロー — {{ simulation_household.name }}</h1>
+{{ lifemap(simulation_household) }}
+<p><a href="/households/{{ household.id }}/simulate{% if plan_id %}?plan_id={{ plan_id }}{% endif %}">← 年次キャッシュフローに戻る</a></p>
 
 <table>
   <thead>

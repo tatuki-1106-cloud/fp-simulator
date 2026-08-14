@@ -164,6 +164,23 @@ async def test_create_household_and_full_flow(client: AsyncClient) -> None:
     assert "差分（比較先 − 比較元）" in r.text
     assert "収支差分" in r.text
 
+    # シミュレーション期間が異なるプラン同士でも500にならない
+    current_shorter = current.model_copy(deep=True)
+    current_shorter.members[0].life_expectancy_age = 50
+    plan_short = await save_plan_snapshot(household_id, current_shorter, "短命プラン")
+    r = await client.get(
+        f"/households/{household_id}/compare"
+        f"?plan_a_id={plan_a['id']}&plan_b_id={plan_short['id']}"
+    )
+    assert r.status_code == 200
+
+    # 保存プランの月次ドリルダウンで plan_id が維持される
+    r = await client.get(
+        f"/households/{household_id}/simulate/monthly?year=2026&plan_id={plan_a['id']}"
+    )
+    assert r.status_code == 200
+    assert "保存基準" in r.text
+
     # 万が一シナリオ
     r = await client.get(f"/households/{household_id}/disaster")
     assert r.status_code == 200

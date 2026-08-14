@@ -78,7 +78,7 @@ async def test_iap_auth_restricts_households(
 
 
 async def test_assign_owner_to_unowned_preserves_existing_owner() -> None:
-    """所有者移行は未設定世帯だけを更新する."""
+    """所有者移行は未設定世帯だけを更新し、一度だけ実行される."""
     await save_household(Household(id="legacy-household", name="旧世帯"))
     await save_household(
         Household(id="owned-household", name="既存世帯", owner_email="existing@example.com")
@@ -91,6 +91,11 @@ async def test_assign_owner_to_unowned_preserves_existing_owner() -> None:
         assert existing is not None
         assert legacy.owner_email == "owner@example.com"
         assert existing.owner_email == "existing@example.com"
+        # 二度目はスキップされる
+        assert await assign_owner_to_unowned("other@example.com") == 0
+        legacy = await get_household("legacy-household")
+        assert legacy is not None
+        assert legacy.owner_email == "owner@example.com"
     finally:
         await delete_household("legacy-household")
         await delete_household("owned-household")

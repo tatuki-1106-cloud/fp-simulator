@@ -227,7 +227,8 @@ async def update_household(household_id: str, household_json: str) -> str:
     if existing is not None:
         updated.owner_email = existing.owner_email
     else:
-        updated.owner_email = None
+        import os
+        updated.owner_email = os.environ.get("FP_LEGACY_OWNER_EMAIL", "").strip() or None
     updated.id = household_id
     await db_save_household(updated)
     await db_add_audit_log(
