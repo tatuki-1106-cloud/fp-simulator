@@ -48,6 +48,7 @@ from fp_simulator.engine.models import (
     PlanAssumptions,
     Relationship,
     SocialInsuranceType,
+    Vehicle,
 )
 from fp_simulator.parameters.loader import get_store
 from fp_simulator.mcp_server.server import mcp as mcp_server
@@ -83,13 +84,16 @@ def _export_rows(result, granularity: str) -> list[list[object]]:
     if granularity == "yearly":
         yearly = _yearly_summary(result.monthly)
         rows: list[list[object]] = [[
-            "年", "年齢", "収入", "支出", "住宅頭金", "固定資産税", "修繕費", "税・社保", "収支",
+            "年", "年齢", "収入", "乗り物売却", "支出", "住宅頭金", "固定資産税", "修繕費",
+            "乗り物購入", "乗り物維持費", "乗り物税金・修繕", "車検", "税・社保", "収支",
             "現金・預金", "iDeCo", "NISA", "iDeCo受取", "NISA取崩", "金融資産合計",
         ]]
         rows.extend([
             [
-                item["year"], item["age"], item["income"], item["expense"],
+                item["year"], item["age"], item["income"], item["vehicle_sale_income"], item["expense"],
                 item["housing_down_payment"], item["property_tax"], item["repair_expense"],
+                item["vehicle_purchase_expense"], item["vehicle_maintenance"],
+                item["vehicle_tax_repair"], item["vehicle_inspection_expense"],
                 item["tax_si"], item["net"], item["balance_end"],
                 item["ideco_balance_end"], item["nisa_balance_end"],
                 item["ideco_withdrawal"], item["nisa_withdrawal"],
@@ -101,19 +105,22 @@ def _export_rows(result, granularity: str) -> list[list[object]]:
 
     rows = [[
         "年月", "年齢", "給与収入", "年金収入", "退職金", "その他収入",
-        "死亡保険金", "iDeCo受取", "NISA取崩", "社会保険", "所得税", "住民税",
+        "死亡保険金", "乗り物売却", "iDeCo受取", "NISA取崩", "社会保険", "所得税", "住民税",
         "iDeCo受取時税", "生活費", "イベント支出",
-        "住宅頭金", "固定資産税", "修繕費", "ローン返済", "教育費", "保険料", "iDeCo掛金", "NISA投資",
+        "住宅頭金", "固定資産税", "修繕費", "乗り物購入", "乗り物維持費", "乗り物税金・修繕", "車検",
+        "ローン返済", "教育費", "保険料", "iDeCo掛金", "NISA投資",
         "収支", "現金・預金", "iDeCo残高", "NISA残高", "金融資産合計",
     ]]
     rows.extend([
         [
             month.date.isoformat(), month.age, month.salary_income,
             month.pension_income, month.retirement_income, month.other_income,
-            month.death_benefit, month.ideco_withdrawal, month.nisa_withdrawal,
+            month.death_benefit, month.vehicle_sale_income, month.ideco_withdrawal, month.nisa_withdrawal,
             month.social_insurance, month.income_tax, month.resident_tax,
             month.ideco_withdrawal_tax, month.living_expense, month.event_expense,
             month.housing_down_payment, month.property_tax, month.repair_expense,
+            month.vehicle_purchase_expense, month.vehicle_maintenance,
+            month.vehicle_tax_repair, month.vehicle_inspection_expense,
             month.loan_payment, month.education_expense, month.insurance_premium,
             month.ideco_contribution, month.nisa_investment, month.net,
             month.balance, month.ideco_balance, month.nisa_balance,
@@ -725,21 +732,114 @@ async def housing_save(
 @app.get("/households/{household_id}/vehicles", response_class=HTMLResponse)
 async def vehicles_edit(request: Request, household_id: str) -> HTMLResponse:
     """Q7: 乗り物設定."""
-    return await _wizard_placeholder(
+    household = await get_household(household_id)
+    if household is None:
+        return RedirectResponse("/", status_code=303)
+    return templates.TemplateResponse(
         request,
-        household_id,
-        "Q7",
-        "乗り物",
-        "FP-UNIVの乗り物入力に対応するタブです。現在は専用の資産・維持費モデルへ未統合です。",
-        [
-            "車両購入・維持費・買替費はQ4「生活費」のイベント支出として入力してください。",
-            "自動車ローンはQ9「ローン」で入力してください。",
-        ],
-        [
-            {"path": f"/households/{household_id}/expenses", "label": "Q4 生活費へ"},
-            {"path": f"/households/{household_id}/loans", "label": "Q9 ローンへ"},
-        ],
+        "wizard/vehicles.html",
+        {"title": "Q7 乗り物", "household": household, "active_q": "Q7"},
     )
+
+
+@app.post("/households/{household_id}/vehicles")
+async def vehicles_add(
+    request: Request,
+    household_id: str,
+    name: str = Form("自動車"),
+    vehicle_type: str = Form("新車"),
+    ownership_start_year: int = Form(2026),
+    ownership_start_month: int = Form(1),
+    ownership_end_year: int = Form(2090),
+    ownership_end_month: int = Form(12),
+    purchase_price: int = Form(...),
+    monthly_maintenance: int = Form(0),
+    annual_tax_repair: int = Form(0),
+    replacement_cycle_years: int = Form(0),
+    sale_price: int = Form(0),
+    inspection_cost: int = Form(0),
+    inspection_cycle_years: int = Form(2),
+    loan_id: str = Form(""),
+) -> Response:
+    """乗り物を追加."""
+    household = await get_household(household_id)
+    if household is None:
+        return RedirectResponse("/", status_code=303)
+    if vehicle_type not in {"新車", "中古車"}:
+        return Response("vehicle_type is invalid", status_code=400)
+    if loan_id and not any(loan.id == loan_id for loan in household.loans):
+        return Response("loan_id does not exist", status_code=400)
+    if any(
+        value < 0
+        for value in (
+            purchase_price,
+            monthly_maintenance,
+            annual_tax_repair,
+            replacement_cycle_years,
+            sale_price,
+            inspection_cost,
+        )
+    ):
+        return Response("vehicle amounts must not be negative", status_code=400)
+    if not 1900 <= ownership_start_year <= 2200 or not 1900 <= ownership_end_year <= 2200:
+        return Response("ownership year is invalid", status_code=400)
+    if not 1 <= ownership_start_month <= 12 or not 1 <= ownership_end_month <= 12:
+        return Response("ownership month is invalid", status_code=400)
+    if not 1 <= inspection_cycle_years <= 10:
+        return Response("inspection_cycle_years is invalid", status_code=400)
+    if ownership_end_year < ownership_start_year or (
+        ownership_end_year == ownership_start_year
+        and ownership_end_month < ownership_start_month
+    ):
+        return Response("ownership_end must not precede ownership_start", status_code=400)
+    household.vehicles.append(
+        Vehicle(
+            id=str(uuid.uuid4()),
+            name=name,
+            vehicle_type=vehicle_type,
+            ownership_start_year=ownership_start_year,
+            ownership_start_month=ownership_start_month,
+            ownership_end_year=ownership_end_year,
+            ownership_end_month=ownership_end_month,
+            purchase_price=purchase_price,
+            monthly_maintenance=monthly_maintenance,
+            annual_tax_repair=annual_tax_repair,
+            replacement_cycle_years=replacement_cycle_years,
+            sale_price=sale_price,
+            inspection_cost=inspection_cost,
+            inspection_cycle_years=inspection_cycle_years,
+            loan_id=loan_id or None,
+        )
+    )
+    await save_household(household)
+    await add_audit_log(
+        household_id,
+        getattr(request.state, "authenticated_email", None) or "web-user",
+        "web",
+        "household.vehicle.add",
+        details={"name": name, "purchase_price": purchase_price},
+    )
+    return RedirectResponse(f"/households/{household_id}/vehicles", status_code=303)
+
+
+@app.post("/households/{household_id}/vehicles/{vehicle_id}/delete")
+async def vehicles_delete(request: Request, household_id: str, vehicle_id: str) -> RedirectResponse:
+    """乗り物を削除."""
+    household = await get_household(household_id)
+    if household is None:
+        return RedirectResponse("/", status_code=303)
+    removed = next((vehicle for vehicle in household.vehicles if vehicle.id == vehicle_id), None)
+    household.vehicles = [vehicle for vehicle in household.vehicles if vehicle.id != vehicle_id]
+    await save_household(household)
+    await add_audit_log(
+        household_id,
+        getattr(request.state, "authenticated_email", None) or "web-user",
+        "web",
+        "household.vehicle.delete",
+        vehicle_id,
+        {"name": removed.name} if removed else {},
+    )
+    return RedirectResponse(f"/households/{household_id}/vehicles", status_code=303)
 
 
 @app.get("/households/{household_id}/events", response_class=HTMLResponse)
@@ -1055,9 +1155,14 @@ def _yearly_summary(monthly) -> list[dict]:
                 "survivor_pension": 0,
                 "child_allowance": 0,
                 "expense": 0,
+                "vehicle_sale_income": 0,
                 "housing_down_payment": 0,
                 "property_tax": 0,
                 "repair_expense": 0,
+                "vehicle_purchase_expense": 0,
+                "vehicle_maintenance": 0,
+                "vehicle_tax_repair": 0,
+                "vehicle_inspection_expense": 0,
                 "living_expense_reduction": 0,
                 "tax_si": 0,
                 "net": 0,
@@ -1073,9 +1178,14 @@ def _yearly_summary(monthly) -> list[dict]:
         summary["survivor_pension"] += month.survivor_pension
         summary["child_allowance"] += month.child_allowance
         summary["expense"] += month.total_expense
+        summary["vehicle_sale_income"] += month.vehicle_sale_income
         summary["housing_down_payment"] += month.housing_down_payment
         summary["property_tax"] += month.property_tax
         summary["repair_expense"] += month.repair_expense
+        summary["vehicle_purchase_expense"] += month.vehicle_purchase_expense
+        summary["vehicle_maintenance"] += month.vehicle_maintenance
+        summary["vehicle_tax_repair"] += month.vehicle_tax_repair
+        summary["vehicle_inspection_expense"] += month.vehicle_inspection_expense
         summary["living_expense_reduction"] += next(
             (
                 trace.amount

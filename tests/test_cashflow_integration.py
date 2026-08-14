@@ -25,6 +25,8 @@ from fp_simulator.engine.models import (
     PlanAssumptions,
     Relationship,
     SocialInsuranceType,
+    Vehicle,
+    Loan,
 )
 from fp_simulator.engine.cashflow import DisasterScenario, simulate
 
@@ -353,6 +355,67 @@ class TestCashflowIntegration:
                 property_price=10_000_000,
                 down_payment=10_000_001,
                 purchase_year=2026,
+            )
+
+    def test_vehicle_purchase_replacement_maintenance_and_sale(
+        self, store, household: Household
+    ) -> None:
+        """乗り物の取得・買替・維持費・車検・売却を計上する."""
+        household.loans.append(
+            Loan(
+                id="car-loan",
+                member_id="husband",
+                principal=500_000,
+                annual_rate=0.01,
+                years=1,
+                start_year=2026,
+                start_month=1,
+            )
+        )
+        household.vehicles.append(
+            Vehicle(
+                id="car",
+                name="ファミリーカー",
+                vehicle_type="中古車",
+                ownership_start_year=2026,
+                ownership_start_month=1,
+                ownership_end_year=2030,
+                ownership_end_month=12,
+                purchase_price=2_000_000,
+                monthly_maintenance=20_000,
+                annual_tax_repair=120_000,
+                replacement_cycle_years=3,
+                sale_price=500_000,
+                inspection_cost=100_000,
+                inspection_cycle_years=2,
+                loan_id="car-loan",
+            )
+        )
+        result = simulate(store, household)
+        initial = next(m for m in result.monthly if m.date == datetime.date(2026, 1, 1))
+        replacement = next(m for m in result.monthly if m.date == datetime.date(2029, 1, 1))
+        ending = next(m for m in result.monthly if m.date == datetime.date(2030, 12, 1))
+
+        assert initial.vehicle_purchase_expense == 1_500_000
+        assert initial.vehicle_maintenance == 20_000
+        assert initial.vehicle_tax_repair == 120_000
+        assert initial.vehicle_inspection_expense == 100_000
+        assert initial.vehicle_sale_income == 0
+        assert replacement.vehicle_purchase_expense == 2_000_000
+        assert replacement.vehicle_sale_income == 500_000
+        assert replacement.vehicle_inspection_expense == 100_000
+        assert ending.vehicle_sale_income == 500_000
+
+    def test_vehicle_rejects_invalid_ownership_period(
+        self, store, household: Household
+    ) -> None:
+        """所有終了年月が開始年月より前の乗り物設定を拒否する."""
+        with pytest.raises(ValueError):
+            Vehicle(
+                id="invalid-car",
+                purchase_price=1_000_000,
+                ownership_start_year=2030,
+                ownership_end_year=2029,
             )
 
     def test_traces_exist(self, store, household: Household) -> None:

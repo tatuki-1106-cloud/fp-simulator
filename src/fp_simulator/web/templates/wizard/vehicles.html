@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% from "lifemap.html" import lifemap %}
+{% block content %}
+<h1>Q7. 乗り物 — {{ household.name }}</h1>
+{{ lifemap(household) }}
+
+<div class="form-card">
+  <h2>登録済みの乗り物</h2>
+  <p>FP-UNIV準拠で、所有期間中の購入・維持費・税金/修繕費・車検・買替を計算します。買替時は売却額を収入、次の取得価格を支出に計上します。</p>
+  {% if household.vehicles %}
+  <table>
+    <thead><tr><th>名称</th><th>所有期間</th><th>取得価格</th><th>維持費/月</th><th>買替周期</th><th>売却額</th><th></th></tr></thead>
+    <tbody>
+    {% for vehicle in household.vehicles %}
+    <tr>
+      <td>{{ vehicle.name }}</td>
+      <td>{{ vehicle.ownership_start_year }}/{{ vehicle.ownership_start_month }}〜{{ vehicle.ownership_end_year }}/{{ vehicle.ownership_end_month }}</td>
+      <td>{{ "{:,}".format(vehicle.purchase_price) }}円</td>
+      <td>{{ "{:,}".format(vehicle.monthly_maintenance) }}円</td>
+      <td>{{ vehicle.replacement_cycle_years or "なし" }}{% if vehicle.replacement_cycle_years %}年{% endif %}</td>
+      <td>{{ "{:,}".format(vehicle.sale_price) }}円</td>
+      <td><form method="post" action="/households/{{ household.id }}/vehicles/{{ vehicle.id }}/delete"><button type="submit">削除</button></form></td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p>登録済みの乗り物はありません。</p>
+  {% endif %}
+</div>
+
+<h2>乗り物を追加</h2>
+<form method="post" action="/households/{{ household.id }}/vehicles">
+  <p><label>名称: <input type="text" name="name" value="自動車" required></label></p>
+  <p><label>種別:
+    <select name="vehicle_type"><option value="新車">新車</option><option value="中古車">中古車</option></select>
+  </label></p>
+  <p><label>所有開始年: <input type="number" name="ownership_start_year" value="{{ household.assumptions.base_year }}" min="1900" max="2200"></label>
+     <label>月: <input type="number" name="ownership_start_month" value="{{ household.assumptions.base_month }}" min="1" max="12"></label></p>
+  <p><label>所有終了年: <input type="number" name="ownership_end_year" value="2090" min="1900" max="2200"></label>
+     <label>月: <input type="number" name="ownership_end_month" value="12" min="1" max="12"></label></p>
+  <p><label>取得価格: <input type="number" name="purchase_price" min="0" required></label>円</p>
+  <p><label>維持費: <input type="number" name="monthly_maintenance" min="0" value="0"></label>円/月</p>
+  <p><label>税金・修繕費: <input type="number" name="annual_tax_repair" min="0" value="0"></label>円/年</p>
+  <p><label>買替周期: <input type="number" name="replacement_cycle_years" min="0" value="0"></label>年（0=買替なし）</p>
+  <p><label>売却額: <input type="number" name="sale_price" min="0" value="0"></label>円（買替・所有終了時）</p>
+  <p><label>車検費用: <input type="number" name="inspection_cost" min="0" value="0"></label>円</p>
+  <p><label>車検周期: <input type="number" name="inspection_cycle_years" min="1" max="10" value="2"></label>年</p>
+  <p><label>初回購入ローン:
+    <select name="loan_id">
+      <option value="">なし</option>
+      {% for loan in household.loans %}<option value="{{ loan.id }}">{{ loan.name }}（{{ "{:,}".format(loan.principal) }}円）</option>{% endfor %}
+    </select>
+  </label></p>
+  <p><small>初回購入のみ、取得価格から選択したQ9ローンの借入額を差し引きます。ローン返済はQ9で計上されます。</small></p>
+  <p><button type="submit">追加</button></p>
+</form>
+{% endblock %}

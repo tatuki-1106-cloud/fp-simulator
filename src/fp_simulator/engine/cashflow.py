@@ -59,6 +59,7 @@ class MonthlyCashflow:
     child_allowance: int = 0
     ideco_withdrawal: int = 0
     nisa_withdrawal: int = 0
+    vehicle_sale_income: int = 0
     # 控除・税
     social_insurance: int = 0
     income_tax: int = 0
@@ -70,6 +71,10 @@ class MonthlyCashflow:
     housing_down_payment: int = 0
     property_tax: int = 0
     repair_expense: int = 0
+    vehicle_purchase_expense: int = 0
+    vehicle_maintenance: int = 0
+    vehicle_tax_repair: int = 0
+    vehicle_inspection_expense: int = 0
     loan_payment: int = 0  # ローン返済
     loan_interest: int = 0  # うち利息
     education_expense: int = 0  # 教育費
@@ -91,6 +96,7 @@ class MonthlyCashflow:
             + self.child_allowance
             + self.ideco_withdrawal
             + self.nisa_withdrawal
+            + self.vehicle_sale_income
         )
 
     @property
@@ -101,6 +107,10 @@ class MonthlyCashflow:
             + self.housing_down_payment
             + self.property_tax
             + self.repair_expense
+            + self.vehicle_purchase_expense
+            + self.vehicle_maintenance
+            + self.vehicle_tax_repair
+            + self.vehicle_inspection_expense
             + self.loan_payment
             + self.education_expense
             + self.insurance_premium
@@ -554,6 +564,99 @@ def simulate(
                                 {"年額": housing.annual_repair_cost},
                             )
                         )
+
+        # Q7乗り物: FP-UNIV方式で初回購入/買替/維持費/税修繕/車検/売却を計上。
+        for vehicle in household.vehicles:
+            start_date = datetime.date(
+                vehicle.ownership_start_year, vehicle.ownership_start_month, 1
+            )
+            end_date = datetime.date(
+                vehicle.ownership_end_year, vehicle.ownership_end_month, 1
+            )
+            if not start_date <= current <= end_date:
+                continue
+
+            months_owned = (year - vehicle.ownership_start_year) * 12 + (
+                month - vehicle.ownership_start_month
+            )
+            replacement_months = (
+                vehicle.replacement_cycle_years * 12
+                if vehicle.replacement_cycle_years > 0
+                else 0
+            )
+            is_replacement = replacement_months > 0 and months_owned > 0 and months_owned % replacement_months == 0
+            months_since_purchase = (
+                months_owned % replacement_months if replacement_months > 0 else months_owned
+            )
+            is_end_sale = current == end_date and not is_replacement
+            inflation_factor = (1 + assumptions.inflation_rate) ** (year - assumptions.base_year)
+
+            if current == start_date or is_replacement:
+                purchase_amount = int(vehicle.purchase_price * inflation_factor)
+                if current == start_date and vehicle.loan_id:
+                    linked_loan = next(
+                        (loan for loan in household.loans if loan.id == vehicle.loan_id), None
+                    )
+                    if linked_loan is not None:
+                        purchase_amount = max(0, purchase_amount - linked_loan.principal)
+                cf.vehicle_purchase_expense += purchase_amount
+                cf.traces.append(
+                    TraceEntry(
+                        "乗り物取得価格",
+                        purchase_amount,
+                        {
+                            "乗り物": vehicle.name,
+                            "買替": is_replacement,
+                            "取得価格": int(vehicle.purchase_price * inflation_factor),
+                            "初回ローン控除": current == start_date and bool(vehicle.loan_id),
+                        },
+                    )
+                )
+                if is_replacement and vehicle.sale_price > 0:
+                    sale_amount = int(vehicle.sale_price * inflation_factor)
+                    cf.vehicle_sale_income += sale_amount
+                    cf.traces.append(
+                        TraceEntry(
+                            "乗り物売却収入",
+                            sale_amount,
+                            {"乗り物": vehicle.name, "買替": True},
+                        )
+                    )
+            elif is_end_sale and vehicle.sale_price > 0:
+                sale_amount = int(vehicle.sale_price * inflation_factor)
+                cf.vehicle_sale_income += sale_amount
+                cf.traces.append(
+                    TraceEntry(
+                        "乗り物売却収入",
+                        sale_amount,
+                        {"乗り物": vehicle.name, "所有終了": True},
+                    )
+                )
+
+            if vehicle.monthly_maintenance > 0:
+                amount = int(vehicle.monthly_maintenance * inflation_factor)
+                cf.vehicle_maintenance += amount
+                cf.traces.append(
+                    TraceEntry("乗り物維持費", amount, {"乗り物": vehicle.name, "月額": vehicle.monthly_maintenance})
+                )
+            if month == vehicle.ownership_start_month and vehicle.annual_tax_repair > 0:
+                amount = int(vehicle.annual_tax_repair * inflation_factor)
+                cf.vehicle_tax_repair += amount
+                cf.traces.append(
+                    TraceEntry("乗り物税金・修繕費", amount, {"乗り物": vehicle.name, "年額": vehicle.annual_tax_repair})
+                )
+            inspection_start_month = 36 if vehicle.vehicle_type == "新車" else 0
+            if vehicle.inspection_cost > 0 and months_since_purchase >= inspection_start_month:
+                inspection_cycle_months = vehicle.inspection_cycle_years * 12
+                if (months_since_purchase - inspection_start_month) % inspection_cycle_months == 0:
+                    cf.vehicle_inspection_expense += vehicle.inspection_cost
+                    cf.traces.append(
+                        TraceEntry(
+                            "車検費用",
+                            vehicle.inspection_cost,
+                            {"乗り物": vehicle.name, "周期年数": vehicle.inspection_cycle_years},
+                        )
+                    )
 
         for expense in household.expenses:
                 if expense.member_id is not None:

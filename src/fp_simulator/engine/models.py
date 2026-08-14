@@ -134,6 +134,34 @@ class OwnedHousingPlan(BaseModel):
         return self
 
 
+class Vehicle(BaseModel):
+    """乗り物の所有・買替・売却設定(Q7)."""
+
+    id: str
+    name: str = "自動車"
+    vehicle_type: Literal["新車", "中古車"] = "新車"
+    ownership_start_year: int = Field(default=2026, ge=1900, le=2200)
+    ownership_start_month: int = Field(default=1, ge=1, le=12)
+    ownership_end_year: int = Field(default=2090, ge=1900, le=2200)
+    ownership_end_month: int = Field(default=12, ge=1, le=12)
+    purchase_price: int = Field(ge=0)  # 取得価格(円)
+    monthly_maintenance: int = Field(default=0, ge=0)  # 維持費(月額)
+    annual_tax_repair: int = Field(default=0, ge=0)  # 税金・修繕費(年額)
+    replacement_cycle_years: int = Field(default=0, ge=0)  # 0=買替なし
+    sale_price: int = Field(default=0, ge=0)  # 買替・所有終了時の売却額
+    inspection_cost: int = Field(default=0, ge=0)  # 車検費用
+    inspection_cycle_years: int = Field(default=2, ge=1, le=10)
+    loan_id: str | None = None  # 初回購入に紐づくQ9ローン
+
+    @model_validator(mode="after")
+    def validate_period(self) -> Vehicle:
+        start = (self.ownership_start_year, self.ownership_start_month)
+        end = (self.ownership_end_year, self.ownership_end_month)
+        if end < start:
+            raise ValueError("ownership_end must not precede ownership_start")
+        return self
+
+
 class EducationPlan(BaseModel):
     """教育費プラン(子ごと)."""
 
@@ -235,6 +263,7 @@ class Household(BaseModel):
     accounts: list[Account] = Field(default_factory=list)
     loans: list[Loan] = Field(default_factory=list)
     owned_housing: OwnedHousingPlan | None = None
+    vehicles: list[Vehicle] = Field(default_factory=list)
     education_plans: list[EducationPlan] = Field(default_factory=list)
     ideco_plans: list[IdecoPlan] = Field(default_factory=list)
     nisa_plans: list[NisaPlan] = Field(default_factory=list)

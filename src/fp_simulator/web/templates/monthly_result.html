@@ -9,7 +9,7 @@
   <thead>
     <tr>
       <th>年月</th><th>年齢</th><th>収入</th><th>税・社保</th>
-      <th>支出</th><th>住宅頭金</th><th>固定資産税</th><th>修繕費</th><th>収支</th><th>月末残高（現金・預金）</th><th>iDeCo</th><th>NISA</th><th>iDeCo受取</th><th>NISA取崩</th><th>金融資産合計</th><th>計算根拠</th>
+      <th>支出</th><th>乗り物売却</th><th>住宅頭金</th><th>固定資産税</th><th>修繕費</th><th>乗り物購入</th><th>乗り物維持費</th><th>乗り物税金・修繕</th><th>車検</th><th>収支</th><th>月末残高（現金・預金）</th><th>iDeCo</th><th>NISA</th><th>iDeCo受取</th><th>NISA取崩</th><th>金融資産合計</th><th>計算根拠</th>
     </tr>
   </thead>
   <tbody>
@@ -20,9 +20,14 @@
       <td>{{ "{:,}".format(m.total_income) }}</td>
       <td>{{ "{:,}".format(m.total_tax_si) }}</td>
       <td>{{ "{:,}".format(m.total_expense) }}</td>
+      <td>{{ "{:,}".format(m.vehicle_sale_income) }}</td>
       <td>{{ "{:,}".format(m.housing_down_payment) }}</td>
       <td>{{ "{:,}".format(m.property_tax) }}</td>
       <td>{{ "{:,}".format(m.repair_expense) }}</td>
+      <td>{{ "{:,}".format(m.vehicle_purchase_expense) }}</td>
+      <td>{{ "{:,}".format(m.vehicle_maintenance) }}</td>
+      <td>{{ "{:,}".format(m.vehicle_tax_repair) }}</td>
+      <td>{{ "{:,}".format(m.vehicle_inspection_expense) }}</td>
       <td>{{ "{:,}".format(m.net) }}</td>
       <td>{{ "{:,}".format(m.balance) }}</td>
       <td>{{ "{:,}".format(m.ideco_balance) }}</td>
