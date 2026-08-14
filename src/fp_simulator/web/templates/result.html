@@ -13,6 +13,7 @@
 <table>
   <tr><th>最低貯蓄残高</th><td>{{ "{:,}".format(min_balance) }}円 ({{ min_balance_month }})</td></tr>
   <tr><th>最終貯蓄残高</th><td>{{ "{:,}".format(final_balance) }}円</td></tr>
+  <tr><th>最終金融資産</th><td>{{ "{:,}".format(final_assets) }}円</td></tr>
   <tr><th>判定</th><td>
     {% if min_balance < 0 %}
       <strong style="color:#c00;">貯蓄が枯渇する時期があります</strong>
@@ -23,6 +24,7 @@
 </table>
 
 <h2>貯蓄残高推移</h2>
+<p>現金・預金に加えて、iDeCo・NISA・金融資産合計を表示しています。</p>
 <canvas id="balanceChart" height="100"></canvas>
 
 <h2>前提条件</h2>
@@ -33,7 +35,7 @@
 <h2>年次キャッシュフロー</h2>
 <table>
   <thead>
-    <tr><th>年</th><th>年齢</th><th>収入</th><th>支出</th><th>税・社保</th><th>収支</th><th>年末残高</th></tr>
+    <tr><th>年</th><th>年齢</th><th>収入</th><th>支出</th><th>税・社保</th><th>収支</th><th>現金・預金</th><th>iDeCo</th><th>NISA</th><th>金融資産合計</th></tr>
   </thead>
   <tbody>
   {% for y in yearly %}
@@ -45,6 +47,9 @@
       <td>{{ "{:,}".format(y.tax_si) }}</td>
       <td>{{ "{:,}".format(y.net) }}</td>
       <td>{{ "{:,}".format(y.balance_end) }}</td>
+      <td>{{ "{:,}".format(y.ideco_balance_end) }}</td>
+      <td>{{ "{:,}".format(y.nisa_balance_end) }}</td>
+      <td>{{ "{:,}".format(y.total_assets_end) }}</td>
     </tr>
   {% endfor %}
   </tbody>
@@ -57,9 +62,28 @@ new Chart(ctx, {
   data: {
     labels: {{ labels | tojson }},
     datasets: [{
-      label: '貯蓄残高',
+      label: '現金・預金',
       data: {{ balances | tojson }},
       borderColor: '#1a3a5c',
+      fill: false,
+      pointRadius: 0,
+    }, {
+      label: 'iDeCo',
+      data: {{ ideco_balances | tojson }},
+      borderColor: '#2e8b57',
+      fill: false,
+      pointRadius: 0,
+    }, {
+      label: 'NISA',
+      data: {{ nisa_balances | tojson }},
+      borderColor: '#d2691e',
+      fill: false,
+      pointRadius: 0,
+    }, {
+      label: '金融資産合計',
+      data: {{ total_assets | tojson }},
+      borderColor: '#8b0000',
+      borderDash: [6, 4],
       fill: false,
       pointRadius: 0,
     }]

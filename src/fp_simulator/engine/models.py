@@ -131,6 +131,7 @@ class IdecoPlan(BaseModel):
 
     id: str
     member_id: str
+    initial_balance: int = 0
     monthly_contribution: int  # 月額掛金
     subscriber_type: int = 2  # 1=自営業, 2=会社員, 3=専業主婦
     start_age: int = 0
@@ -145,6 +146,7 @@ class NisaPlan(BaseModel):
 
     id: str
     member_id: str
+    initial_balance: int = 0
     monthly_investment: int  # 月額投資
     start_age: int = 0
     end_age: int | None = None  # None=生涯

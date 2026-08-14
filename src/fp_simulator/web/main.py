@@ -492,6 +492,7 @@ async def insurance_add(
 async def ideco_add(
     household_id: str,
     member_id: str = Form(...),
+    initial_balance: int = Form(0),
     monthly_contribution: int = Form(23000),
     annual_return_rate: float = Form(0.0),
 ) -> RedirectResponse:
@@ -502,6 +503,7 @@ async def ideco_add(
         IdecoPlan(
             id=str(uuid.uuid4()),
             member_id=member_id,
+            initial_balance=initial_balance,
             monthly_contribution=monthly_contribution,
             annual_return_rate=annual_return_rate,
         )
@@ -514,6 +516,7 @@ async def ideco_add(
 async def nisa_add(
     household_id: str,
     member_id: str = Form(...),
+    initial_balance: int = Form(0),
     monthly_investment: int = Form(0),
     annual_return_rate: float = Form(0.0),
 ) -> RedirectResponse:
@@ -524,6 +527,7 @@ async def nisa_add(
         NisaPlan(
             id=str(uuid.uuid4()),
             member_id=member_id,
+            initial_balance=initial_balance,
             monthly_investment=monthly_investment,
             annual_return_rate=annual_return_rate,
         )
@@ -554,6 +558,9 @@ def _yearly_summary(monthly) -> list[dict]:
                 "tax_si": 0,
                 "net": 0,
                 "balance_end": 0,
+                "ideco_balance_end": 0,
+                "nisa_balance_end": 0,
+                "total_assets_end": 0,
             },
         )
         summary["income"] += month.total_income
@@ -561,6 +568,9 @@ def _yearly_summary(monthly) -> list[dict]:
         summary["tax_si"] += month.total_tax_si
         summary["net"] += month.net
         summary["balance_end"] = month.balance
+        summary["ideco_balance_end"] = month.ideco_balance
+        summary["nisa_balance_end"] = month.nisa_balance
+        summary["total_assets_end"] = month.total_assets
         summary["age"] = month.age
     return sorted(yearly.values(), key=lambda item: item["year"])
 
@@ -582,6 +592,9 @@ async def simulate_result(request: Request, household_id: str) -> HTMLResponse:
     # グラフ用データ
     labels = [f"{m.date.year}/{m.date.month}" for m in result.monthly]
     balances = [m.balance for m in result.monthly]
+    ideco_balances = [m.ideco_balance for m in result.monthly]
+    nisa_balances = [m.nisa_balance for m in result.monthly]
+    total_assets = [m.total_assets for m in result.monthly]
 
     # サマリー指標
     min_balance = min(balances) if balances else 0
@@ -600,6 +613,10 @@ async def simulate_result(request: Request, household_id: str) -> HTMLResponse:
             "min_balance": min_balance,
             "min_balance_month": min_balance_month,
             "final_balance": final_balance,
+            "final_assets": total_assets[-1] if total_assets else 0,
+            "ideco_balances": ideco_balances,
+            "nisa_balances": nisa_balances,
+            "total_assets": total_assets,
             "active_q": "sim",
         },
     )

@@ -16,7 +16,9 @@ from fp_simulator.engine.models import (
     Expense,
     Household,
     Income,
+    IdecoPlan,
     Member,
+    NisaPlan,
     PensionRecordInput,
     PlanAssumptions,
     Relationship,
@@ -190,6 +192,34 @@ class TestCashflowIntegration:
         assert before.salary_income == 300_000
         assert death_month.salary_income == 0
         assert death_month.pension_income == 0
+
+    def test_investment_balances_are_tracked_separately(
+        self, store, household: Household
+    ) -> None:
+        """iDeCo/NISAの掛金を現金残高と別の運用残高として追跡する."""
+        household.ideco_plans.append(
+            IdecoPlan(
+                id="ideco",
+                member_id="husband",
+                initial_balance=1_000_000,
+                monthly_contribution=10_000,
+                annual_return_rate=0.03,
+            )
+        )
+        household.nisa_plans.append(
+            NisaPlan(
+                id="nisa",
+                member_id="husband",
+                initial_balance=500_000,
+                monthly_investment=10_000,
+                annual_return_rate=0.03,
+            )
+        )
+        result = simulate(store, household)
+        first = result.monthly[0]
+        assert first.ideco_balance > 1_000_000
+        assert first.nisa_balance > 500_000
+        assert first.total_assets == first.balance + first.ideco_balance + first.nisa_balance
 
     def test_traces_exist(self, store, household: Household) -> None:
         """トレーサビリティ情報が付与されている."""

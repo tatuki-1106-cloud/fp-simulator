@@ -31,6 +31,7 @@ from fp_simulator.engine.social_insurance import monthly_social_insurance
 from fp_simulator.engine.pension import PensionRecord, total_pension
 from fp_simulator.engine.retirement import net_retirement_allowance
 from fp_simulator.engine.dependency import calc_deductions_for_household, age_at_year_end, age_at
+from fp_simulator.engine.investment import IdecoAccount, NisaAccount
 
 
 @dataclass
@@ -67,6 +68,8 @@ class MonthlyCashflow:
     insurance_premium: int = 0  # 保険料
     ideco_contribution: int = 0  # iDeCo掛金(所得控除対象)
     nisa_investment: int = 0  # NISA投資
+    ideco_balance: int = 0  # iDeCo運用残高
+    nisa_balance: int = 0  # NISA運用残高
     # 収支
     @property
     def total_income(self) -> int:
@@ -98,6 +101,11 @@ class MonthlyCashflow:
     def net(self) -> int:
         """手取り−支出."""
         return self.total_income - self.total_tax_si - self.total_expense
+
+    @property
+    def total_assets(self) -> int:
+        """現金・預金とiDeCo/NISAを合算した金融資産残高."""
+        return self.balance + self.ideco_balance + self.nisa_balance
 
     # 残高
     balance: int = 0  # 当月末の世帯総残高
@@ -144,6 +152,14 @@ def simulate(
     # 口座残高の初期値(基準月の月初残高)
     balances: dict[str, int] = {acc.id: acc.balance for acc in household.accounts}
     total_balance = sum(balances.values())
+    ideco_accounts = {
+        plan.id: IdecoAccount(balance=plan.initial_balance)
+        for plan in household.ideco_plans
+    }
+    nisa_accounts = {
+        plan.id: NisaAccount(balance=plan.initial_balance)
+        for plan in household.nisa_plans
+    }
 
     results: list[MonthlyCashflow] = []
 
@@ -536,15 +552,29 @@ def simulate(
                 continue
             member_age = age_at(member.birth_date, current)
             if ideco.start_age <= member_age < ideco.end_age:
-                from fp_simulator.engine.investment import ideco_contribution_limit
+                from fp_simulator.engine.investment import (
+                    ideco_contribution_limit,
+                    ideco_monthly_step,
+                )
 
-                limit = ideco_contribution_limit(store, current, ideco.subscriber_type)
-                contribution = min(ideco.monthly_contribution, limit)
+                previous = ideco_accounts[ideco.id]
+                updated = ideco_monthly_step(
+                    store,
+                    current,
+                    previous,
+                    ideco.monthly_contribution,
+                    ideco.subscriber_type,
+                    ideco.annual_return_rate,
+                )
+                ideco_accounts[ideco.id] = updated
+                contribution = updated.total_contributions - previous.total_contributions
                 cf.ideco_contribution += contribution
                 if contribution > 0:
                     cf.traces.append(
                         TraceEntry("iDeCo掛金", contribution, {
-                            "member": member.name, "上限": limit, "note": "全額所得控除(小規模企業共済等掛金控除)"
+                            "member": member.name,
+                            "上限": ideco_contribution_limit(store, current, ideco.subscriber_type),
+                            "note": "全額所得控除(小規模企業共済等掛金控除)",
                         })
                     )
 
@@ -557,18 +587,26 @@ def simulate(
                 continue
             member_age = age_at(member.birth_date, current)
             if member_age >= nisa.start_age and (nisa.end_age is None or member_age <= nisa.end_age):
-                from fp_simulator.engine.investment import nisa_annual_limit
+                from fp_simulator.engine.investment import nisa_annual_limit, nisa_monthly_step
 
-                annual_limit = nisa_annual_limit(store, current)
-                monthly_limit = annual_limit // 12
-                investment = min(nisa.monthly_investment, monthly_limit)
+                previous = nisa_accounts[nisa.id]
+                updated = nisa_monthly_step(
+                    store, current, previous, nisa.monthly_investment, nisa.annual_return_rate
+                )
+                nisa_accounts[nisa.id] = updated
+                investment = updated.total_invested - previous.total_invested
                 cf.nisa_investment += investment
                 if investment > 0:
                     cf.traces.append(
                         TraceEntry("NISA投資", investment, {
-                            "member": member.name, "年間上限": annual_limit, "note": "運用益非課税"
+                            "member": member.name,
+                            "年間上限": nisa_annual_limit(store, current),
+                            "note": "運用益非課税",
                         })
                     )
+
+        cf.ideco_balance = sum(account.balance for account in ideco_accounts.values())
+        cf.nisa_balance = sum(account.balance for account in nisa_accounts.values())
 
         # --- 口座残高 ---
         total_balance += cf.net

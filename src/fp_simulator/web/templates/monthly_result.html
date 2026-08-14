@@ -9,7 +9,7 @@
   <thead>
     <tr>
       <th>年月</th><th>年齢</th><th>収入</th><th>税・社保</th>
-      <th>支出</th><th>収支</th><th>月末残高</th>
+      <th>支出</th><th>収支</th><th>月末残高（現金・預金）</th><th>iDeCo</th><th>NISA</th><th>金融資産合計</th>
     </tr>
   </thead>
   <tbody>
@@ -22,6 +22,9 @@
       <td>{{ "{:,}".format(m.total_expense) }}</td>
       <td>{{ "{:,}".format(m.net) }}</td>
       <td>{{ "{:,}".format(m.balance) }}</td>
+      <td>{{ "{:,}".format(m.ideco_balance) }}</td>
+      <td>{{ "{:,}".format(m.nisa_balance) }}</td>
+      <td>{{ "{:,}".format(m.total_assets) }}</td>
     </tr>
   {% endfor %}
   </tbody>

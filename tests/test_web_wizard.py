@@ -109,6 +109,7 @@ async def test_create_household_and_full_flow(client: AsyncClient) -> None:
     assert "年次キャッシュフロー" in r.text
     # 残高が表示されている
     assert "最低貯蓄残高" in r.text
+    assert "金融資産合計" in r.text
 
     # 年次行から月次明細へドリルダウン
     r = await client.get(f"/households/{household_id}/simulate/monthly?year=2026")
