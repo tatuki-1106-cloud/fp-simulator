@@ -52,7 +52,7 @@ from fp_simulator.engine.models import (
     Vehicle,
 )
 from fp_simulator.mcp_server.server import mcp as mcp_server
-from fp_simulator.parameters.loader import get_store
+from fp_simulator.parameters.loader import ParameterStore, get_store
 from fp_simulator.web.auth import McpAuthMiddleware, authenticated_email, iap_auth_required
 
 BASE_DIR = pathlib.Path(__file__).resolve().parent
@@ -1401,6 +1401,76 @@ def _yearly_summary(monthly) -> list[dict]:
     return sorted(yearly.values(), key=lambda item: item["year"])
 
 
+_TRACE_PARAMETER_SOURCES: dict[str, tuple[tuple[str, str], ...]] = {
+    "社会保険料": (
+        ("日本年金機構: 厚生年金保険料率", "社会保険.厚生年金.料率"),
+        ("協会けんぽ: 健康保険・介護保険料率", "社会保険.健康保険.料率"),
+        ("厚生労働省: 雇用保険料率", "社会保険.雇用保険.労働者負担率"),
+    ),
+    "年金収入": (
+        ("日本年金機構: 老齢基礎年金", "年金.老齢基礎年金.満額"),
+        ("日本年金機構: 老齢厚生年金", "年金.老齢厚生年金.報酬比例乗率"),
+    ),
+    "所得税(源泉徴収)": (
+        ("国税庁: 給与所得控除", "所得税.給与所得控除.速算表"),
+        ("国税庁: 所得税率", "所得税.税率.速算表"),
+        ("国税庁: 基礎控除", "所得税.基礎控除.控除額"),
+    ),
+    "所得税(年末調整)": (
+        ("国税庁: 給与所得控除", "所得税.給与所得控除.速算表"),
+        ("国税庁: 所得税率", "所得税.税率.速算表"),
+        ("国税庁: 基礎控除", "所得税.基礎控除.控除額"),
+    ),
+    "住民税": (
+        ("総務省: 個人住民税", "住民税.所得割.税率"),
+        ("総務省: 住民税の徴収サイクル", "住民税.徴収サイクル"),
+    ),
+    "教育費": (
+        ("文部科学省: 子供の学習費調査", "教育費.小学校.公立"),
+        ("文部科学省: 大学の教育費", "教育費.大学.国立"),
+    ),
+    "iDeCo掛金": (
+        ("iDeCo公式: 掛金上限", "iDeCo.掛金上限.第2号"),
+    ),
+    "iDeCo受取": (
+        ("iDeCo公式: 受取制度", "iDeCo.受取開始年齢.最小"),
+    ),
+    "NISA投資": (
+        ("金融庁: NISA制度", "NISA.年間投資上限"),
+    ),
+    "NISA取崩": (
+        ("金融庁: NISA非課税保有限度額", "NISA.非課税保有限度額"),
+    ),
+}
+
+_TRACE_DIRECT_SOURCES: dict[str, tuple[dict[str, str], ...]] = {
+    "児童手当": (
+        {
+            "label": "こども家庭庁: 児童手当",
+            "url": "https://www.cfa.go.jp/policies/kokoseido/jidouteate/",
+        },
+    ),
+}
+
+
+def _trace_source_links(
+    store: ParameterStore, trace_item: str, date: datetime.date
+) -> list[dict[str, str]]:
+    """トレース項目に対応する公式出典リンクを返す."""
+    links = list(_TRACE_DIRECT_SOURCES.get(trace_item, ()))
+    available_paths = set(store.list_paths())
+    seen_urls = {link["url"] for link in links}
+    for label, path in _TRACE_PARAMETER_SOURCES.get(trace_item, ()):
+        if path not in available_paths:
+            continue
+        source = store.get_source(path, date)
+        if not source.startswith("https://") or source in seen_urls:
+            continue
+        links.append({"label": label, "url": source})
+        seen_urls.add(source)
+    return links
+
+
 @app.get("/households/{household_id}/simulate", response_class=HTMLResponse)
 async def simulate_result(
     request: Request,
@@ -1740,7 +1810,8 @@ async def monthly_simulation_result(
 
     from fp_simulator.engine.cashflow import simulate
 
-    result = simulate(get_store(), simulation_household)
+    store = get_store()
+    result = simulate(store, simulation_household)
     monthly = [m for m in result.monthly if m.date.year == year]
     if not monthly:
         return HTMLResponse("指定された年のシミュレーション結果がありません", status_code=404)
@@ -1755,6 +1826,12 @@ async def monthly_simulation_result(
     }
     previous_year = next((candidate for candidate in reversed(years) if candidate < year), None)
     next_year = next((candidate for candidate in years if candidate > year), None)
+    trace_source_links = {
+        month.date.isoformat(): [
+            _trace_source_links(store, trace.item, month.date) for trace in month.traces
+        ]
+        for month in monthly
+    }
 
     return templates.TemplateResponse(
         request,
@@ -1770,6 +1847,7 @@ async def monthly_simulation_result(
             "years": years,
             "previous_year": previous_year,
             "next_year": next_year,
+            "trace_source_links": trace_source_links,
             "active_q": "sim",
         },
     )

@@ -21,6 +21,13 @@
     word-break: break-word;
     font-size: 0.8rem;
   }
+  .trace-sources {
+    margin: 0.45rem 0 0.2rem;
+    padding: 0.45rem 0.6rem;
+    background: #f0f7ff;
+    border-left: 3px solid #4a90e2;
+  }
+  .trace-sources ul { margin: 0.25rem 0 0 1.2rem; }
 </style>
 {% endblock %}
 {% block content %}
@@ -105,6 +112,20 @@
                 {% endfor %}
                 </dl>
                 <pre>{{ trace.basis | tojson(indent=2) }}</pre>
+                {% set sources = trace_source_links[m.date.isoformat()][loop.index0] %}
+                <div class="trace-sources">
+                  {% if sources %}
+                    <strong>公式出典</strong>
+                    <ul>
+                    {% for source in sources %}
+                      <li><a href="{{ source.url }}" target="_blank" rel="noopener noreferrer">{{ source.label }}</a></li>
+                    {% endfor %}
+                    </ul>
+                  {% else %}
+                    <strong>公式出典なし</strong>
+                    <span>ユーザー入力値またはシミュレーター内の簡易モデルに基づく項目です。</span>
+                  {% endif %}
+                </div>
               </div>
             </details>
           {% endfor %}

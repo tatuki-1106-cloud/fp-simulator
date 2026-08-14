@@ -292,6 +292,10 @@ async def test_create_household_and_full_flow(client: AsyncClient) -> None:
     assert "税・社会保険合計" in r.text
     assert "翌年 →" in r.text
     assert "標準報酬月額" in r.text
+    assert "公式出典" in r.text
+    assert "日本年金機構: 厚生年金保険料率" in r.text
+    assert 'rel="noopener noreferrer"' in r.text
+    assert "公式出典なし" in r.text
 
     # 現行プランと前提変更プランを比較
     r = await client.get(
