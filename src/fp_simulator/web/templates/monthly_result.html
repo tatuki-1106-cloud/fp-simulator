@@ -1,9 +1,64 @@
 {% extends "base.html" %}
 {% from "lifemap.html" import lifemap %}
+{% block head %}
+<style>
+  .trace-cell { min-width: 24rem; vertical-align: top; }
+  .trace-list { margin-top: 0.5rem; }
+  .trace-entry { border-top: 1px solid #e5e7eb; padding: 0.35rem 0; }
+  .trace-entry summary { cursor: pointer; }
+  .trace-basis { margin: 0.45rem 0 0.2rem 1rem; }
+  .trace-basis-list { display: grid; grid-template-columns: max-content 1fr; gap: 0.2rem 0.6rem; margin: 0.4rem 0; }
+  .trace-basis-list dt { font-weight: 600; color: #555; }
+  .trace-basis-list dd { margin: 0; overflow-wrap: anywhere; }
+  .trace-basis pre {
+    margin: 0.35rem 0 0;
+    padding: 0.6rem;
+    background: #f7f9fb;
+    border: 1px solid #e1e6eb;
+    border-radius: 4px;
+    overflow-x: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-size: 0.8rem;
+  }
+</style>
+{% endblock %}
 {% block content %}
 <h1>{{ year }}年 月次キャッシュフロー — {{ simulation_household.name }}</h1>
 {{ lifemap(simulation_household) }}
 <p><a href="/households/{{ household.id }}/simulate{% if plan_id %}?plan_id={{ plan_id }}{% endif %}">← 年次キャッシュフローに戻る</a></p>
+
+<p>
+  表示年:
+  {% for available_year in years %}
+    {% if not loop.first %} | {% endif %}
+    {% if available_year == year %}
+      <strong>{{ available_year }}年</strong>
+    {% else %}
+      <a href="/households/{{ household.id }}/simulate/monthly?year={{ available_year }}{% if plan_id %}&plan_id={{ plan_id }}{% endif %}">{{ available_year }}年</a>
+    {% endif %}
+  {% endfor %}
+  {% if previous_year %}
+    <a href="/households/{{ household.id }}/simulate/monthly?year={{ previous_year }}{% if plan_id %}&plan_id={{ plan_id }}{% endif %}">← 前年</a>
+  {% endif %}
+  {% if next_year %}
+    <a href="/households/{{ household.id }}/simulate/monthly?year={{ next_year }}{% if plan_id %}&plan_id={{ plan_id }}{% endif %}">翌年 →</a>
+  {% endif %}
+</p>
+
+<h2>{{ year }}年の集計</h2>
+<table>
+  <tbody>
+    <tr><th>収入合計</th><td>{{ "{:,}".format(year_summary.income) }}円</td></tr>
+    <tr><th>税・社会保険合計</th><td>{{ "{:,}".format(year_summary.tax_si) }}円</td></tr>
+    <tr><th>支出合計</th><td>{{ "{:,}".format(year_summary.expense) }}円</td></tr>
+    <tr><th>年間収支</th><td class="{% if year_summary.net < 0 %}negative{% else %}positive{% endif %}">{{ "{:,}".format(year_summary.net) }}円</td></tr>
+    <tr><th>年末現金・預金</th><td>{{ "{:,}".format(year_summary.ending_balance) }}円</td></tr>
+    <tr><th>年末金融資産合計</th><td>{{ "{:,}".format(year_summary.ending_assets) }}円</td></tr>
+  </tbody>
+</table>
+
+<p class="neutral">各月の「計算根拠」を展開すると、金額の内訳と使用した判定・パラメータを確認できます。</p>
 
 <table>
   <thead>
@@ -35,17 +90,25 @@
       <td>{{ "{:,}".format(m.ideco_withdrawal) }}</td>
       <td>{{ "{:,}".format(m.nisa_withdrawal) }}</td>
       <td>{{ "{:,}".format(m.total_assets) }}</td>
-      <td>
+      <td class="trace-cell">
         <details>
           <summary>{{ m.traces | length }}件</summary>
-          <ul>
+          <div class="trace-list">
           {% for trace in m.traces %}
-            <li>
-              <strong>{{ trace.item }}</strong>: {{ "{:,}".format(trace.amount) }}円
-              <code>{{ trace.basis | tojson }}</code>
-            </li>
+            <details class="trace-entry">
+              <summary><strong>{{ trace.item }}</strong> — {{ "{:,}".format(trace.amount) }}円</summary>
+              <div class="trace-basis">
+                <strong>計算根拠</strong>
+                <dl class="trace-basis-list">
+                {% for key, value in trace.basis.items() %}
+                  <dt>{{ key }}</dt><dd>{{ value }}</dd>
+                {% endfor %}
+                </dl>
+                <pre>{{ trace.basis | tojson(indent=2) }}</pre>
+              </div>
+            </details>
           {% endfor %}
-          </ul>
+          </div>
         </details>
       </td>
     </tr>

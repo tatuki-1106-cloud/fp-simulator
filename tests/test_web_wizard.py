@@ -11,8 +11,8 @@ from httpx import ASGITransport, AsyncClient
 # テスト用に一時DBを使う
 os.environ["FP_DB_PATH"] = tempfile.mktemp(suffix=".db")
 
-from fp_simulator.web.main import app
 from fp_simulator.db.database import init_db
+from fp_simulator.web.main import app
 
 
 @pytest.fixture()
@@ -288,6 +288,10 @@ async def test_create_household_and_full_flow(client: AsyncClient) -> None:
     assert "2026/01" in r.text
     assert "計算根拠" in r.text
     assert "社会保険料" in r.text
+    assert "2026年の集計" in r.text
+    assert "税・社会保険合計" in r.text
+    assert "翌年 →" in r.text
+    assert "標準報酬月額" in r.text
 
     # 現行プランと前提変更プランを比較
     r = await client.get(

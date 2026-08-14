@@ -19,19 +19,20 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from fp_simulator.db.database import (
-    delete_household,
-    delete_plan,
     add_audit_log,
     assign_owner_to_unowned,
+    delete_household,
+    delete_plan,
     get_household,
     get_plan,
     init_db,
-    list_plans,
-    list_households,
     list_audit_logs,
+    list_households,
+    list_plans,
     save_household,
     save_plan_snapshot,
 )
+from fp_simulator.engine.insurance import InsurancePolicy, analyze_coverage
 from fp_simulator.engine.models import (
     Account,
     EducationPlan,
@@ -50,9 +51,8 @@ from fp_simulator.engine.models import (
     SocialInsuranceType,
     Vehicle,
 )
-from fp_simulator.engine.insurance import InsurancePolicy, analyze_coverage
-from fp_simulator.parameters.loader import get_store
 from fp_simulator.mcp_server.server import mcp as mcp_server
+from fp_simulator.parameters.loader import get_store
 from fp_simulator.web.auth import McpAuthMiddleware, authenticated_email, iap_auth_required
 
 BASE_DIR = pathlib.Path(__file__).resolve().parent
@@ -1744,6 +1744,17 @@ async def monthly_simulation_result(
     monthly = [m for m in result.monthly if m.date.year == year]
     if not monthly:
         return HTMLResponse("指定された年のシミュレーション結果がありません", status_code=404)
+    years = sorted({m.date.year for m in result.monthly})
+    year_summary = {
+        "income": sum(m.total_income for m in monthly),
+        "tax_si": sum(m.total_tax_si for m in monthly),
+        "expense": sum(m.total_expense for m in monthly),
+        "net": sum(m.net for m in monthly),
+        "ending_balance": monthly[-1].balance,
+        "ending_assets": monthly[-1].total_assets,
+    }
+    previous_year = next((candidate for candidate in reversed(years) if candidate < year), None)
+    next_year = next((candidate for candidate in years if candidate > year), None)
 
     return templates.TemplateResponse(
         request,
@@ -1755,6 +1766,10 @@ async def monthly_simulation_result(
             "plan_id": plan_id,
             "year": year,
             "monthly": monthly,
+            "year_summary": year_summary,
+            "years": years,
+            "previous_year": previous_year,
+            "next_year": next_year,
             "active_q": "sim",
         },
     )
