@@ -25,14 +25,27 @@ from fp_simulator.engine.dependency import (
     age_at_year_end,
     calc_deductions_for_household,
 )
+from fp_simulator.engine.education import monthly_education_costs
 from fp_simulator.engine.income import salary_income_after_deduction
-from fp_simulator.engine.income_tax import Deductions, calc_annual_income_tax
+from fp_simulator.engine.income_tax import (
+    Deductions,
+    calc_annual_income_tax,
+    calc_taxable_income,
+)
 from fp_simulator.engine.insurance import (
     InsurancePolicy,
     death_benefit_if_died,
     monthly_premium_in_period,
 )
-from fp_simulator.engine.investment import IdecoAccount, NisaAccount, withdrawal_amount
+from fp_simulator.engine.investment import (
+    IdecoAccount,
+    NisaAccount,
+    ideco_contribution_limit,
+    ideco_monthly_step,
+    nisa_annual_limit,
+    nisa_monthly_step,
+    withdrawal_amount,
+)
 from fp_simulator.engine.loan import LoanTerms, MonthlyRepayment, loan_schedule
 from fp_simulator.engine.models import (
     Expense,
@@ -371,6 +384,543 @@ def _record_event_expense(
                 },
             )
         )
+
+
+def _apply_work_income(
+    store: ParameterStore,
+    household: Household,
+    current: datetime.date,
+    year: int,
+    month: int,
+    assumptions: PlanAssumptions,
+    cf: MonthlyCashflow,
+    member_alive: Callable[[Member, datetime.date], bool],
+) -> int:
+    """勤労収入・社会保険料・退職金を月次CFへ反映する."""
+    monthly_salary_total = 0
+    for income in household.incomes:
+        member = next(
+            (m for m in household.members if m.id == income.member_id), None
+        )
+        if member is None or not member_alive(member, current):
+            continue
+        member_age = age_at(member.birth_date, current)
+
+        if member_age < income.start_age:
+            continue
+        if income.end_age is not None and member_age > income.end_age:
+            continue
+        if member_age == income.start_age and month < income.start_month:
+            continue
+
+        is_active = not (
+            income.end_age is not None
+            and member_age == income.end_age
+            and month > income.end_month
+        )
+        if is_active:
+            years_elapsed = year - assumptions.base_year
+            raise_factor = (1 + income.annual_raise_rate) ** years_elapsed
+            salary = int(income.monthly_amount * raise_factor)
+            bonus = (
+                int(income.bonus_amount * raise_factor)
+                if month in income.bonus_months
+                else 0
+            )
+            monthly_salary_total += salary + bonus
+
+            if income.social_insurance_type in (
+                SocialInsuranceType.KYOSAI_KOSEI,
+                SocialInsuranceType.YAKUIN_KOSEI,
+            ):
+                si = monthly_social_insurance(
+                    store,
+                    current,
+                    salary,
+                    member.prefecture,
+                    member_age,
+                    is_employee=True,
+                )
+                cf.social_insurance += si.total
+                cf.traces.append(
+                    TraceEntry(
+                        "社会保険料",
+                        si.total,
+                        {
+                            "member": member.name,
+                            "標準報酬月額": salary,
+                            "厚生年金": si.pension,
+                            "健康保険": si.health,
+                            "介護保険": si.nursing,
+                            "雇用保険": si.employment,
+                        },
+                    )
+                )
+
+        if (
+            income.retirement_age is not None
+            and member_age == income.retirement_age
+            and month == member.birth_date.month
+            and income.retirement_allowance > 0
+        ):
+            years_of_service = income.retirement_age - income.start_age
+            net = net_retirement_allowance(
+                store, current, income.retirement_allowance, years_of_service
+            )
+            cf.retirement_income += net
+            cf.traces.append(
+                TraceEntry(
+                    "退職金(手取り)",
+                    net,
+                    {
+                        "member": member.name,
+                        "額面": income.retirement_allowance,
+                        "勤続年数": years_of_service,
+                    },
+                )
+            )
+
+    cf.salary_income = monthly_salary_total
+    return monthly_salary_total
+
+
+def _apply_pension_and_disaster_income(
+    store: ParameterStore,
+    household: Household,
+    current: datetime.date,
+    scenario: DisasterScenario | None,
+    death_date: datetime.date | None,
+    cf: MonthlyCashflow,
+    member_alive: Callable[[Member, datetime.date], bool],
+) -> None:
+    """年金と万が一シナリオの追加収入を月次CFへ反映する."""
+    for pension_input in household.pension_records:
+        member = next(
+            (m for m in household.members if m.id == pension_input.member_id),
+            None,
+        )
+        if member is None or not member_alive(member, current):
+            continue
+        member_age = age_at(member.birth_date, current)
+        pension_start_age = (
+            pension_input.start_age
+            - (pension_input.months_early // 12)
+            + (pension_input.months_deferred // 12)
+        )
+        if member_age < pension_start_age:
+            continue
+
+        record = PensionRecord(
+            kokumin_months=pension_input.kokumin_months,
+            kousei_months=pension_input.kousei_months,
+            avg_standard_remuneration=pension_input.avg_standard_remuneration,
+            kousei_months_before_2003_04=pension_input.kousei_months_before_2003_04,
+            kousei_months_after_2003_04=pension_input.kousei_months_after_2003_04,
+        )
+        annual = total_pension(
+            store,
+            current,
+            record,
+            pension_input.months_early,
+            pension_input.months_deferred,
+        )
+        monthly_pension = annual // 12
+        cf.pension_income += monthly_pension
+        cf.traces.append(
+            TraceEntry(
+                "年金収入",
+                monthly_pension,
+                {"member": member.name, "年額": annual},
+            )
+        )
+
+    if scenario is None or death_date is None or current < death_date:
+        return
+    if scenario.survivor_pension_monthly > 0:
+        cf.survivor_pension = scenario.survivor_pension_monthly
+        cf.traces.append(
+            TraceEntry(
+                "遺族年金",
+                cf.survivor_pension,
+                {
+                    "月額": scenario.survivor_pension_monthly,
+                    "scenario": scenario.name,
+                },
+            )
+        )
+
+    eligible_child = any(
+        member.relationship == Relationship.CHILD
+        and member_alive(member, current)
+        and age_at(member.birth_date, current) < scenario.child_allowance_end_age
+        for member in household.members
+    )
+    if eligible_child and scenario.child_allowance_monthly > 0:
+        cf.child_allowance = scenario.child_allowance_monthly
+        cf.traces.append(
+            TraceEntry(
+                "児童手当",
+                cf.child_allowance,
+                {
+                    "月額": scenario.child_allowance_monthly,
+                    "対象年齢未満": scenario.child_allowance_end_age,
+                    "scenario": scenario.name,
+                },
+            )
+        )
+
+
+def _apply_income_tax(
+    store: ParameterStore,
+    household: Household,
+    current: datetime.date,
+    year: int,
+    assumptions: PlanAssumptions,
+    monthly_salary_total: int,
+    cf: MonthlyCashflow,
+    member_alive: Callable[[Member, datetime.date], bool],
+) -> None:
+    """所得税の源泉徴収・年末調整を月次CFへ反映する."""
+    if monthly_salary_total <= 0:
+        return
+
+    est_annual = 0
+    for income in household.incomes:
+        member = next(
+            (m for m in household.members if m.id == income.member_id), None
+        )
+        if member is None or not member_alive(member, current):
+            continue
+        member_age = age_at_year_end(member.birth_date, year)
+        if current.month < member.birth_date.month:
+            member_age -= 1
+        if member_age < income.start_age or (
+            income.end_age is not None and member_age > income.end_age
+        ):
+            continue
+        years_elapsed = year - assumptions.base_year
+        raise_factor = (1 + income.annual_raise_rate) ** years_elapsed
+        annual = int(income.monthly_amount * raise_factor) * 12
+        annual += int(income.bonus_amount * raise_factor) * len(
+            income.bonus_months
+        )
+        est_annual += annual
+
+    spouse_income = 0  # MVP: 配偶者収入は0扱い(将来拡張)
+    spouse_ded, dep_ded = calc_deductions_for_household(
+        store, year, household, est_annual, spouse_income
+    )
+    deductions = Deductions(
+        basic=store.get("所得税.基礎控除.控除額", datetime.date(year, 12, 31)),
+        social_insurance=cf.social_insurance * 12,
+        spouse=spouse_ded,
+        dependent=dep_ded,
+    )
+    income_after = salary_income_after_deduction(
+        store, datetime.date(year, 12, 31), est_annual
+    )
+    annual_tax = calc_annual_income_tax(
+        store, datetime.date(year, 12, 31), income_after, deductions
+    )
+
+    if current.month < 12:
+        monthly_tax = annual_tax // 12
+        cf.income_tax = monthly_tax
+        cf.traces.append(
+            TraceEntry(
+                "所得税(源泉徴収)",
+                monthly_tax,
+                {"推定年収": est_annual, "年間推定税額": annual_tax},
+            )
+        )
+    else:
+        withheld_so_far = (annual_tax // 12) * 11
+        adjustment = annual_tax - withheld_so_far
+        cf.income_tax = adjustment
+        cf.traces.append(
+            TraceEntry(
+                "所得税(年末調整)",
+                adjustment,
+                {
+                    "年間確定税額": annual_tax,
+                    "1-11月徴収済": withheld_so_far,
+                },
+            )
+        )
+
+
+def _apply_resident_tax(
+    store: ParameterStore,
+    household: Household,
+    current: datetime.date,
+    year: int,
+    assumptions: PlanAssumptions,
+    resident_tax_cache: dict[int, dict[datetime.date, int]],
+    cf: MonthlyCashflow,
+    member_alive: Callable[[Member, datetime.date], bool],
+) -> None:
+    """前年所得課税の住民税を月次CFへ反映する."""
+    if year not in resident_tax_cache:
+        prev_year = year - 1
+        prev_est_annual = 0
+        for income in household.incomes:
+            member = next(
+                (m for m in household.members if m.id == income.member_id), None
+            )
+            if member is None:
+                continue
+            if not member_alive(member, datetime.date(prev_year, 12, 31)):
+                continue
+            member_age = age_at_year_end(member.birth_date, prev_year)
+            if member_age < income.start_age or (
+                income.end_age is not None and member_age > income.end_age
+            ):
+                continue
+            years_elapsed = prev_year - assumptions.base_year
+            raise_factor = (1 + income.annual_raise_rate) ** years_elapsed
+            annual = int(income.monthly_amount * raise_factor) * 12
+            annual += int(income.bonus_amount * raise_factor) * len(
+                income.bonus_months
+            )
+            prev_est_annual += annual
+
+        if prev_est_annual > 0:
+            prev_si = 0
+            for income in household.incomes:
+                member = next(
+                    (m for m in household.members if m.id == income.member_id),
+                    None,
+                )
+                if member is None:
+                    continue
+                member_age_prev = age_at(
+                    member.birth_date, datetime.date(prev_year, 6, 1)
+                )
+                if member_age_prev < income.start_age or (
+                    income.end_age is not None
+                    and member_age_prev > income.end_age
+                ):
+                    continue
+                years_elapsed = prev_year - assumptions.base_year
+                raise_factor = (1 + income.annual_raise_rate) ** years_elapsed
+                prev_monthly = int(income.monthly_amount * raise_factor)
+                si = monthly_social_insurance(
+                    store,
+                    datetime.date(prev_year, 6, 1),
+                    prev_monthly,
+                    member.prefecture,
+                    member_age_prev,
+                    is_employee=True,
+                )
+                prev_si += si.total * 12
+
+            prev_deductions = Deductions(
+                basic=store.get(
+                    "所得税.基礎控除.控除額",
+                    datetime.date(prev_year, 12, 31),
+                ),
+                social_insurance=prev_si,
+                spouse=0,
+                dependent=0,
+            )
+            prev_income_after = salary_income_after_deduction(
+                store,
+                datetime.date(prev_year, 12, 31),
+                prev_est_annual,
+            )
+            prev_taxable = calc_taxable_income(
+                store,
+                datetime.date(prev_year, 12, 31),
+                prev_income_after,
+                prev_deductions,
+            )
+            resident_tax_cache[year] = monthly_resident_tax_schedule(
+                store, prev_year, prev_taxable, prev_deductions
+            )
+        else:
+            resident_tax_cache[year] = {}
+
+    cf.resident_tax = resident_tax_cache[year].get(current, 0)
+    if cf.resident_tax > 0:
+        cf.traces.append(
+            TraceEntry("住民税", cf.resident_tax, {"前年所得課税": True})
+        )
+
+
+def _apply_education_expenses(
+    store: ParameterStore,
+    household: Household,
+    current: datetime.date,
+    cf: MonthlyCashflow,
+    member_alive: Callable[[Member, datetime.date], bool],
+) -> None:
+    """教育費を月次CFへ反映する."""
+    for education_plan in household.education_plans:
+        member = next(
+            (m for m in household.members if m.id == education_plan.member_id),
+            None,
+        )
+        if member is None or not member_alive(member, current):
+            continue
+        child_age = age_at(member.birth_date, current)
+        monthly_cost, schools = monthly_education_costs(
+            store, current, child_age, education_plan.path
+        )
+        if education_plan.include_lessons:
+            lessons = store.get("教育費.習い事", current) // 12
+            monthly_cost += lessons
+            schools.append("習い事")
+        cf.education_expense += monthly_cost
+        if monthly_cost > 0:
+            cf.traces.append(
+                TraceEntry(
+                    "教育費",
+                    monthly_cost,
+                    {"child": member.name, "schools": schools},
+                )
+            )
+
+
+def _apply_investments(
+    store: ParameterStore,
+    household: Household,
+    current: datetime.date,
+    cf: MonthlyCashflow,
+    ideco_accounts: dict[str, IdecoAccount],
+    nisa_accounts: dict[str, NisaAccount],
+    member_alive: Callable[[Member, datetime.date], bool],
+) -> None:
+    """iDeCo・NISAの積立・運用・取崩を月次CFへ反映する."""
+    for ideco in household.ideco_plans:
+        member = next(
+            (m for m in household.members if m.id == ideco.member_id), None
+        )
+        if member is None or not member_alive(member, current):
+            continue
+        member_age = age_at(member.birth_date, current)
+        in_contribution_window = ideco.start_age <= member_age < ideco.end_age
+        previous = ideco_accounts[ideco.id]
+        updated = ideco_monthly_step(
+            store,
+            current,
+            previous,
+            ideco.monthly_contribution if in_contribution_window else 0,
+            ideco.subscriber_type,
+            ideco.annual_return_rate,
+        )
+        ideco_accounts[ideco.id] = updated
+        contribution = updated.total_contributions - previous.total_contributions
+        cf.ideco_contribution += contribution
+        if contribution > 0:
+            cf.traces.append(
+                TraceEntry(
+                    "iDeCo掛金",
+                    contribution,
+                    {
+                        "member": member.name,
+                        "上限": ideco_contribution_limit(
+                            store, current, ideco.subscriber_type
+                        ),
+                        "note": "全額所得控除(小規模企業共済等掛金控除)",
+                    },
+                )
+            )
+        if (
+            ideco.receive_start_age is not None
+            and member_age >= ideco.receive_start_age
+            and ideco.monthly_withdrawal > 0
+        ):
+            withdrawal = withdrawal_amount(
+                updated.balance, ideco.monthly_withdrawal
+            )
+            updated = IdecoAccount(
+                balance=updated.balance - withdrawal,
+                total_contributions=updated.total_contributions,
+            )
+            cf.ideco_withdrawal += withdrawal
+            withdrawal_tax = int(withdrawal * ideco.withdrawal_tax_rate)
+            cf.ideco_withdrawal_tax += withdrawal_tax
+            if withdrawal > 0:
+                cf.traces.append(
+                    TraceEntry(
+                        "iDeCo受取",
+                        withdrawal,
+                        {
+                            "member": member.name,
+                            "月額": ideco.monthly_withdrawal,
+                            "概算税率": ideco.withdrawal_tax_rate,
+                            "概算税額": withdrawal_tax,
+                        },
+                    )
+                )
+                if withdrawal_tax > 0:
+                    cf.traces.append(
+                        TraceEntry(
+                            "iDeCo受取時税",
+                            withdrawal_tax,
+                            {"概算税率": ideco.withdrawal_tax_rate},
+                        )
+                    )
+        ideco_accounts[ideco.id] = updated
+
+    for nisa in household.nisa_plans:
+        member = next(
+            (m for m in household.members if m.id == nisa.member_id), None
+        )
+        if member is None or not member_alive(member, current):
+            continue
+        member_age = age_at(member.birth_date, current)
+        in_contribution_window = member_age >= nisa.start_age and (
+            nisa.end_age is None or member_age <= nisa.end_age
+        )
+        previous = nisa_accounts[nisa.id]
+        updated = nisa_monthly_step(
+            store,
+            current,
+            previous,
+            nisa.monthly_investment if in_contribution_window else 0,
+            nisa.annual_return_rate,
+        )
+        nisa_accounts[nisa.id] = updated
+        investment = updated.total_invested - previous.total_invested
+        cf.nisa_investment += investment
+        if investment > 0:
+            cf.traces.append(
+                TraceEntry(
+                    "NISA投資",
+                    investment,
+                    {
+                        "member": member.name,
+                        "年間上限": nisa_annual_limit(store, current),
+                        "note": "運用益非課税",
+                    },
+                )
+            )
+        if (
+            nisa.receive_start_age is not None
+            and member_age >= nisa.receive_start_age
+            and nisa.monthly_withdrawal > 0
+        ):
+            withdrawal = withdrawal_amount(
+                updated.balance, nisa.monthly_withdrawal
+            )
+            nisa_accounts[nisa.id] = NisaAccount(
+                balance=updated.balance - withdrawal,
+                total_invested=updated.total_invested,
+            )
+            cf.nisa_withdrawal += withdrawal
+            if withdrawal > 0:
+                cf.traces.append(
+                    TraceEntry(
+                        "NISA取崩",
+                        withdrawal,
+                        {
+                            "member": member.name,
+                            "月額": nisa.monthly_withdrawal,
+                            "税": "非課税",
+                        },
+                    )
+                )
 
 
 def _apply_expenses(
@@ -796,261 +1346,48 @@ def simulate(
 
         cf = MonthlyCashflow(date=current, age=age)
 
-        # --- 収入(勤労) ---
-        monthly_salary_total = 0
-        for income in household.incomes:
-            member = next((m for m in household.members if m.id == income.member_id), None)
-            if member is None:
-                continue
-            if not member_alive(member, current):
-                continue
-            member_age = age_at(member.birth_date, current)
+        # --- 収入(勤労)・年金・万が一時の追加収入 ---
+        monthly_salary_total = _apply_work_income(
+            store=store,
+            household=household,
+            current=current,
+            year=year,
+            month=month,
+            assumptions=assumptions,
+            cf=cf,
+            member_alive=member_alive,
+        )
+        _apply_pension_and_disaster_income(
+            store=store,
+            household=household,
+            current=current,
+            scenario=scenario,
+            death_date=death_date,
+            cf=cf,
+            member_alive=member_alive,
+        )
 
-            # 期間判定
-            if member_age < income.start_age:
-                continue
-            if income.end_age is not None and member_age > income.end_age:
-                continue
-            if member_age == income.start_age and month < income.start_month:
-                continue
-            is_active = not (
-                income.end_age is not None
-                and member_age == income.end_age
-                and month > income.end_month
-            )
-
-            if is_active:
-                # 上昇率適用(基準年からの年数)
-                years_elapsed = year - assumptions.base_year
-                raise_factor = (1 + income.annual_raise_rate) ** years_elapsed
-                salary = int(income.monthly_amount * raise_factor)
-                bonus = 0
-                if month in income.bonus_months:
-                    bonus = int(income.bonus_amount * raise_factor)
-                gross = salary + bonus
-                monthly_salary_total += gross
-
-                # 社会保険料
-                if income.social_insurance_type in (
-                    SocialInsuranceType.KYOSAI_KOSEI,
-                    SocialInsuranceType.YAKUIN_KOSEI,
-                ):
-                    si = monthly_social_insurance(
-                        store, current, salary, member.prefecture, member_age, is_employee=True
-                    )
-                    cf.social_insurance += si.total
-                    cf.traces.append(
-                        TraceEntry("社会保険料", si.total, {
-                            "member": member.name,
-                            "標準報酬月額": salary,
-                            "厚生年金": si.pension, "健康保険": si.health,
-                            "介護保険": si.nursing, "雇用保険": si.employment,
-                        })
-                    )
-
-            # 退職金(退職年齢に達する誕生月に計上、給与期間終了後でも)
-            if (
-                income.retirement_age is not None
-                and member_age == income.retirement_age
-                and month == member.birth_date.month
-                and income.retirement_allowance > 0
-            ):
-                years_of_service = income.retirement_age - income.start_age
-                net = net_retirement_allowance(
-                    store, current, income.retirement_allowance, years_of_service
-                )
-                cf.retirement_income += net
-                cf.traces.append(
-                    TraceEntry("退職金(手取り)", net, {
-                        "member": member.name,
-                        "額面": income.retirement_allowance,
-                        "勤続年数": years_of_service,
-                    })
-                )
-        cf.salary_income = monthly_salary_total
-
-        # --- 年金 ---
-        for pr in household.pension_records:
-            member = next((m for m in household.members if m.id == pr.member_id), None)
-            if member is None:
-                continue
-            if not member_alive(member, current):
-                continue
-            member_age = age_at(member.birth_date, current)
-
-            pension_start_age = pr.start_age - (pr.months_early // 12) + (pr.months_deferred // 12)
-            if member_age >= pension_start_age:
-                record = PensionRecord(
-                    kokumin_months=pr.kokumin_months,
-                    kousei_months=pr.kousei_months,
-                    avg_standard_remuneration=pr.avg_standard_remuneration,
-                    kousei_months_before_2003_04=pr.kousei_months_before_2003_04,
-                    kousei_months_after_2003_04=pr.kousei_months_after_2003_04,
-                )
-                annual = total_pension(store, current, record, pr.months_early, pr.months_deferred)
-                monthly_pension = annual // 12
-                cf.pension_income += monthly_pension
-                cf.traces.append(
-                    TraceEntry("年金収入", monthly_pension, {
-                        "member": member.name,
-                        "年額": annual,
-                    })
-                )
-
-        # --- 万が一時の追加収入 ---
-        if scenario and death_date and current >= death_date:
-            if scenario.survivor_pension_monthly > 0:
-                cf.survivor_pension = scenario.survivor_pension_monthly
-                cf.traces.append(
-                    TraceEntry(
-                        "遺族年金",
-                        cf.survivor_pension,
-                        {"月額": scenario.survivor_pension_monthly, "scenario": scenario.name},
-                    )
-                )
-
-            eligible_child = any(
-                member.relationship == Relationship.CHILD
-                and member_alive(member, current)
-                and age_at(member.birth_date, current) < scenario.child_allowance_end_age
-                for member in household.members
-            )
-            if eligible_child and scenario.child_allowance_monthly > 0:
-                cf.child_allowance = scenario.child_allowance_monthly
-                cf.traces.append(
-                    TraceEntry(
-                        "児童手当",
-                        cf.child_allowance,
-                        {
-                            "月額": scenario.child_allowance_monthly,
-                            "対象年齢未満": scenario.child_allowance_end_age,
-                            "scenario": scenario.name,
-                        },
-                    )
-                )
-
-        # --- 所得税(月次源泉徴収+年末調整) ---
-        # 簡易モデル: その年の推定年収から年間税額を計算し、12で割って月次計上、
-        # 12月に年末調整で精算する。
-        # 扶養控除の判定にはその年の推定年収を使う
-        if monthly_salary_total > 0:
-            # 推定年収(月給の12倍+賞与)を計算
-            est_annual = 0
-            for income in household.incomes:
-                member = next((m for m in household.members if m.id == income.member_id), None)
-                if member is None:
-                    continue
-                if not member_alive(member, current):
-                    continue
-                member_age = age_at_year_end(member.birth_date, year)
-                if current.month < member.birth_date.month:
-                    member_age -= 1
-                if member_age < income.start_age or (
-                    income.end_age is not None and member_age > income.end_age
-                ):
-                    continue
-                years_elapsed = year - assumptions.base_year
-                raise_factor = (1 + income.annual_raise_rate) ** years_elapsed
-                annual = int(income.monthly_amount * raise_factor) * 12
-                annual += int(income.bonus_amount * raise_factor) * len(income.bonus_months)
-                est_annual += annual
-
-            spouse_income = 0  # MVP: 配偶者収入は0扱い(将来拡張)
-            spouse_ded, dep_ded = calc_deductions_for_household(
-                store, year, household, est_annual, spouse_income
-            )
-            deductions = Deductions(
-                basic=store.get("所得税.基礎控除.控除額", datetime.date(year, 12, 31)),
-                social_insurance=cf.social_insurance * 12,  # 年間推定
-                spouse=spouse_ded,
-                dependent=dep_ded,
-            )
-            income_after = salary_income_after_deduction(store, datetime.date(year, 12, 31), est_annual)
-            annual_tax = calc_annual_income_tax(store, datetime.date(year, 12, 31), income_after, deductions)
-
-            if month < 12:
-                monthly_tax = annual_tax // 12
-                cf.income_tax = monthly_tax
-                cf.traces.append(
-                    TraceEntry("所得税(源泉徴収)", monthly_tax, {
-                        "推定年収": est_annual, "年間推定税額": annual_tax,
-                    })
-                )
-            else:
-                # 12月: 年末調整(年間確定税額 - 1〜11月徴収分)
-                withheld_so_far = (annual_tax // 12) * 11
-                adjustment = annual_tax - withheld_so_far
-                cf.income_tax = adjustment
-                cf.traces.append(
-                    TraceEntry("所得税(年末調整)", adjustment, {
-                        "年間確定税額": annual_tax, "1-11月徴収済": withheld_so_far,
-                    })
-                )
-
-        # --- 住民税(前年所得課税、翌年6月〜) ---
-        if year not in resident_tax_cache:
-            # 前年の課税所得を計算(簡易: 前年の推定年収ベース)
-            prev_year = year - 1
-            prev_est_annual = 0
-            for income in household.incomes:
-                member = next((m for m in household.members if m.id == income.member_id), None)
-                if member is None:
-                    continue
-                if not member_alive(member, datetime.date(prev_year, 12, 31)):
-                    continue
-                member_age = age_at_year_end(member.birth_date, prev_year)
-                if member_age < income.start_age or (
-                    income.end_age is not None and member_age > income.end_age
-                ):
-                    continue
-                years_elapsed = prev_year - assumptions.base_year
-                raise_factor = (1 + income.annual_raise_rate) ** years_elapsed
-                annual = int(income.monthly_amount * raise_factor) * 12
-                annual += int(income.bonus_amount * raise_factor) * len(income.bonus_months)
-                prev_est_annual += annual
-
-            if prev_est_annual > 0:
-                # 前年の社会保険料を推定(前年の月給で計算)
-                prev_si = 0
-                for income in household.incomes:
-                    member = next((m for m in household.members if m.id == income.member_id), None)
-                    if member is None:
-                        continue
-                    member_age_prev = age_at(member.birth_date, datetime.date(prev_year, 6, 1))
-                    if member_age_prev < income.start_age or (
-                        income.end_age is not None and member_age_prev > income.end_age
-                    ):
-                        continue
-                    years_elapsed = prev_year - assumptions.base_year
-                    raise_factor = (1 + income.annual_raise_rate) ** years_elapsed
-                    prev_monthly = int(income.monthly_amount * raise_factor)
-                    si = monthly_social_insurance(
-                        store, datetime.date(prev_year, 6, 1),
-                        prev_monthly, member.prefecture, member_age_prev, is_employee=True,
-                    )
-                    prev_si += si.total * 12
-
-                prev_deductions = Deductions(
-                    basic=store.get("所得税.基礎控除.控除額", datetime.date(prev_year, 12, 31)),
-                    social_insurance=prev_si,
-                    spouse=0, dependent=0,
-                )
-                prev_income_after = salary_income_after_deduction(
-                    store, datetime.date(prev_year, 12, 31), prev_est_annual
-                )
-                from fp_simulator.engine.income_tax import calc_taxable_income
-                prev_taxable = calc_taxable_income(
-                    store, datetime.date(prev_year, 12, 31), prev_income_after, prev_deductions
-                )
-                resident_tax_cache[year] = monthly_resident_tax_schedule(
-                    store, prev_year, prev_taxable, prev_deductions
-                )
-            else:
-                resident_tax_cache[year] = {}
-
-        cf.resident_tax = resident_tax_cache[year].get(current, 0)
-        if cf.resident_tax > 0:
-            cf.traces.append(TraceEntry("住民税", cf.resident_tax, {"前年所得課税": True}))
+        # --- 所得税・住民税 ---
+        _apply_income_tax(
+            store=store,
+            household=household,
+            current=current,
+            year=year,
+            assumptions=assumptions,
+            monthly_salary_total=monthly_salary_total,
+            cf=cf,
+            member_alive=member_alive,
+        )
+        _apply_resident_tax(
+            store=store,
+            household=household,
+            current=current,
+            year=year,
+            assumptions=assumptions,
+            resident_tax_cache=resident_tax_cache,
+            cf=cf,
+            member_alive=member_alive,
+        )
 
         # --- ローン返済 ---
         for loan_name, repayment in loan_repayments_by_date.get(current, []):
@@ -1135,25 +1472,13 @@ def simulate(
                 )
 
         # --- 教育費 ---
-        for edu in household.education_plans:
-            member = next((m for m in household.members if m.id == edu.member_id), None)
-            if member is None:
-                continue
-            if not member_alive(member, current):
-                continue
-            child_age = age_at(member.birth_date, current)
-            from fp_simulator.engine.education import monthly_education_costs
-
-            monthly_cost, schools = monthly_education_costs(store, current, child_age, edu.path)
-            if edu.include_lessons:
-                lessons = store.get("教育費.習い事", current) // 12
-                monthly_cost += lessons
-                schools.append("習い事")
-            cf.education_expense += monthly_cost
-            if monthly_cost > 0:
-                cf.traces.append(
-                    TraceEntry("教育費", monthly_cost, {"child": member.name, "schools": schools})
-                )
+        _apply_education_expenses(
+            store=store,
+            household=household,
+            current=current,
+            cf=cf,
+            member_alive=member_alive,
+        )
 
         # --- 保険 ---
         _apply_insurance(
@@ -1166,131 +1491,16 @@ def simulate(
             member_alive=member_alive,
         )
 
-        # --- iDeCo ---
-        for ideco in household.ideco_plans:
-            member = next((m for m in household.members if m.id == ideco.member_id), None)
-            if member is None:
-                continue
-            if not member_alive(member, current):
-                continue
-            member_age = age_at(member.birth_date, current)
-            from fp_simulator.engine.investment import (
-                ideco_contribution_limit,
-                ideco_monthly_step,
-            )
-
-            in_contribution_window = ideco.start_age <= member_age < ideco.end_age
-            previous = ideco_accounts[ideco.id]
-            updated = ideco_monthly_step(
-                store,
-                current,
-                previous,
-                ideco.monthly_contribution if in_contribution_window else 0,
-                ideco.subscriber_type,
-                ideco.annual_return_rate,
-            )
-            ideco_accounts[ideco.id] = updated
-            contribution = updated.total_contributions - previous.total_contributions
-            cf.ideco_contribution += contribution
-            if contribution > 0:
-                cf.traces.append(
-                    TraceEntry("iDeCo掛金", contribution, {
-                        "member": member.name,
-                        "上限": ideco_contribution_limit(store, current, ideco.subscriber_type),
-                        "note": "全額所得控除(小規模企業共済等掛金控除)",
-                    })
-                )
-            if (
-                ideco.receive_start_age is not None
-                and member_age >= ideco.receive_start_age
-                and ideco.monthly_withdrawal > 0
-            ):
-                withdrawal = withdrawal_amount(updated.balance, ideco.monthly_withdrawal)
-                updated = IdecoAccount(
-                    balance=updated.balance - withdrawal,
-                    total_contributions=updated.total_contributions,
-                )
-                cf.ideco_withdrawal += withdrawal
-                withdrawal_tax = int(withdrawal * ideco.withdrawal_tax_rate)
-                cf.ideco_withdrawal_tax += withdrawal_tax
-                if withdrawal > 0:
-                    cf.traces.append(
-                        TraceEntry(
-                            "iDeCo受取",
-                            withdrawal,
-                            {
-                                "member": member.name,
-                                "月額": ideco.monthly_withdrawal,
-                                "概算税率": ideco.withdrawal_tax_rate,
-                                "概算税額": withdrawal_tax,
-                            },
-                        )
-                    )
-                    if withdrawal_tax > 0:
-                        cf.traces.append(
-                            TraceEntry(
-                                "iDeCo受取時税",
-                                withdrawal_tax,
-                                {"概算税率": ideco.withdrawal_tax_rate},
-                            )
-                        )
-            ideco_accounts[ideco.id] = updated
-
-        # --- NISA ---
-        for nisa in household.nisa_plans:
-            member = next((m for m in household.members if m.id == nisa.member_id), None)
-            if member is None:
-                continue
-            if not member_alive(member, current):
-                continue
-            member_age = age_at(member.birth_date, current)
-            from fp_simulator.engine.investment import nisa_annual_limit, nisa_monthly_step
-
-            in_contribution_window = member_age >= nisa.start_age and (
-                nisa.end_age is None or member_age <= nisa.end_age
-            )
-            previous = nisa_accounts[nisa.id]
-            updated = nisa_monthly_step(
-                store,
-                current,
-                previous,
-                nisa.monthly_investment if in_contribution_window else 0,
-                nisa.annual_return_rate,
-            )
-            nisa_accounts[nisa.id] = updated
-            investment = updated.total_invested - previous.total_invested
-            cf.nisa_investment += investment
-            if investment > 0:
-                cf.traces.append(
-                    TraceEntry("NISA投資", investment, {
-                        "member": member.name,
-                        "年間上限": nisa_annual_limit(store, current),
-                        "note": "運用益非課税",
-                    })
-                )
-            if (
-                nisa.receive_start_age is not None
-                and member_age >= nisa.receive_start_age
-                and nisa.monthly_withdrawal > 0
-            ):
-                withdrawal = withdrawal_amount(updated.balance, nisa.monthly_withdrawal)
-                nisa_accounts[nisa.id] = NisaAccount(
-                    balance=updated.balance - withdrawal,
-                    total_invested=updated.total_invested,
-                )
-                cf.nisa_withdrawal += withdrawal
-                if withdrawal > 0:
-                    cf.traces.append(
-                        TraceEntry(
-                            "NISA取崩",
-                            withdrawal,
-                            {
-                                "member": member.name,
-                                "月額": nisa.monthly_withdrawal,
-                                "税": "非課税",
-                            },
-                        )
-                    )
+        # --- iDeCo/NISA ---
+        _apply_investments(
+            store=store,
+            household=household,
+            current=current,
+            cf=cf,
+            ideco_accounts=ideco_accounts,
+            nisa_accounts=nisa_accounts,
+            member_alive=member_alive,
+        )
 
         cf.ideco_balance = sum(account.balance for account in ideco_accounts.values())
         cf.nisa_balance = sum(account.balance for account in nisa_accounts.values())
