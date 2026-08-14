@@ -16,10 +16,8 @@
     </label>
   </p>
   <p>
-    <label>遺族年金（月額・世帯合計）:
-      <input type="number" name="survivor_pension_monthly" min="0" step="1000"
-             value="{{ survivor_pension_monthly }}">
-    </label>
+    <strong>遺族年金:</strong> 年金加入記録と家族情報から自動判定
+    <small>未納月数・死亡原因・生計維持は入力されていないため、簡易判定です。</small>
   </p>
   <p>
     <strong>児童手当:</strong> 世帯の子ども情報から自動計算
@@ -59,6 +57,22 @@
       <td>{{ "{:,}".format(scenario.final_balance) }}円</td>
     </tr>
     <tr>
+      <th>死亡後の最低残高</th>
+      <td>-</td>
+      <td>
+        {% if scenario.post_death_min_balance is not none %}
+          {{ "{:,}".format(scenario.post_death_min_balance) }}円
+        {% else %}
+          対象期間外
+        {% endif %}
+      </td>
+    </tr>
+    <tr>
+      <th>追加必要保障額</th>
+      <td>-</td>
+      <td><strong>{{ "{:,}".format(scenario.required_additional_coverage) }}円</strong></td>
+    </tr>
+    <tr>
       <th>万が一後の追加収入</th>
       <td>-</td>
       <td>{{ "{:,}".format(scenario.yearly | sum(attribute="survivor_pension")) }}円（遺族年金）<br>
@@ -66,6 +80,25 @@
     </tr>
   </tbody>
 </table>
+
+{% if scenario.pre_death_min_balance is not none and scenario.pre_death_min_balance < 0 %}
+<p style="color:#c00;">死亡前から残高が赤字のため、追加保障額だけでは死亡前の赤字を解消できません。</p>
+{% endif %}
+
+{% if scenario.survivor_pension_basis %}
+<details>
+  <summary>遺族年金の受給判定根拠</summary>
+  <pre>{{ scenario.survivor_pension_basis | tojson(indent=2) }}</pre>
+  {% if scenario.survivor_pension_sources %}
+  <strong>公式出典</strong>
+  <ul>
+    {% for source in scenario.survivor_pension_sources %}
+    <li><a href="{{ source.url }}" target="_blank" rel="noopener noreferrer">{{ source.label }}</a></li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+</details>
+{% endif %}
 
 <h2>年次比較</h2>
 <table>
@@ -96,8 +129,9 @@
 <ul>
   <li>死亡月以降、対象者の給与・年金・個人向け支出を停止します。</li>
   <li>対象者が被保険者の生命保険は死亡月に死亡保険金を計上します。</li>
-  <li>遺族年金は入力した世帯合計月額を、死亡月以降に計上します。</li>
+  <li>遺族年金は加入記録・家族情報から簡易自動判定し、月額を死亡月以降に計上します。</li>
   <li>児童手当は登録された子どもの年齢・出生順から自動計算します。</li>
+  <li>追加必要保障額は、既存の死亡保険金を反映した死亡後の最低残高から算出します。</li>
   <li>生活費削減率は、世帯全体の生活費に死亡月以降適用します。</li>
 </ul>
 {% endblock %}

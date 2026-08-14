@@ -14,11 +14,13 @@ from fp_simulator.engine.cashflow import (
     _apply_pension_and_disaster_income,
     _apply_work_income,
     _automatic_child_allowance,
+    _automatic_survivor_pension,
 )
 from fp_simulator.engine.models import (
     Household,
     Income,
     Member,
+    PensionRecordInput,
     PlanAssumptions,
     Relationship,
     SocialInsuranceType,
@@ -194,6 +196,52 @@ def test_automatic_child_allowance_uses_fiscal_year_end(store):
 
     assert march_allowance == 10_000
     assert april_allowance == 0
+
+
+def test_automatic_survivor_pension_uses_joining_record_and_children(store):
+    deceased = _householder(datetime.date(1990, 1, 1))
+    spouse = Member(
+        id="spouse",
+        name="配偶者",
+        relationship=Relationship.SPOUSE,
+        birth_date=datetime.date(1992, 1, 1),
+        gender="女",
+    )
+    child = Member(
+        id="child",
+        name="子",
+        relationship=Relationship.CHILD,
+        birth_date=datetime.date(2020, 1, 1),
+    )
+    household = Household(
+        id="helper-survivor-pension",
+        name="遺族年金テスト",
+        members=[deceased, spouse, child],
+        pension_records=[
+            PensionRecordInput(
+                member_id=deceased.id,
+                kokumin_months=120,
+                kousei_months=120,
+                avg_standard_remuneration=300_000,
+                kousei_months_after_2003_04=120,
+            )
+        ],
+        assumptions=PlanAssumptions(base_year=2026, base_month=1),
+    )
+
+    monthly, basis = _automatic_survivor_pension(
+        store,
+        household,
+        deceased,
+        datetime.date(2026, 4, 1),
+        lambda member, _date: member.id != deceased.id,
+    )
+
+    assert monthly > 0
+    assert basis["自動計算"] is True
+    assert basis["遺族基礎年金年額"] > 0
+    assert basis["遺族厚生年金年額"] > 0
+    assert basis["対象児童"] == ["子"]
 
 
 def test_apply_income_tax_records_monthly_withholding(store):

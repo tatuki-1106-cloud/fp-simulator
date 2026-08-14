@@ -1,0 +1,48 @@
+- path: 遺族基礎年金.本体.年額
+  description: 遺族基礎年金の本体年額(2026年度)
+  values:
+    - from: 2026-04-01
+      value: 844900
+      source: https://www.nenkin.go.jp/service/jukyu/seido/izokunenkin/jukyu-yoken/20150401-04.html
+
+- path: 遺族基礎年金.子の加算.第1子第2子.年額
+  description: 遺族基礎年金の1人目・2人目の子の加算額(2026年度)
+  values:
+    - from: 2026-04-01
+      value: 243800
+      source: https://www.nenkin.go.jp/service/jukyu/seido/izokunenkin/jukyu-yoken/20150401-04.html
+
+- path: 遺族基礎年金.子の加算.第3子以降.年額
+  description: 遺族基礎年金の3人目以降の子の加算額(2026年度)
+  values:
+    - from: 2026-04-01
+      value: 81300
+      source: https://www.nenkin.go.jp/service/jukyu/seido/izokunenkin/jukyu-yoken/20150401-04.html
+
+- path: 遺族基礎年金.子.年齢上限
+  description: 遺族基礎年金の対象となる子の年齢上限(18歳年度末)
+  values:
+    - from: 2013-01-01
+      value: 18
+      source: https://www.nenkin.go.jp/service/jukyu/seido/izokunenkin/jukyu-yoken/20150401-04.html
+
+- path: 遺族基礎年金.障害児.年齢上限
+  description: 障害等級1級・2級の子の年齢上限
+  values:
+    - from: 2013-01-01
+      value: 20
+      source: https://www.nenkin.go.jp/service/jukyu/seido/izokunenkin/jukyu-yoken/20150401-04.html
+
+- path: 遺族厚生年金.報酬比例.支給率
+  description: 遺族厚生年金の報酬比例部分に対する支給率
+  values:
+    - from: 2013-01-01
+      value: 0.75
+      source: https://www.nenkin.go.jp/service/jukyu/seido/izokunenkin/jukyu-yoken/20150424.html
+
+- path: 遺族厚生年金.短期要件.みなし加入月数
+  description: 短期要件における報酬比例部分の最低みなし加入月数
+  values:
+    - from: 2013-01-01
+      value: 300
+      source: https://www.nenkin.go.jp/service/jukyu/seido/izokunenkin/jukyu-yoken/20150424.html

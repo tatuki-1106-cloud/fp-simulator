@@ -356,6 +356,10 @@ async def test_create_household_and_full_flow(client: AsyncClient) -> None:
     assert "万が一年末残高" in r.text
     assert "児童手当" in r.text
     assert "自動計算" in r.text
+    assert "遺族年金の受給判定根拠" in r.text
+    assert "追加必要保障額" in r.text
+    assert "簡易判定" in r.text
+    assert "日本年金機構: 遺族基礎年金" in r.text
     r = await client.get(
         f"/households/{household_id}/disaster"
         f"?deceased_member_id={husband_id}&death_age=40"

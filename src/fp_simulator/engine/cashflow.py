@@ -57,7 +57,12 @@ from fp_simulator.engine.models import (
     Relationship,
     SocialInsuranceType,
 )
-from fp_simulator.engine.pension import PensionRecord, total_pension
+from fp_simulator.engine.pension import (
+    PensionRecord,
+    employee_pension_fixed_amount,
+    employee_pension_report_proportional,
+    total_pension,
+)
 from fp_simulator.engine.resident_tax import monthly_resident_tax_schedule
 from fp_simulator.engine.retirement import net_retirement_allowance
 from fp_simulator.engine.social_insurance import monthly_social_insurance
@@ -202,7 +207,8 @@ class FinancingContext:
 class DisasterScenario:
     """万が一シナリオ。指定メンバーが指定年齢で死亡した前提.
 
-    遺族年金は利用者が設定する世帯合計の月額として扱う。
+    遺族年金は原則として加入記録と家族情報から簡易自動計算し、
+    ``survivor_pension_monthly`` を指定した場合だけ手入力額を上書きする。
     児童手当は原則として世帯の子ども情報から自動計算し、
     ``child_allowance_monthly`` を指定した場合だけ従来の手入力額を上書きする。
     """
@@ -210,7 +216,7 @@ class DisasterScenario:
     deceased_member_id: str
     death_age: int
     name: str = "万が一"
-    survivor_pension_monthly: int = 0
+    survivor_pension_monthly: int | None = None
     child_allowance_monthly: int | None = None
     child_allowance_end_age: int = 18
     living_expense_reduction_rate: float = 0.0
@@ -287,6 +293,184 @@ def _automatic_child_allowance(
             "児童手当.第1子第2子.3歳未満月額",
             "児童手当.第1子第2子.3歳以上月額",
             "児童手当.第3子以降.月額",
+        ],
+    }
+
+
+def _survivor_pension_record(
+    household: Household, deceased: Member, current: datetime.date
+) -> PensionRecord | None:
+    """遺族年金の簡易算定に使う加入記録を解決する."""
+    pension_input = next(
+        (record for record in household.pension_records if record.member_id == deceased.id),
+        None,
+    )
+    if pension_input is not None and (
+        pension_input.kokumin_months > 0 or pension_input.kousei_months > 0
+    ):
+        after = pension_input.kousei_months_after_2003_04 or max(
+            0, pension_input.kousei_months - pension_input.kousei_months_before_2003_04
+        )
+        return PensionRecord(
+            kokumin_months=pension_input.kokumin_months,
+            kousei_months=pension_input.kousei_months,
+            avg_standard_remuneration=pension_input.avg_standard_remuneration,
+            kousei_months_before_2003_04=pension_input.kousei_months_before_2003_04,
+            kousei_months_after_2003_04=after,
+        )
+
+    kousei_income = next(
+        (
+            income
+            for income in household.incomes
+            if income.member_id == deceased.id
+            and income.social_insurance_type
+            in (SocialInsuranceType.KYOSAI_KOSEI, SocialInsuranceType.YAKUIN_KOSEI)
+            and age_at(deceased.birth_date, current) >= income.start_age
+            and (
+                income.end_age is None
+                or age_at(deceased.birth_date, current) <= income.end_age
+            )
+            and not (
+                age_at(deceased.birth_date, current) == income.start_age
+                and current.month < income.start_month
+            )
+            and not (
+                income.end_age is not None
+                and age_at(deceased.birth_date, current) == income.end_age
+                and current.month > income.end_month
+            )
+        ),
+        None,
+    )
+    if kousei_income is None:
+        return None
+
+    start_year = deceased.birth_date.year + kousei_income.start_age
+    start_date = datetime.date(start_year, kousei_income.start_month, 1)
+    months = max(
+        1,
+        (current.year - start_date.year) * 12 + current.month - start_date.month + 1,
+    )
+    before = 0
+    after = months
+    if start_date < datetime.date(2003, 4, 1):
+        before = min(months, (2003 - start_date.year) * 12 + 3 - start_date.month)
+        after = months - before
+    return PensionRecord(
+        kokumin_months=min(months, 480),
+        kousei_months=months,
+        avg_standard_remuneration=kousei_income.monthly_amount,
+        kousei_months_before_2003_04=before,
+        kousei_months_after_2003_04=after,
+    )
+
+
+def _eligible_survivor_children(
+    store: ParameterStore,
+    household: Household,
+    current: datetime.date,
+    member_alive: MemberAlive,
+) -> list[Member]:
+    """遺族基礎年金の対象となる子を簡易判定する."""
+    age_limit = int(store.get("遺族基礎年金.子.年齢上限", current))
+    disability_age_limit = int(store.get("遺族基礎年金.障害児.年齢上限", current))
+    return [
+        member
+        for member in household.members
+        if (
+            member.relationship == Relationship.CHILD
+            and member_alive(member, current)
+            and (
+                current <= _fiscal_year_end_after_age(member.birth_date, age_limit)
+                or (
+                    member.disability_grade in {"1級", "2級"}
+                    and age_at(member.birth_date, current) < disability_age_limit
+                )
+            )
+        )
+    ]
+
+
+def _automatic_survivor_pension(
+    store: ParameterStore,
+    household: Household,
+    deceased: Member,
+    current: datetime.date,
+    member_alive: MemberAlive,
+) -> tuple[int, dict[str, TraceValue]]:
+    """既存の加入記録と家族情報による遺族年金の簡易自動判定."""
+    children = _eligible_survivor_children(store, household, current, member_alive)
+    spouse = next(
+        (
+            member
+            for member in household.members
+            if member.relationship == Relationship.SPOUSE
+            and member_alive(member, current)
+        ),
+        None,
+    )
+    record = _survivor_pension_record(household, deceased, current)
+    has_basic_coverage = record is not None
+    has_employee_coverage = record is not None and record.kousei_months > 0
+    spouse_can_receive_employee = spouse is not None and (
+        spouse.gender != "男"
+        or age_at(spouse.birth_date, current) >= 55
+        or bool(children)
+    )
+    has_recipient = bool(children) or spouse_can_receive_employee
+
+    basic_annual = 0
+    employee_annual = 0
+    pension_months = 0
+    if has_recipient and has_basic_coverage and children:
+        basic_annual = int(store.get("遺族基礎年金.本体.年額", current))
+        first_two = int(
+            store.get("遺族基礎年金.子の加算.第1子第2子.年額", current)
+        )
+        third_onward = int(
+            store.get("遺族基礎年金.子の加算.第3子以降.年額", current)
+        )
+        basic_annual += first_two * min(2, len(children))
+        basic_annual += third_onward * max(0, len(children) - 2)
+
+    if has_recipient and has_employee_coverage and record is not None:
+        pension_months = record.kousei_months
+        minimum_months = int(store.get("遺族厚生年金.短期要件.みなし加入月数", current))
+        effective_after = max(record.kousei_months_after_2003_04, minimum_months)
+        proportional = employee_pension_report_proportional(
+            store, current, record.avg_standard_remuneration, effective_after
+        )
+        fixed = employee_pension_fixed_amount(
+            store, current, record.kousei_months_before_2003_04
+        )
+        rate = float(store.get("遺族厚生年金.報酬比例.支給率", current))
+        employee_annual = int((proportional + fixed) * rate)
+
+    total_annual = basic_annual + employee_annual
+    monthly = total_annual // 12
+    recipients = []
+    if children:
+        recipients.append("子")
+    if spouse_can_receive_employee and spouse is not None:
+        recipients.append(f"配偶者({spouse.name})")
+    return monthly, {
+        "自動計算": True,
+        "判定": "簡易判定（未納月数・死亡原因・生計維持は未入力）",
+        "死亡者": deceased.name,
+        "受給候補": recipients,
+        "対象児童": [member.name for member in children],
+        "加入記録あり": has_basic_coverage,
+        "厚生年金加入月数": pension_months,
+        "遺族基礎年金年額": basic_annual,
+        "遺族厚生年金年額": employee_annual,
+        "月額": monthly,
+        "パラメータ": [
+            "遺族基礎年金.本体.年額",
+            "遺族基礎年金.子の加算.第1子第2子.年額",
+            "遺族基礎年金.子の加算.第3子以降.年額",
+            "遺族厚生年金.報酬比例.支給率",
+            "遺族厚生年金.短期要件.みなし加入月数",
         ],
     }
 
@@ -609,18 +793,36 @@ def _apply_pension_and_disaster_income(
         )
 
     disaster_active = scenario is not None and death_date is not None and current >= death_date
-    if disaster_active and scenario.survivor_pension_monthly > 0:
-        cf.survivor_pension = scenario.survivor_pension_monthly
-        cf.traces.append(
-            TraceEntry(
-                "遺族年金",
-                cf.survivor_pension,
-                {
-                    "月額": scenario.survivor_pension_monthly,
-                    "scenario": scenario.name,
-                },
+    if disaster_active and scenario is not None:
+        if scenario.survivor_pension_monthly is not None:
+            if scenario.survivor_pension_monthly > 0:
+                cf.survivor_pension = scenario.survivor_pension_monthly
+                cf.traces.append(
+                    TraceEntry(
+                        "遺族年金",
+                        cf.survivor_pension,
+                        {
+                            "自動計算": False,
+                            "月額": scenario.survivor_pension_monthly,
+                            "scenario": scenario.name,
+                        },
+                    )
+                )
+        else:
+            deceased = next(
+                (
+                    member
+                    for member in household.members
+                    if member.id == scenario.deceased_member_id
+                ),
+                None,
             )
-        )
+            if deceased is not None:
+                allowance, basis = _automatic_survivor_pension(
+                    store, household, deceased, current, member_alive
+                )
+                cf.survivor_pension = allowance
+                cf.traces.append(TraceEntry("遺族年金", allowance, basis))
 
     if (
         disaster_active
@@ -1368,7 +1570,10 @@ def simulate(
     if scenario is not None:
         if scenario.death_age < 0 or scenario.death_age > 120:
             raise ValueError("death_age must be between 0 and 120")
-        if scenario.survivor_pension_monthly < 0:
+        if (
+            scenario.survivor_pension_monthly is not None
+            and scenario.survivor_pension_monthly < 0
+        ):
             raise ValueError("survivor_pension_monthly must not be negative")
         if (
             scenario.child_allowance_monthly is not None

@@ -1411,6 +1411,10 @@ _TRACE_PARAMETER_SOURCES: dict[str, tuple[tuple[str, str], ...]] = {
         ("日本年金機構: 老齢基礎年金", "年金.老齢基礎年金.満額"),
         ("日本年金機構: 老齢厚生年金", "年金.老齢厚生年金.報酬比例乗率"),
     ),
+    "遺族年金": (
+        ("日本年金機構: 遺族基礎年金", "遺族基礎年金.本体.年額"),
+        ("日本年金機構: 遺族厚生年金", "遺族厚生年金.報酬比例.支給率"),
+    ),
     "所得税(源泉徴収)": (
         ("国税庁: 給与所得控除", "所得税.給与所得控除.速算表"),
         ("国税庁: 所得税率", "所得税.税率.速算表"),
@@ -1721,7 +1725,7 @@ async def disaster_scenarios(
     household_id: str,
     deceased_member_id: str | None = None,
     death_age: int | None = None,
-    survivor_pension_monthly: int = 0,
+    survivor_pension_monthly: int | None = None,
     child_allowance_monthly: int | None = None,
     living_expense_reduction_rate: float = 0.0,
 ) -> HTMLResponse:
@@ -1736,13 +1740,17 @@ async def disaster_scenarios(
         (member for member in household.members if member.id == deceased_member_id),
         None,
     )
+    store = get_store()
     scenario_result = None
     baseline_result = None
     if selected_member and death_age is not None:
         if (
             death_age < 0
             or death_age > 120
-            or survivor_pension_monthly < 0
+            or (
+                survivor_pension_monthly is not None
+                and survivor_pension_monthly < 0
+            )
             or (
                 child_allowance_monthly is not None
                 and child_allowance_monthly < 0
@@ -1750,9 +1758,9 @@ async def disaster_scenarios(
             or not 0 <= living_expense_reduction_rate <= 1
         ):
             return HTMLResponse("万が一シナリオの入力値が不正です", status_code=400)
-        baseline_result = simulate(get_store(), household)
+        baseline_result = simulate(store, household)
         scenario_result = simulate(
-            get_store(),
+            store,
             household,
             DisasterScenario(
                 selected_member.id,
@@ -1764,11 +1772,43 @@ async def disaster_scenarios(
             ),
         )
 
-    def metrics(result) -> dict | None:
+    death_date = (
+        datetime.date(
+            selected_member.birth_date.year + death_age,
+            selected_member.birth_date.month,
+            1,
+        )
+        if selected_member and death_age is not None
+        else None
+    )
+
+    def metrics(result, scenario_death_date: datetime.date | None) -> dict | None:
         if result is None:
             return None
         balances = [month.balance for month in result.monthly]
         yearly = _yearly_summary(result.monthly)
+        post_death_balances = [
+            month.balance
+            for month in result.monthly
+            if scenario_death_date is not None and month.date >= scenario_death_date
+        ]
+        pre_death_balances = [
+            month.balance
+            for month in result.monthly
+            if scenario_death_date is not None and month.date < scenario_death_date
+        ]
+        survivor_trace = next(
+            (
+                trace
+                for month in result.monthly
+                for trace in month.traces
+                if trace.item == "遺族年金"
+            ),
+            None,
+        )
+        post_death_min_balance = (
+            min(post_death_balances) if post_death_balances else None
+        )
         return {
             "min_balance": min(balances) if balances else 0,
             "final_balance": balances[-1] if balances else 0,
@@ -1777,6 +1817,19 @@ async def disaster_scenarios(
             ),
             "yearly": yearly,
             "yearly_by_year": {item["year"]: item for item in yearly},
+            "post_death_min_balance": post_death_min_balance,
+            "pre_death_min_balance": min(pre_death_balances) if pre_death_balances else None,
+            "required_additional_coverage": (
+                max(0, -post_death_min_balance)
+                if post_death_min_balance is not None
+                else 0
+            ),
+            "survivor_pension_basis": survivor_trace.basis if survivor_trace else None,
+            "survivor_pension_sources": (
+                _trace_source_links(store, "遺族年金", scenario_death_date)
+                if survivor_trace and scenario_death_date is not None
+                else []
+            ),
         }
 
     return templates.TemplateResponse(
@@ -1791,8 +1844,8 @@ async def disaster_scenarios(
             "survivor_pension_monthly": survivor_pension_monthly,
             "child_allowance_monthly": child_allowance_monthly,
             "living_expense_reduction_rate": living_expense_reduction_rate,
-            "baseline": metrics(baseline_result),
-            "scenario": metrics(scenario_result),
+            "baseline": metrics(baseline_result, None),
+            "scenario": metrics(scenario_result, death_date),
             "active_q": "disaster",
         },
     )
