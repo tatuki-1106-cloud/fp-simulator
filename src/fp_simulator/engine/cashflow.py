@@ -62,6 +62,9 @@ from fp_simulator.engine.retirement import net_retirement_allowance
 from fp_simulator.engine.social_insurance import monthly_social_insurance
 from fp_simulator.parameters.loader import ParameterStore
 
+TraceValue = str | int | float | bool | None | list[str] | dict[str, object]
+MemberAlive = Callable[[Member, datetime.date], bool]
+
 
 @dataclass
 class TraceEntry:
@@ -69,7 +72,7 @@ class TraceEntry:
 
     item: str  # 項目名(例: "所得税")
     amount: int  # 金額
-    basis: dict[str, Any]  # 根拠(パラメータパス、式、中間値等)
+    basis: dict[str, TraceValue]  # 根拠(パラメータパス、式、中間値等)
 
 
 @dataclass
@@ -394,7 +397,7 @@ def _apply_work_income(
     month: int,
     assumptions: PlanAssumptions,
     cf: MonthlyCashflow,
-    member_alive: Callable[[Member, datetime.date], bool],
+    member_alive: MemberAlive,
 ) -> int:
     """勤労収入・社会保険料・退職金を月次CFへ反映する."""
     monthly_salary_total = 0
@@ -491,7 +494,7 @@ def _apply_pension_and_disaster_income(
     scenario: DisasterScenario | None,
     death_date: datetime.date | None,
     cf: MonthlyCashflow,
-    member_alive: Callable[[Member, datetime.date], bool],
+    member_alive: MemberAlive,
 ) -> None:
     """年金と万が一シナリオの追加収入を月次CFへ反映する."""
     for pension_input in household.pension_records:
@@ -578,7 +581,7 @@ def _apply_income_tax(
     assumptions: PlanAssumptions,
     monthly_salary_total: int,
     cf: MonthlyCashflow,
-    member_alive: Callable[[Member, datetime.date], bool],
+    member_alive: MemberAlive,
 ) -> None:
     """所得税の源泉徴収・年末調整を月次CFへ反映する."""
     if monthly_salary_total <= 0:
@@ -591,9 +594,8 @@ def _apply_income_tax(
         )
         if member is None or not member_alive(member, current):
             continue
-        member_age = age_at_year_end(member.birth_date, year)
-        if current.month < member.birth_date.month:
-            member_age -= 1
+        # 月次の勤労収入判定と同じく、当月1日時点の満年齢を使う。
+        member_age = age_at(member.birth_date, current)
         if member_age < income.start_age or (
             income.end_age is not None and member_age > income.end_age
         ):
@@ -657,7 +659,7 @@ def _apply_resident_tax(
     assumptions: PlanAssumptions,
     resident_tax_cache: dict[int, dict[datetime.date, int]],
     cf: MonthlyCashflow,
-    member_alive: Callable[[Member, datetime.date], bool],
+    member_alive: MemberAlive,
 ) -> None:
     """前年所得課税の住民税を月次CFへ反映する."""
     if year not in resident_tax_cache:
@@ -752,7 +754,7 @@ def _apply_education_expenses(
     household: Household,
     current: datetime.date,
     cf: MonthlyCashflow,
-    member_alive: Callable[[Member, datetime.date], bool],
+    member_alive: MemberAlive,
 ) -> None:
     """教育費を月次CFへ反映する."""
     for education_plan in household.education_plans:
@@ -788,7 +790,7 @@ def _apply_investments(
     cf: MonthlyCashflow,
     ideco_accounts: dict[str, IdecoAccount],
     nisa_accounts: dict[str, NisaAccount],
-    member_alive: Callable[[Member, datetime.date], bool],
+    member_alive: MemberAlive,
 ) -> None:
     """iDeCo・NISAの積立・運用・取崩を月次CFへ反映する."""
     for ideco in household.ideco_plans:
@@ -934,7 +936,7 @@ def _apply_expenses(
     scenario: DisasterScenario | None,
     death_date: datetime.date | None,
     cf: MonthlyCashflow,
-    member_alive: Callable[[Member, datetime.date], bool],
+    member_alive: MemberAlive,
 ) -> None:
     """生活費・ライフイベントを月次CFへ反映する."""
     for expense in household.expenses:
@@ -1021,7 +1023,7 @@ def _apply_insurance(
     scenario: DisasterScenario | None,
     death_date: datetime.date | None,
     deceased: Member | None,
-    member_alive: Callable[[Member, datetime.date], bool],
+    member_alive: MemberAlive,
 ) -> None:
     """保険料と万が一時の死亡保険金を月次CFへ反映する."""
     for ins in household.insurances:
@@ -1337,7 +1339,9 @@ def simulate(
     )
 
     def member_alive(member: Member, date: datetime.date) -> bool:
-        return not deceased or member.id != deceased.id or date < death_date
+        if deceased is None or member.id != deceased.id:
+            return True
+        return death_date is not None and date < death_date
 
     while current <= end:
         year = current.year
