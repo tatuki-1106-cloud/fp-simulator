@@ -111,6 +111,23 @@ async def test_create_household_and_full_flow(client: AsyncClient) -> None:
     assert "最低貯蓄残高" in r.text
     assert "金融資産合計" in r.text
 
+    # CSV/Excelエクスポート
+    csv_response = await client.get(
+        f"/households/{household_id}/export.csv?granularity=yearly"
+    )
+    assert csv_response.status_code == 200
+    assert csv_response.headers["content-type"].startswith("text/csv")
+    assert csv_response.content.startswith(b"\xef\xbb\xbf")
+    assert "年" in csv_response.content.decode("utf-8-sig")
+    xlsx_response = await client.get(
+        f"/households/{household_id}/export.xlsx?granularity=monthly"
+    )
+    assert xlsx_response.status_code == 200
+    assert xlsx_response.headers["content-type"].startswith(
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+    assert xlsx_response.content[:2] == b"PK"
+
     # 年次行から月次明細へドリルダウン
     r = await client.get(f"/households/{household_id}/simulate/monthly?year=2026")
     assert r.status_code == 200

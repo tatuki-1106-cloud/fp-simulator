@@ -3,14 +3,18 @@
 from __future__ import annotations
 
 import contextlib
+import csv
 import datetime
+import io
 import os
 import pathlib
 import uuid
+import zipfile
 from collections.abc import AsyncIterator
+from xml.sax.saxutils import escape
 
 from fastapi import FastAPI, Form, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -71,6 +75,106 @@ app.mount("/mcp", mcp_app)
 # 静的ファイル・テンプレート
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 templates = Jinja2Templates(directory=BASE_DIR / "templates")
+
+
+def _export_rows(result, granularity: str) -> list[list[object]]:
+    """シミュレーション結果をCSV/Excel共通の行データへ変換."""
+    if granularity == "yearly":
+        yearly = _yearly_summary(result.monthly)
+        rows: list[list[object]] = [[
+            "年", "年齢", "収入", "支出", "税・社保", "収支",
+            "現金・預金", "iDeCo", "NISA", "金融資産合計",
+        ]]
+        rows.extend([
+            [
+                item["year"], item["age"], item["income"], item["expense"],
+                item["tax_si"], item["net"], item["balance_end"],
+                item["ideco_balance_end"], item["nisa_balance_end"],
+                item["total_assets_end"],
+            ]
+            for item in yearly
+        ])
+        return rows
+
+    rows = [[
+        "年月", "年齢", "給与収入", "年金収入", "退職金", "その他収入",
+        "死亡保険金", "社会保険", "所得税", "住民税", "生活費", "イベント支出",
+        "ローン返済", "教育費", "保険料", "iDeCo掛金", "NISA投資",
+        "収支", "現金・預金", "iDeCo残高", "NISA残高", "金融資産合計",
+    ]]
+    rows.extend([
+        [
+            month.date.isoformat(), month.age, month.salary_income,
+            month.pension_income, month.retirement_income, month.other_income,
+            month.death_benefit, month.social_insurance, month.income_tax,
+            month.resident_tax, month.living_expense, month.event_expense,
+            month.loan_payment, month.education_expense, month.insurance_premium,
+            month.ideco_contribution, month.nisa_investment, month.net,
+            month.balance, month.ideco_balance, month.nisa_balance,
+            month.total_assets,
+        ]
+        for month in result.monthly
+    ])
+    return rows
+
+
+def _xlsx_bytes(rows: list[list[object]]) -> bytes:
+    """外部依存なしで最小構成の.xlsxを生成."""
+    def cell_ref(column: int, row: int) -> str:
+        letters = ""
+        while column:
+            column, remainder = divmod(column - 1, 26)
+            letters = chr(65 + remainder) + letters
+        return f"{letters}{row}"
+
+    sheet_rows = []
+    for row_number, row in enumerate(rows, 1):
+        cells = []
+        for column_number, value in enumerate(row, 1):
+            if isinstance(value, (int, float)):
+                cells.append(
+                    f'<c r="{cell_ref(column_number, row_number)}" t="n"><v>{value}</v></c>'
+                )
+            else:
+                text = escape(str(value))
+                cells.append(
+                    f'<c r="{cell_ref(column_number, row_number)}" t="inlineStr">'
+                    f"<is><t>{text}</t></is></c>"
+                )
+        sheet_rows.append(f'<row r="{row_number}">{"".join(cells)}</row>')
+
+    files = {
+        "[Content_Types].xml": """<?xml version="1.0" encoding="UTF-8"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+<Default Extension="xml" ContentType="application/xml"/>
+<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
+<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
+</Types>""",
+        "_rels/.rels": """<?xml version="1.0" encoding="UTF-8"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>
+</Relationships>""",
+        "xl/workbook.xml": """<?xml version="1.0" encoding="UTF-8"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+<sheets><sheet name="キャッシュフロー" sheetId="1" r:id="rId1"/></sheets>
+</workbook>""",
+        "xl/_rels/workbook.xml.rels": """<?xml version="1.0" encoding="UTF-8"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
+</Relationships>""",
+        "xl/worksheets/sheet1.xml": (
+            """<?xml version="1.0" encoding="UTF-8"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+<sheetData>""" + "".join(sheet_rows) + "</sheetData></worksheet>"
+        ),
+    }
+    output = io.BytesIO()
+    with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as archive:
+        for name, content in files.items():
+            archive.writestr(name, content.encode("utf-8"))
+    return output.getvalue()
 
 
 @app.middleware("http")
@@ -749,6 +853,64 @@ async def simulate_result(
             "active_q": "sim",
         },
     )
+
+
+async def _export_response(
+    household_id: str,
+    plan_id: str | None,
+    granularity: str,
+    excel: bool,
+) -> Response:
+    household = await get_household(household_id)
+    if household is None:
+        return Response("世帯が見つかりません", status_code=404)
+    selected_plan = await get_plan(household_id, plan_id) if plan_id else None
+    if plan_id and selected_plan is None:
+        return Response("プランが見つかりません", status_code=404)
+
+    from fp_simulator.engine.cashflow import simulate
+
+    simulation_household = selected_plan or household
+    rows = _export_rows(simulate(get_store(), simulation_household), granularity)
+    suffix = "xlsx" if excel else "csv"
+    filename = f"fp-simulator-{granularity}.{suffix}"
+    if excel:
+        content = _xlsx_bytes(rows)
+        media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    else:
+        csv_buffer = io.StringIO()
+        csv.writer(csv_buffer, lineterminator="\r\n").writerows(rows)
+        content = csv_buffer.getvalue().encode("utf-8-sig")
+        media_type = "text/csv; charset=utf-8"
+    return Response(
+        content,
+        media_type=media_type,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.get("/households/{household_id}/export.csv")
+async def export_csv(
+    household_id: str,
+    plan_id: str | None = None,
+    granularity: str = "yearly",
+) -> Response:
+    """キャッシュフローをCSVでダウンロード."""
+    if granularity not in {"monthly", "yearly"}:
+        return Response("granularity must be monthly or yearly", status_code=400)
+    return await _export_response(household_id, plan_id, granularity, excel=False)
+
+
+@app.get("/households/{household_id}/export.xlsx")
+async def export_xlsx(
+    household_id: str,
+    plan_id: str | None = None,
+    granularity: str = "yearly",
+) -> Response:
+    """キャッシュフローをExcelでダウンロード."""
+    if granularity not in {"monthly", "yearly"}:
+        return Response("granularity must be monthly or yearly", status_code=400)
+    return await _export_response(household_id, plan_id, granularity, excel=True)
 
 
 @app.get("/households/{household_id}/compare", response_class=HTMLResponse)

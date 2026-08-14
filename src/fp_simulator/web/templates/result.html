@@ -8,6 +8,13 @@
   |
   <a href="/households/{{ household.id }}/disaster">万が一シナリオを開く</a>
 </p>
+<p>
+  エクスポート:
+  <a href="/households/{{ household.id }}/export.csv?granularity=yearly{% if plan_id %}&plan_id={{ plan_id }}{% endif %}">CSV（年次）</a> |
+  <a href="/households/{{ household.id }}/export.csv?granularity=monthly{% if plan_id %}&plan_id={{ plan_id }}{% endif %}">CSV（月次）</a> |
+  <a href="/households/{{ household.id }}/export.xlsx?granularity=yearly{% if plan_id %}&plan_id={{ plan_id }}{% endif %}">Excel（年次）</a> |
+  <a href="/households/{{ household.id }}/export.xlsx?granularity=monthly{% if plan_id %}&plan_id={{ plan_id }}{% endif %}">Excel（月次）</a>
+</p>
 
 <h2>サマリー</h2>
 <table>
