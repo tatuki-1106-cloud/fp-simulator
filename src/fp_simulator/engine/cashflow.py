@@ -916,6 +916,7 @@ def simulate(
                 end_date=ins_end,
                 death_benefit=ins.death_benefit,
                 surrender_value_rate=ins.surrender_value_rate,
+                insurance_type=ins.insurance_type,
             )
             payer = next((m for m in household.members if m.id == ins.payer_member_id), None)
             premium = (
@@ -925,7 +926,9 @@ def simulate(
             )
             cf.insurance_premium += premium
             if premium > 0:
-                cf.traces.append(TraceEntry("保険料", premium, {"name": ins.name}))
+                cf.traces.append(
+                    TraceEntry("保険料", premium, {"name": ins.name, "type": ins.insurance_type})
+                )
 
             insured = next((m for m in household.members if m.id == ins.insured_member_id), None)
             if (

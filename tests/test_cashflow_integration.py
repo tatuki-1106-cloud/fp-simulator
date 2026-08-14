@@ -18,6 +18,7 @@ from fp_simulator.engine.models import (
     Household,
     Income,
     IdecoPlan,
+    Insurance,
     Member,
     NisaPlan,
     OwnedHousingPlan,
@@ -516,6 +517,30 @@ class TestCashflowIntegration:
         assert first_year.event_expense == 100_000
         assert second_year.event_expense == 110_000
         assert after.event_expense == 0
+
+    def test_insurance_premium_and_death_benefit_are_integrated(
+        self, store, household: Household
+    ) -> None:
+        """保険料を計上し、万が一時に死亡保険金を受け取る."""
+        household.insurances.append(
+            Insurance(
+                id="life",
+                name="定期生命保険",
+                insured_member_id="husband",
+                payer_member_id="husband",
+                monthly_premium=10_000,
+                start_year=2026,
+                start_month=1,
+                end_year=2060,
+                end_month=12,
+                death_benefit=10_000_000,
+            )
+        )
+        result = simulate(store, household, DisasterScenario("husband", 40))
+        first = next(m for m in result.monthly if m.date == datetime.date(2026, 1, 1))
+        death = next(m for m in result.monthly if m.date == datetime.date(2036, 4, 1))
+        assert first.insurance_premium == 10_000
+        assert death.death_benefit == 10_000_000
 
     def test_traces_exist(self, store, household: Household) -> None:
         """トレーサビリティ情報が付与されている."""

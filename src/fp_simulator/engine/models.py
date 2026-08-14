@@ -224,6 +224,7 @@ class Insurance(BaseModel):
 
     id: str
     name: str
+    insurance_type: Literal["死亡保障", "医療", "就業不能", "個人年金"] = "死亡保障"
     insured_member_id: str
     payer_member_id: str
     monthly_premium: int

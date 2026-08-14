@@ -18,7 +18,12 @@ from fp_simulator.engine.investment import (
     nisa_monthly_step,
     withdrawal_amount,
 )
-from fp_simulator.engine.insurance import InsurancePolicy, monthly_premium_in_period, surrender_value
+from fp_simulator.engine.insurance import (
+    InsurancePolicy,
+    analyze_coverage,
+    monthly_premium_in_period,
+    surrender_value,
+)
 from fp_simulator.engine.childcare_leave import (
     childcare_benefit,
     is_social_insurance_exempt,
@@ -122,6 +127,36 @@ class TestInsurance:
         )
         # 5年後(60ヶ月): 10,000×60×0.8 = 480,000
         assert surrender_value(policy, datetime.date(2025, 1, 1)) == 480_000
+
+    def test_analyze_coverage(self) -> None:
+        """有効契約の保険料・保障額・種類別集計を返す."""
+        policies = [
+            InsurancePolicy(
+                name="生命保険",
+                insurance_type="死亡保障",
+                insured_member_id="m1",
+                payer_member_id="m1",
+                monthly_premium=10_000,
+                start_date=datetime.date(2020, 1, 1),
+                end_date=datetime.date(2060, 12, 1),
+                death_benefit=10_000_000,
+            ),
+            InsurancePolicy(
+                name="医療保険",
+                insurance_type="医療",
+                insured_member_id="m1",
+                payer_member_id="m1",
+                monthly_premium=5_000,
+                start_date=datetime.date(2020, 1, 1),
+                end_date=datetime.date(2024, 12, 1),
+                death_benefit=0,
+            ),
+        ]
+        summary = analyze_coverage(policies, datetime.date(2025, 1, 1))
+        assert summary.active_policy_count == 1
+        assert summary.monthly_premium == 10_000
+        assert summary.death_benefit == 10_000_000
+        assert summary.by_type == {"死亡保障": 10_000_000}
 
 
 class TestChildcareLeave:

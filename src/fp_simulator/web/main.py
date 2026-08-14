@@ -50,6 +50,7 @@ from fp_simulator.engine.models import (
     SocialInsuranceType,
     Vehicle,
 )
+from fp_simulator.engine.insurance import InsurancePolicy, analyze_coverage
 from fp_simulator.parameters.loader import get_store
 from fp_simulator.mcp_server.server import mcp as mcp_server
 from fp_simulator.web.auth import McpAuthMiddleware, authenticated_email, iap_auth_required
@@ -989,12 +990,37 @@ async def events_delete(request: Request, household_id: str, expense_id: str) ->
 
 
 @app.get("/households/{household_id}/insurance", response_class=HTMLResponse)
-async def insurance_edit(request: Request, household_id: str) -> HTMLResponse:
+async def insurance_edit(request: Request, household_id: str) -> Response:
     household = await get_household(household_id)
     if household is None:
         return RedirectResponse("/", status_code=303)
+    policies = [
+        InsurancePolicy(
+            name=insurance.name,
+            insurance_type=insurance.insurance_type,
+            insured_member_id=insurance.insured_member_id,
+            payer_member_id=insurance.payer_member_id,
+            monthly_premium=insurance.monthly_premium,
+            start_date=datetime.date(insurance.start_year, insurance.start_month, 1),
+            end_date=datetime.date(insurance.end_year, insurance.end_month, 1),
+            death_benefit=insurance.death_benefit,
+            surrender_value_rate=insurance.surrender_value_rate,
+        )
+        for insurance in household.insurances
+    ]
+    analysis = analyze_coverage(
+        policies,
+        datetime.date(household.assumptions.base_year, household.assumptions.base_month, 1),
+    )
     return templates.TemplateResponse(
-        request, "wizard/insurance.html", {"title": "Q10 保険", "household": household, "active_q": "Q10"}
+        request,
+        "wizard/insurance.html",
+        {
+            "title": "Q10 保険",
+            "household": household,
+            "active_q": "Q10",
+            "insurance_analysis": analysis,
+        },
     )
 
 
@@ -1003,6 +1029,7 @@ async def insurance_add(
     request: Request,
     household_id: str,
     name: str = Form(...),
+    insurance_type: str = Form("死亡保障"),
     insured_member_id: str = Form(...),
     payer_member_id: str = Form(...),
     monthly_premium: int = Form(...),
@@ -1011,14 +1038,34 @@ async def insurance_add(
     end_year: int = Form(2060),
     end_month: int = Form(12),
     death_benefit: int = Form(0),
-) -> RedirectResponse:
+    surrender_value_rate: float = Form(0.0),
+) -> Response:
     household = await get_household(household_id)
     if household is None:
         return RedirectResponse("/", status_code=303)
+    if insurance_type not in {"死亡保障", "医療", "就業不能", "個人年金"}:
+        return Response("insurance_type is invalid", status_code=400)
+    if not any(member.id == insured_member_id for member in household.members):
+        return Response("insured_member_id does not exist", status_code=400)
+    if not any(member.id == payer_member_id for member in household.members):
+        return Response("payer_member_id does not exist", status_code=400)
+    if monthly_premium < 0 or death_benefit < 0:
+        return Response("insurance amounts must not be negative", status_code=400)
+    if not 0 <= surrender_value_rate <= 1:
+        return Response("surrender_value_rate must be between 0 and 1", status_code=400)
+    if not 1900 <= start_year <= 2200 or not 1900 <= end_year <= 2200:
+        return Response("insurance year is invalid", status_code=400)
+    if not 1 <= start_month <= 12 or not 1 <= end_month <= 12:
+        return Response("insurance month is invalid", status_code=400)
+    start_date = datetime.date(start_year, start_month, 1)
+    end_date = datetime.date(end_year, end_month, 1)
+    if end_date < start_date:
+        return Response("insurance end must not precede start", status_code=400)
     household.insurances.append(
         Insurance(
             id=str(uuid.uuid4()),
             name=name,
+            insurance_type=insurance_type,
             insured_member_id=insured_member_id,
             payer_member_id=payer_member_id,
             monthly_premium=monthly_premium,
@@ -1027,6 +1074,7 @@ async def insurance_add(
             end_year=end_year,
             end_month=end_month,
             death_benefit=death_benefit,
+            surrender_value_rate=surrender_value_rate,
         )
     )
     await save_household(household)
@@ -1036,6 +1084,33 @@ async def insurance_add(
         "web",
         "household.insurance.add",
         details={"name": name, "monthly_premium": monthly_premium},
+    )
+    return RedirectResponse(f"/households/{household_id}/insurance", status_code=303)
+
+
+@app.post("/households/{household_id}/insurance/{insurance_id}/delete")
+async def insurance_delete(
+    request: Request, household_id: str, insurance_id: str
+) -> RedirectResponse:
+    """保険を削除."""
+    household = await get_household(household_id)
+    if household is None:
+        return RedirectResponse("/", status_code=303)
+    removed = next(
+        (insurance for insurance in household.insurances if insurance.id == insurance_id),
+        None,
+    )
+    household.insurances = [
+        insurance for insurance in household.insurances if insurance.id != insurance_id
+    ]
+    await save_household(household)
+    await add_audit_log(
+        household_id,
+        getattr(request.state, "authenticated_email", None) or "web-user",
+        "web",
+        "household.insurance.delete",
+        insurance_id,
+        {"name": removed.name} if removed else {},
     )
     return RedirectResponse(f"/households/{household_id}/insurance", status_code=303)
 

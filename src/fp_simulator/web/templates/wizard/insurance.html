@@ -5,17 +5,31 @@
 {{ lifemap(household) }}
 
 {% if household.insurances %}
+<section class="form-card">
+  <h2>保障分析（{{ household.assumptions.base_year }}/{{ household.assumptions.base_month }}時点）</h2>
+  <p>有効契約: {{ insurance_analysis.active_policy_count }}件</p>
+  <p>月額保険料: {{ "{:,}".format(insurance_analysis.monthly_premium) }}円</p>
+  <p>死亡保障合計: {{ "{:,}".format(insurance_analysis.death_benefit) }}円</p>
+  <p>解約返戻金（簡易推計）: {{ "{:,}".format(insurance_analysis.surrender_value) }}円</p>
+  <ul>
+    {% for insurance_type, amount in insurance_analysis.by_type.items() %}
+    <li>{{ insurance_type }}: {{ "{:,}".format(amount) }}円</li>
+    {% endfor %}
+  </ul>
+</section>
 <table>
-  <thead><tr><th>名前</th><th>被保険者</th><th>月額保険料</th><th>期間</th><th>死亡保険金</th></tr></thead>
+  <thead><tr><th>種類</th><th>名前</th><th>被保険者</th><th>月額保険料</th><th>期間</th><th>死亡保険金</th><th></th></tr></thead>
   <tbody>
   {% for i in household.insurances %}
   {% set insured = household.members | selectattr("id", "equalto", i.insured_member_id) | first %}
     <tr>
+      <td>{{ i.insurance_type }}</td>
       <td>{{ i.name }}</td>
       <td>{{ insured.name if insured else i.insured_member_id }}</td>
       <td>{{ "{:,}".format(i.monthly_premium) }}円</td>
       <td>{{ i.start_year }}/{{ i.start_month }}〜{{ i.end_year }}/{{ i.end_month }}</td>
       <td>{{ "{:,}".format(i.death_benefit) }}円</td>
+      <td><form method="post" action="/households/{{ household.id }}/insurance/{{ i.id }}/delete"><button type="submit">削除</button></form></td>
     </tr>
   {% endfor %}
   </tbody>
@@ -25,6 +39,14 @@
 <h2>保険を追加</h2>
 <form method="post" action="/households/{{ household.id }}/insurance">
   <p><label>名前: <input type="text" name="name" required></label></p>
+  <p><label>種類:
+    <select name="insurance_type">
+      <option value="死亡保障">死亡保障</option>
+      <option value="医療">医療</option>
+      <option value="就業不能">就業不能</option>
+      <option value="個人年金">個人年金</option>
+    </select>
+  </label></p>
   <p><label>被保険者:
     <select name="insured_member_id">
       {% for m in household.members %}<option value="{{ m.id }}">{{ m.name }}</option>{% endfor %}
@@ -37,6 +59,7 @@
   <p><label>開始: <input type="number" name="start_year" value="2026">年<input type="number" name="start_month" value="1" min="1" max="12">月</label></p>
   <p><label>終了: <input type="number" name="end_year" value="2060">年<input type="number" name="end_month" value="12" min="1" max="12">月</label></p>
   <p><label>死亡保険金: <input type="number" name="death_benefit" value="0"></label>円</p>
+  <p><label>解約返戻率: <input type="number" name="surrender_value_rate" value="0" min="0" max="1" step="0.01"></label> (例: 0.8 = 80%)</p>
   <p><button type="submit">追加</button></p>
 </form>
 {% endblock %}

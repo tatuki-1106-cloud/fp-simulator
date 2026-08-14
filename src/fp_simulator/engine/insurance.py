@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import datetime
 from dataclasses import dataclass
+from collections.abc import Iterable
 
 
 @dataclass(frozen=True)
@@ -21,6 +22,18 @@ class InsurancePolicy:
     end_date: datetime.date  # 保障期間終了
     death_benefit: int = 0  # 死亡保険金
     surrender_value_rate: float = 0.0  # 解約返戻率(年率、簡易)
+    insurance_type: str = "死亡保障"
+
+
+@dataclass(frozen=True)
+class InsuranceCoverageSummary:
+    """基準日時点の保険保障集計."""
+
+    active_policy_count: int
+    monthly_premium: int
+    death_benefit: int
+    surrender_value: int
+    by_type: dict[str, int]
 
 
 def monthly_premium_in_period(
@@ -53,3 +66,24 @@ def surrender_value(
     months = (date.year - policy.start_date.year) * 12 + (date.month - policy.start_date.month)
     total_paid = policy.monthly_premium * min(months, (policy.end_date.year - policy.start_date.year) * 12 + (policy.end_date.month - policy.start_date.month))
     return int(total_paid * policy.surrender_value_rate)
+
+
+def analyze_coverage(
+    policies: Iterable[InsurancePolicy], date: datetime.date
+) -> InsuranceCoverageSummary:
+    """基準日時点で有効な保険の保障・保険料・返戻金を集計する."""
+    active = [
+        policy
+        for policy in policies
+        if policy.start_date <= date <= policy.end_date
+    ]
+    by_type: dict[str, int] = {}
+    for policy in active:
+        by_type[policy.insurance_type] = by_type.get(policy.insurance_type, 0) + policy.death_benefit
+    return InsuranceCoverageSummary(
+        active_policy_count=len(active),
+        monthly_premium=sum(policy.monthly_premium for policy in active),
+        death_benefit=sum(policy.death_benefit for policy in active),
+        surrender_value=sum(surrender_value(policy, date) for policy in active),
+        by_type=by_type,
+    )

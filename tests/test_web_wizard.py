@@ -189,6 +189,48 @@ async def test_create_household_and_full_flow(client: AsyncClient) -> None:
     assert "たろう" in r.text
     assert "2035-04-01" in r.text
 
+    # Q10保険を追加し、保障分析を表示
+    insurance_response = await client.post(
+        f"/households/{household_id}/insurance",
+        data={
+            "name": "定期生命保険",
+            "insurance_type": "死亡保障",
+            "insured_member_id": husband_id,
+            "payer_member_id": husband_id,
+            "monthly_premium": 10000,
+            "start_year": 2026,
+            "start_month": 1,
+            "end_year": 2060,
+            "end_month": 12,
+            "death_benefit": 10000000,
+            "surrender_value_rate": 0.8,
+        },
+    )
+    assert insurance_response.status_code == 303
+    r = await client.get(f"/households/{household_id}/insurance")
+    assert r.status_code == 200
+    assert "保障分析" in r.text
+    assert "10,000,000円" in r.text
+    invalid_insurance = await client.post(
+        f"/households/{household_id}/insurance",
+        data={
+            "name": "不正な保険",
+            "insurance_type": "死亡保障",
+            "insured_member_id": "missing-member",
+            "payer_member_id": husband_id,
+            "monthly_premium": 10000,
+        },
+    )
+    assert invalid_insurance.status_code == 400
+    stored_household = await get_household(household_id)
+    insurance_id = stored_household.insurances[0].id
+    delete_response = await client.post(
+        f"/households/{household_id}/insurance/{insurance_id}/delete"
+    )
+    assert delete_response.status_code == 303
+    r = await client.get(f"/households/{household_id}/insurance")
+    assert "定期生命保険" not in r.text
+
     for path, label in [
         ("housing", "Q6. 住まい"),
         ("vehicles", "Q7. 乗り物"),
