@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>保存プラン</h1>
+    <p class="muted">{{ household.name }} の入力スナップショット履歴</p>
+  </div>
+</div>
+
+<section class="card">
+  <h2>現在のプランを保存</h2>
+  <form method="post" action="/households/{{ household.id }}/plans" class="inline-form">
+    <input type="text" name="name" value="保存プラン" required maxlength="100">
+    <button type="submit">保存</button>
+  </form>
+</section>
+
+<section class="card">
+  <h2>保存履歴</h2>
+  {% if plans %}
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>プラン名</th><th>作成日時</th><th>操作</th></tr></thead>
+      <tbody>
+      {% for plan in plans %}
+      <tr>
+        <td>{{ plan.name }}</td>
+        <td>{{ plan.created_at[:16].replace('T', ' ') }}</td>
+        <td class="actions">
+          <a class="button btn-secondary" href="/households/{{ household.id }}/simulate?plan_id={{ plan.id }}">結果を見る</a>
+          <form method="post" action="/households/{{ household.id }}/plans/{{ plan.id }}/restore">
+            <button type="submit" class="btn-secondary">復元</button>
+          </form>
+          <form method="post" action="/households/{{ household.id }}/plans/{{ plan.id }}/copy" class="inline-form">
+            <input type="text" name="name" value="{{ plan.name }} コピー" required maxlength="100">
+            <button type="submit" class="btn-secondary">コピー</button>
+          </form>
+          <form method="post" action="/households/{{ household.id }}/plans/{{ plan.id }}/delete">
+            <button type="submit" class="btn-danger" onclick="return confirm('この保存プランを削除しますか？')">削除</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="muted">保存されたプランはありません。</p>
+  {% endif %}
+</section>
+{% endblock %}

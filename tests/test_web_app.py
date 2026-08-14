@@ -9,7 +9,9 @@ from fp_simulator.db.database import (
     assign_owner_to_unowned,
     delete_household,
     get_household,
+    get_plan,
     init_db,
+    list_plans,
     save_household,
 )
 from fp_simulator.engine.models import Household
@@ -91,3 +93,46 @@ async def test_assign_owner_to_unowned_preserves_existing_owner() -> None:
     finally:
         await delete_household("legacy-household")
         await delete_household("owned-household")
+
+
+async def test_plan_save_copy_restore_and_delete(client: AsyncClient) -> None:
+    """保存プランは独立したスナップショットとして扱える."""
+    household = Household(id="plan-household", name="元プラン")
+    await save_household(household)
+    try:
+        saved = await client.post(
+            "/households/plan-household/plans",
+            data={"name": "基準プラン"},
+            follow_redirects=False,
+        )
+        assert saved.status_code == 303
+        plans = await list_plans("plan-household")
+        assert len(plans) == 1
+        plan_id = plans[0]["id"]
+
+        copied = await client.post(
+            f"/households/plan-household/plans/{plan_id}/copy",
+            data={"name": "コピー"},
+            follow_redirects=False,
+        )
+        assert copied.status_code == 303
+        assert len(await list_plans("plan-household")) == 2
+
+        restored = await client.post(
+            f"/households/plan-household/plans/{plan_id}/restore",
+            follow_redirects=False,
+        )
+        assert restored.status_code == 303
+        restored_household = await get_household("plan-household")
+        assert restored_household is not None
+        assert restored_household.name == "基準プラン"
+        assert await get_plan("plan-household", plan_id) is not None
+
+        deleted = await client.post(
+            f"/households/plan-household/plans/{plan_id}/delete",
+            follow_redirects=False,
+        )
+        assert deleted.status_code == 303
+        assert len(await list_plans("plan-household")) == 1
+    finally:
+        await delete_household("plan-household")

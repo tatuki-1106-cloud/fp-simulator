@@ -27,11 +27,24 @@ CREATE TABLE IF NOT EXISTS households (
 );
 """
 
+CREATE_PLANS_TABLE = """
+CREATE TABLE IF NOT EXISTS plans (
+    id TEXT PRIMARY KEY,
+    household_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    data TEXT NOT NULL,
+    parent_plan_id TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+"""
+
 
 async def init_db() -> None:
     """テーブルを初期化."""
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(CREATE_TABLE)
+        await db.execute(CREATE_PLANS_TABLE)
         await db.commit()
 
 
@@ -111,4 +124,89 @@ async def delete_household(household_id: str) -> None:
     """世帯を削除."""
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("DELETE FROM households WHERE id = ?", (household_id,))
+        await db.execute("DELETE FROM plans WHERE household_id = ?", (household_id,))
+        await db.commit()
+
+
+async def save_plan_snapshot(
+    household_id: str,
+    household: Household,
+    name: str,
+    parent_plan_id: str | None = None,
+) -> dict[str, str]:
+    """世帯の現在状態を名前付きプランとして保存."""
+    plan_id = str(uuid.uuid4())
+    now = datetime.datetime.now(datetime.UTC).isoformat()
+    snapshot = household.model_copy(deep=True)
+    snapshot.name = name.strip() or "保存プラン"
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            """
+            INSERT INTO plans (id, household_id, name, data, parent_plan_id, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                plan_id,
+                household_id,
+                snapshot.name,
+                snapshot.model_dump_json(),
+                parent_plan_id,
+                now,
+                now,
+            ),
+        )
+        await db.commit()
+    return {
+        "id": plan_id,
+        "household_id": household_id,
+        "name": snapshot.name,
+        "parent_plan_id": parent_plan_id or "",
+        "created_at": now,
+        "updated_at": now,
+    }
+
+
+async def get_plan(household_id: str, plan_id: str) -> Household | None:
+    """世帯に属する保存プランを取得."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT data FROM plans WHERE id = ? AND household_id = ?",
+            (plan_id, household_id),
+        ) as cursor:
+            row = await cursor.fetchone()
+    if row is None:
+        return None
+    return Household.model_validate_json(row[0])
+
+
+async def list_plans(household_id: str) -> list[dict[str, str]]:
+    """世帯の保存プラン履歴を新しい順で返す."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            """
+            SELECT id, name, parent_plan_id, created_at, updated_at
+            FROM plans WHERE household_id = ? ORDER BY updated_at DESC
+            """,
+            (household_id,),
+        ) as cursor:
+            rows = await cursor.fetchall()
+    return [
+        {
+            "id": plan_id,
+            "name": name,
+            "parent_plan_id": parent_plan_id or "",
+            "created_at": created_at,
+            "updated_at": updated_at,
+        }
+        for plan_id, name, parent_plan_id, created_at, updated_at in rows
+    ]
+
+
+async def delete_plan(household_id: str, plan_id: str) -> None:
+    """世帯に属する保存プランを削除."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "DELETE FROM plans WHERE id = ? AND household_id = ?",
+            (plan_id, household_id),
+        )
         await db.commit()

@@ -16,11 +16,15 @@ from fastapi.templating import Jinja2Templates
 
 from fp_simulator.db.database import (
     delete_household,
+    delete_plan,
     assign_owner_to_unowned,
     get_household,
+    get_plan,
     init_db,
+    list_plans,
     list_households,
     save_household,
+    save_plan_snapshot,
 )
 from fp_simulator.engine.models import (
     Account,
@@ -542,6 +546,68 @@ async def household_delete(household_id: str) -> RedirectResponse:
     return RedirectResponse("/", status_code=303)
 
 
+@app.get("/households/{household_id}/plans", response_class=HTMLResponse)
+async def plans_list(request: Request, household_id: str) -> HTMLResponse:
+    """保存プランの一覧."""
+    household = await get_household(household_id)
+    if household is None:
+        return RedirectResponse("/", status_code=303)
+    plans = await list_plans(household_id)
+    return templates.TemplateResponse(
+        request,
+        "plans.html",
+        {"title": "保存プラン", "household": household, "plans": plans, "active_q": "plans"},
+    )
+
+
+@app.post("/households/{household_id}/plans")
+async def plan_save(
+    household_id: str,
+    name: str = Form("保存プラン"),
+) -> RedirectResponse:
+    """現在の世帯状態を保存プランとして追加."""
+    household = await get_household(household_id)
+    if household is None:
+        return RedirectResponse("/", status_code=303)
+    await save_plan_snapshot(household_id, household, name)
+    return RedirectResponse(f"/households/{household_id}/plans", status_code=303)
+
+
+@app.post("/households/{household_id}/plans/{plan_id}/copy")
+async def plan_copy(
+    household_id: str,
+    plan_id: str,
+    name: str = Form("コピー"),
+) -> RedirectResponse:
+    """保存済みプランを複製."""
+    household = await get_household(household_id)
+    source = await get_plan(household_id, plan_id)
+    if household is None or source is None:
+        return RedirectResponse(f"/households/{household_id}/plans", status_code=303)
+    await save_plan_snapshot(household_id, source, name, parent_plan_id=plan_id)
+    return RedirectResponse(f"/households/{household_id}/plans", status_code=303)
+
+
+@app.post("/households/{household_id}/plans/{plan_id}/restore")
+async def plan_restore(household_id: str, plan_id: str) -> RedirectResponse:
+    """保存プランを現在の世帯へ復元."""
+    current = await get_household(household_id)
+    snapshot = await get_plan(household_id, plan_id)
+    if current is None or snapshot is None:
+        return RedirectResponse(f"/households/{household_id}/plans", status_code=303)
+    snapshot.id = current.id
+    snapshot.owner_email = current.owner_email
+    await save_household(snapshot)
+    return RedirectResponse(f"/households/{household_id}/plans", status_code=303)
+
+
+@app.post("/households/{household_id}/plans/{plan_id}/delete")
+async def plan_delete(household_id: str, plan_id: str) -> RedirectResponse:
+    """保存済みプランを削除."""
+    await delete_plan(household_id, plan_id)
+    return RedirectResponse(f"/households/{household_id}/plans", status_code=303)
+
+
 # --- シミュレーション結果 ---
 
 def _yearly_summary(monthly) -> list[dict]:
@@ -576,16 +642,22 @@ def _yearly_summary(monthly) -> list[dict]:
 
 
 @app.get("/households/{household_id}/simulate", response_class=HTMLResponse)
-async def simulate_result(request: Request, household_id: str) -> HTMLResponse:
+async def simulate_result(
+    request: Request, household_id: str, plan_id: str | None = None
+) -> HTMLResponse:
     """シミュレーション実行・結果表示."""
     household = await get_household(household_id)
     if household is None:
         return RedirectResponse("/", status_code=303)
+    selected_plan = await get_plan(household_id, plan_id) if plan_id else None
+    if plan_id and selected_plan is None:
+        return RedirectResponse(f"/households/{household_id}/plans", status_code=303)
+    simulation_household = selected_plan or household
 
     store = get_store()
     from fp_simulator.engine.cashflow import simulate
 
-    result = simulate(store, household)
+    result = simulate(store, simulation_household)
 
     yearly_list = _yearly_summary(result.monthly)
 
@@ -605,8 +677,10 @@ async def simulate_result(request: Request, household_id: str) -> HTMLResponse:
         request,
         "result.html",
         {
-            "title": "シミュレーション結果",
+            "title": f"シミュレーション結果 — {simulation_household.name}",
             "household": household,
+            "simulation_household": simulation_household,
+            "plan_id": plan_id,
             "yearly": yearly_list,
             "labels": labels,
             "balances": balances,
