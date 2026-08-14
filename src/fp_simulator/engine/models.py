@@ -91,12 +91,20 @@ class Expense(BaseModel):
     start_month: int = 1
     end_age: int | None = None
     end_month: int = 12
+    start_date: datetime.date | None = None
+    end_date: datetime.date | None = None
     monthly_amount: int = 0  # 月額(円)
     # 周期: 毎月 or 毎年 or 1回限り
     cycle: Literal["monthly", "yearly", "once"] = "monthly"
     yearly_month: int = 1  # cycle=yearly の支払月
     annual_raise_rate: float = 0.0
     disaster_amount: int | None = None  # 万が一時の1回/月/年あたり金額
+
+    @model_validator(mode="after")
+    def validate_dates(self) -> Expense:
+        if self.start_date and self.end_date and self.end_date < self.start_date:
+            raise ValueError("end_date must not precede start_date")
+        return self
 
 
 class Loan(BaseModel):

@@ -167,6 +167,7 @@ async def test_create_household_and_full_flow(client: AsyncClient) -> None:
         data={
             "event_type": "結婚援助",
             "name": "子どもの結婚援助",
+            "member_id": husband_id,
             "monthly_amount": 1000000,
             "cycle": "once",
             "yearly_month": 1,
@@ -174,6 +175,9 @@ async def test_create_household_and_full_flow(client: AsyncClient) -> None:
             "start_month": 4,
             "end_age": 0,
             "end_month": 12,
+            "start_date": "2035-04-01",
+            "end_date": "2035-04-01",
+            "annual_raise_rate": 0.02,
             "disaster_amount": 300000,
         },
     )
@@ -182,6 +186,8 @@ async def test_create_household_and_full_flow(client: AsyncClient) -> None:
     assert r.status_code == 200
     assert "子どもの結婚援助" in r.text
     assert "結婚援助" in r.text
+    assert "たろう" in r.text
+    assert "2035-04-01" in r.text
 
     for path, label in [
         ("housing", "Q6. 住まい"),

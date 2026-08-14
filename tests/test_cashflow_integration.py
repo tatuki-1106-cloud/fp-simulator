@@ -489,6 +489,34 @@ class TestCashflowIntegration:
         )
         assert disaster_month.event_expense == 300_000
 
+    def test_family_event_supports_date_range_and_event_raise_rate(
+        self, store, household: Household
+    ) -> None:
+        """家族別イベントを日付範囲とイベント固有上昇率で計上する."""
+        household.expenses.append(
+            Expense(
+                id="family-event",
+                name="子ども支援",
+                event_type="汎用",
+                member_id="husband",
+                monthly_amount=100_000,
+                cycle="monthly",
+                start_date=datetime.date(2028, 1, 1),
+                end_date=datetime.date(2029, 12, 1),
+                annual_raise_rate=0.1,
+            )
+        )
+        result = simulate(store, household)
+        before = next(m for m in result.monthly if m.date == datetime.date(2027, 12, 1))
+        first_year = next(m for m in result.monthly if m.date == datetime.date(2028, 1, 1))
+        second_year = next(m for m in result.monthly if m.date == datetime.date(2029, 1, 1))
+        after = next(m for m in result.monthly if m.date == datetime.date(2030, 1, 1))
+
+        assert before.event_expense == 0
+        assert first_year.event_expense == 100_000
+        assert second_year.event_expense == 110_000
+        assert after.event_expense == 0
+
     def test_traces_exist(self, store, household: Household) -> None:
         """トレーサビリティ情報が付与されている."""
         result = simulate(store, household)

@@ -806,21 +806,34 @@ def simulate(
                         continue
                     if not member_alive(member, current):
                         continue
-                    member_age = age_at(member.birth_date, current)
-                    if member_age < expense.start_age:
-                        continue
-                    if expense.end_age is not None and member_age > expense.end_age:
-                        continue
+                    if expense.start_date is None:
+                        member_age = age_at(member.birth_date, current)
+                        if member_age < expense.start_age:
+                            continue
+                        if expense.end_age is not None and member_age > expense.end_age:
+                            continue
                 else:
                     # 世帯全体の支出: 世帯主年齢で判定。
-                    # start_age=0 は「基準年開始」を意味するため、年齢0以上は常に対象
-                    if expense.start_age > 0 and age < expense.start_age:
-                        continue
-                    if expense.end_age is not None and expense.end_age > 0 and age > expense.end_age:
-                        continue
+                    if expense.start_date is None:
+                        # start_age=0 は「基準年開始」を意味するため、年齢0以上は常に対象
+                        if expense.start_age > 0 and age < expense.start_age:
+                            continue
+                        if expense.end_age is not None and expense.end_age > 0 and age > expense.end_age:
+                            continue
+                if expense.start_date and current < expense.start_date:
+                    continue
+                if expense.end_date and current > expense.end_date:
+                    continue
 
                 years_elapsed = year - assumptions.base_year
-                raise_factor = (1 + expense.annual_raise_rate) ** years_elapsed
+                raise_start_year = (
+                    expense.start_date.year
+                    if expense.start_date
+                    else assumptions.base_year
+                )
+                raise_factor = (1 + expense.annual_raise_rate) ** max(
+                    0, year - raise_start_year
+                )
                 inflation_factor = (1 + assumptions.inflation_rate) ** years_elapsed
 
                 recurring_amount = int(expense.monthly_amount * raise_factor * inflation_factor)
@@ -837,12 +850,14 @@ def simulate(
                     cf.event_expense += recurring_amount
                 elif expense.cycle == "once":
                     # 開始年月の1回のみ
-                    event_year = (
+                    event_date = expense.start_date or datetime.date(
                         assumptions.base_year
                         if expense.start_age == 0
-                        else householder.birth_date.year + expense.start_age
+                        else householder.birth_date.year + expense.start_age,
+                        expense.start_month,
+                        1,
                     )
-                    if year == event_year and month == expense.start_month:
+                    if current == event_date:
                         cf.event_expense += once_amount
 
         if (

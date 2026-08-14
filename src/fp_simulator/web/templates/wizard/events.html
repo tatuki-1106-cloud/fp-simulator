@@ -9,16 +9,19 @@
   {% if event_expenses %}
   <table>
     <thead>
-      <tr><th>種類</th><th>内容</th><th>周期</th><th>金額</th><th>期間</th><th></th></tr>
+      <tr><th>種類</th><th>対象者</th><th>内容</th><th>周期</th><th>金額</th><th>期間</th><th>上昇率</th><th></th></tr>
     </thead>
     <tbody>
     {% for e in event_expenses %}
       <tr>
         <td>{{ e.event_type }}</td>
+        {% set member = household.members | selectattr("id", "equalto", e.member_id) | first %}
+        <td>{{ member.name if member else "世帯全体" }}</td>
         <td>{{ e.name }}</td>
         <td>{{ {"monthly": "毎月", "yearly": "毎年", "once": "1回"}[e.cycle] }}</td>
         <td>{{ "{:,}".format(e.monthly_amount) }}円</td>
-        <td>{{ e.start_age }}才 {{ e.start_month }}月〜{{ e.end_age if e.end_age else "生涯" }}</td>
+        <td>{% if e.start_date %}{{ e.start_date }}〜{{ e.end_date if e.end_date else "継続" }}{% else %}{{ e.start_age }}才 {{ e.start_month }}月〜{{ e.end_age if e.end_age else "生涯" }}{% endif %}</td>
+        <td>{{ "{:.1%}".format(e.annual_raise_rate) }}</td>
         <td>
           <form method="post" action="/households/{{ household.id }}/events/{{ e.id }}/delete">
             <button type="submit">削除</button>
@@ -44,6 +47,12 @@
     </select>
   </label></p>
   <p><label>内容: <input type="text" name="name" value="ライフイベント"></label></p>
+  <p><label>対象者:
+    <select name="member_id">
+      <option value="">世帯全体</option>
+      {% for member in household.members %}<option value="{{ member.id }}">{{ member.name }}（{{ member.relationship.value }}）</option>{% endfor %}
+    </select>
+  </label></p>
   <p><label>周期:
     <select name="cycle">
       <option value="once" selected>1回限り</option>
@@ -57,6 +66,9 @@
      <label>月: <input type="number" name="start_month" value="1" min="1" max="12"></label></p>
   <p><label>終了年齢(0=生涯): <input type="number" name="end_age" value="0" min="0" max="120"></label>
      <label>月: <input type="number" name="end_month" value="12" min="1" max="12"></label></p>
+  <p><label>開始日(任意): <input type="date" name="start_date"></label>
+     <label>終了日(任意): <input type="date" name="end_date"></label></p>
+  <p><label>イベント別上昇率: <input type="number" name="annual_raise_rate" value="0" min="-1" max="1" step="0.001"></label> (例: 0.02 = 2%)</p>
   <p><label>万が一時の金額(任意): <input type="number" name="disaster_amount" min="0"></label>円</p>
   <p><button type="submit">追加</button></p>
 </form>

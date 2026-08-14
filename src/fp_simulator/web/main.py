@@ -885,6 +885,7 @@ async def events_add(
     household_id: str,
     event_type: str = Form("汎用"),
     name: str = Form("ライフイベント"),
+    member_id: str = Form(""),
     monthly_amount: int = Form(...),
     cycle: str = Form("once"),
     yearly_month: int = Form(1),
@@ -892,6 +893,9 @@ async def events_add(
     start_month: int = Form(1),
     end_age: int = Form(0),
     end_month: int = Form(12),
+    start_date_raw: str = Form("", alias="start_date"),
+    end_date_raw: str = Form("", alias="end_date"),
+    annual_raise_rate: float = Form(0.0),
     disaster_amount_raw: str = Form(""),
 ) -> Response:
     """Q8のライフイベントを追加."""
@@ -902,10 +906,23 @@ async def events_add(
         return Response("event_type is invalid", status_code=400)
     if cycle not in {"monthly", "yearly", "once"}:
         return Response("cycle is invalid", status_code=400)
+    if member_id and not any(member.id == member_id for member in household.members):
+        return Response("member_id does not exist", status_code=400)
+    if annual_raise_rate < -1:
+        return Response("annual_raise_rate is invalid", status_code=400)
     try:
         disaster_amount = int(disaster_amount_raw) if disaster_amount_raw.strip() else None
     except ValueError:
         return Response("disaster_amount is invalid", status_code=400)
+    try:
+        start_date = (
+            datetime.date.fromisoformat(start_date_raw) if start_date_raw.strip() else None
+        )
+        end_date = datetime.date.fromisoformat(end_date_raw) if end_date_raw.strip() else None
+    except ValueError:
+        return Response("event date is invalid", status_code=400)
+    if start_date and end_date and end_date < start_date:
+        return Response("end_date must not precede start_date", status_code=400)
     if monthly_amount < 0 or (disaster_amount is not None and disaster_amount < 0):
         return Response("event amounts must not be negative", status_code=400)
     if not 0 <= start_age <= 120 or not 0 <= end_age <= 120:
@@ -919,6 +936,7 @@ async def events_add(
             id=str(uuid.uuid4()),
             name=name.strip() or "ライフイベント",
             event_type=event_type,
+            member_id=member_id or None,
             monthly_amount=monthly_amount,
             cycle=cycle,
             yearly_month=yearly_month,
@@ -926,6 +944,9 @@ async def events_add(
             start_month=start_month,
             end_age=end_age if end_age > 0 else None,
             end_month=end_month,
+            start_date=start_date,
+            end_date=end_date,
+            annual_raise_rate=annual_raise_rate,
             disaster_amount=disaster_amount,
         )
     )
