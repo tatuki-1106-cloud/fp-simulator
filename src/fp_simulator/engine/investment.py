@@ -83,6 +83,13 @@ class NisaAccount:
     total_invested: int = 0  # 累計投資額(非課税枠の消費)
 
 
+def withdrawal_amount(balance: int, requested: int) -> int:
+    """口座残高を超えない取崩額を返す."""
+    if balance <= 0 or requested <= 0:
+        return 0
+    return min(balance, requested)
+
+
 def nisa_monthly_step(
     store: ParameterStore,
     date: datetime.date,

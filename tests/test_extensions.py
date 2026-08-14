@@ -16,6 +16,7 @@ from fp_simulator.engine.investment import (
     ideco_contribution_limit,
     ideco_monthly_step,
     nisa_monthly_step,
+    withdrawal_amount,
 )
 from fp_simulator.engine.insurance import InsurancePolicy, monthly_premium_in_period, surrender_value
 from fp_simulator.engine.childcare_leave import (
@@ -87,6 +88,12 @@ class TestNisa:
         new = nisa_monthly_step(store, D2025, acc, 50000, annual_return_rate=0.05)
         assert new.balance > 500_000
         assert new.total_invested == 550_000
+
+    def test_withdrawal_does_not_exceed_balance(self) -> None:
+        """取崩額は残高を超えない."""
+        assert withdrawal_amount(100_000, 30_000) == 30_000
+        assert withdrawal_amount(100_000, 200_000) == 100_000
+        assert withdrawal_amount(0, 10_000) == 0
 
 
 class TestInsurance:

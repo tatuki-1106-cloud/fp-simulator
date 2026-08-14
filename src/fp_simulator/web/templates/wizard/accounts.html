@@ -32,11 +32,11 @@
 <h2>iDeCo設定</h2>
 {% if household.ideco_plans %}
 <table>
-  <thead><tr><th>対象者</th><th>初期残高</th><th>月額掛金</th><th>運用利回り</th></tr></thead>
+  <thead><tr><th>対象者</th><th>初期残高</th><th>月額掛金</th><th>運用利回り</th><th>受取開始/受取月額</th></tr></thead>
   <tbody>
   {% for p in household.ideco_plans %}
   {% set member = household.members | selectattr("id", "equalto", p.member_id) | first %}
-    <tr><td>{{ member.name if member else p.member_id }}</td><td>{{ "{:,}".format(p.initial_balance) }}円</td><td>{{ "{:,}".format(p.monthly_contribution) }}円</td><td>{{ p.annual_return_rate }}</td></tr>
+    <tr><td>{{ member.name if member else p.member_id }}</td><td>{{ "{:,}".format(p.initial_balance) }}円</td><td>{{ "{:,}".format(p.monthly_contribution) }}円</td><td>{{ p.annual_return_rate }}</td><td>{{ p.receive_start_age }}歳 / {{ "{:,}".format(p.monthly_withdrawal) }}円</td></tr>
   {% endfor %}
   </tbody>
 </table>
@@ -48,6 +48,9 @@
     </select></label></p>
   <p><label>初期残高: <input type="number" name="initial_balance" value="0"></label>円</p>
   <p><label>月額掛金: <input type="number" name="monthly_contribution" value="23000"></label>円</p>
+  <p><label>受取開始年齢: <input type="number" name="receive_start_age" value="65" min="0"></label>歳</p>
+  <p><label>受取月額(明示設定): <input type="number" name="monthly_withdrawal" value="0" min="0"></label>円</p>
+  <p><label>受取時の概算税率: <input type="number" name="withdrawal_tax_rate" value="0" min="0" max="1" step="0.01"></label>（例: 0.2 = 20%。制度判定ではなく入力前提）</p>
   <p><label>運用利回り(年率): <input type="number" name="annual_return_rate" value="0" step="0.01"></label></p>
   <p><button type="submit">iDeCoを追加</button></p>
 </form>
@@ -55,11 +58,11 @@
 <h2>NISA設定</h2>
 {% if household.nisa_plans %}
 <table>
-  <thead><tr><th>対象者</th><th>初期残高</th><th>月額投資</th><th>運用利回り</th></tr></thead>
+  <thead><tr><th>対象者</th><th>初期残高</th><th>月額投資</th><th>運用利回り</th><th>取崩開始/取崩月額</th></tr></thead>
   <tbody>
   {% for p in household.nisa_plans %}
   {% set member = household.members | selectattr("id", "equalto", p.member_id) | first %}
-    <tr><td>{{ member.name if member else p.member_id }}</td><td>{{ "{:,}".format(p.initial_balance) }}円</td><td>{{ "{:,}".format(p.monthly_investment) }}円</td><td>{{ p.annual_return_rate }}</td></tr>
+    <tr><td>{{ member.name if member else p.member_id }}</td><td>{{ "{:,}".format(p.initial_balance) }}円</td><td>{{ "{:,}".format(p.monthly_investment) }}円</td><td>{{ p.annual_return_rate }}</td><td>{{ p.receive_start_age or '-' }}{% if p.receive_start_age is not none %}歳{% endif %} / {{ "{:,}".format(p.monthly_withdrawal) }}円</td></tr>
   {% endfor %}
   </tbody>
 </table>
@@ -71,6 +74,8 @@
     </select></label></p>
   <p><label>初期残高: <input type="number" name="initial_balance" value="0"></label>円</p>
   <p><label>月額投資: <input type="number" name="monthly_investment" value="0"></label>円</p>
+  <p><label>取崩開始年齢: <input type="number" name="receive_start_age" min="0"></label>歳（未入力=取崩なし）</p>
+  <p><label>取崩月額: <input type="number" name="monthly_withdrawal" value="0" min="0"></label>円</p>
   <p><label>運用利回り(年率): <input type="number" name="annual_return_rate" value="0" step="0.01"></label></p>
   <p><button type="submit">NISAを追加</button></p>
 </form>

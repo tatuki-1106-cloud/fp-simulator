@@ -83,13 +83,14 @@ def _export_rows(result, granularity: str) -> list[list[object]]:
         yearly = _yearly_summary(result.monthly)
         rows: list[list[object]] = [[
             "年", "年齢", "収入", "支出", "税・社保", "収支",
-            "現金・預金", "iDeCo", "NISA", "金融資産合計",
+            "現金・預金", "iDeCo", "NISA", "iDeCo受取", "NISA取崩", "金融資産合計",
         ]]
         rows.extend([
             [
                 item["year"], item["age"], item["income"], item["expense"],
                 item["tax_si"], item["net"], item["balance_end"],
                 item["ideco_balance_end"], item["nisa_balance_end"],
+                item["ideco_withdrawal"], item["nisa_withdrawal"],
                 item["total_assets_end"],
             ]
             for item in yearly
@@ -98,7 +99,8 @@ def _export_rows(result, granularity: str) -> list[list[object]]:
 
     rows = [[
         "年月", "年齢", "給与収入", "年金収入", "退職金", "その他収入",
-        "死亡保険金", "社会保険", "所得税", "住民税", "生活費", "イベント支出",
+        "死亡保険金", "iDeCo受取", "NISA取崩", "社会保険", "所得税", "住民税",
+        "iDeCo受取時税", "生活費", "イベント支出",
         "ローン返済", "教育費", "保険料", "iDeCo掛金", "NISA投資",
         "収支", "現金・預金", "iDeCo残高", "NISA残高", "金融資産合計",
     ]]
@@ -106,8 +108,9 @@ def _export_rows(result, granularity: str) -> list[list[object]]:
         [
             month.date.isoformat(), month.age, month.salary_income,
             month.pension_income, month.retirement_income, month.other_income,
-            month.death_benefit, month.social_insurance, month.income_tax,
-            month.resident_tax, month.living_expense, month.event_expense,
+            month.death_benefit, month.ideco_withdrawal, month.nisa_withdrawal,
+            month.social_insurance, month.income_tax, month.resident_tax,
+            month.ideco_withdrawal_tax, month.living_expense, month.event_expense,
             month.loan_payment, month.education_expense, month.insurance_premium,
             month.ideco_contribution, month.nisa_investment, month.net,
             month.balance, month.ideco_balance, month.nisa_balance,
@@ -687,17 +690,30 @@ async def ideco_add(
     member_id: str = Form(...),
     initial_balance: int = Form(0),
     monthly_contribution: int = Form(23000),
+    receive_start_age: int = Form(65),
+    monthly_withdrawal: int = Form(0),
+    withdrawal_tax_rate: float = Form(0.0),
     annual_return_rate: float = Form(0.0),
 ) -> RedirectResponse:
     household = await get_household(household_id)
     if household is None:
         return RedirectResponse("/", status_code=303)
+    if (
+        initial_balance < 0
+        or monthly_contribution < 0
+        or monthly_withdrawal < 0
+        or not 0 <= withdrawal_tax_rate <= 1
+    ):
+        return HTMLResponse("iDeCoの入力値が不正です", status_code=400)
     household.ideco_plans.append(
         IdecoPlan(
             id=str(uuid.uuid4()),
             member_id=member_id,
             initial_balance=initial_balance,
             monthly_contribution=monthly_contribution,
+            receive_start_age=receive_start_age,
+            monthly_withdrawal=monthly_withdrawal,
+            withdrawal_tax_rate=withdrawal_tax_rate,
             annual_return_rate=annual_return_rate,
         )
     )
@@ -719,17 +735,23 @@ async def nisa_add(
     member_id: str = Form(...),
     initial_balance: int = Form(0),
     monthly_investment: int = Form(0),
+    receive_start_age: int | None = Form(None),
+    monthly_withdrawal: int = Form(0),
     annual_return_rate: float = Form(0.0),
 ) -> RedirectResponse:
     household = await get_household(household_id)
     if household is None:
         return RedirectResponse("/", status_code=303)
+    if initial_balance < 0 or monthly_investment < 0 or monthly_withdrawal < 0:
+        return HTMLResponse("NISAの入力値が不正です", status_code=400)
     household.nisa_plans.append(
         NisaPlan(
             id=str(uuid.uuid4()),
             member_id=member_id,
             initial_balance=initial_balance,
             monthly_investment=monthly_investment,
+            receive_start_age=receive_start_age,
+            monthly_withdrawal=monthly_withdrawal,
             annual_return_rate=annual_return_rate,
         )
     )
@@ -887,6 +909,8 @@ def _yearly_summary(monthly) -> list[dict]:
                 "year": month.date.year,
                 "age": month.age,
                 "income": 0,
+                "ideco_withdrawal": 0,
+                "nisa_withdrawal": 0,
                 "survivor_pension": 0,
                 "child_allowance": 0,
                 "expense": 0,
@@ -900,6 +924,8 @@ def _yearly_summary(monthly) -> list[dict]:
             },
         )
         summary["income"] += month.total_income
+        summary["ideco_withdrawal"] += month.ideco_withdrawal
+        summary["nisa_withdrawal"] += month.nisa_withdrawal
         summary["survivor_pension"] += month.survivor_pension
         summary["child_allowance"] += month.child_allowance
         summary["expense"] += month.total_expense

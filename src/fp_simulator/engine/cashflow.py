@@ -31,7 +31,7 @@ from fp_simulator.engine.social_insurance import monthly_social_insurance
 from fp_simulator.engine.pension import PensionRecord, total_pension
 from fp_simulator.engine.retirement import net_retirement_allowance
 from fp_simulator.engine.dependency import calc_deductions_for_household, age_at_year_end, age_at
-from fp_simulator.engine.investment import IdecoAccount, NisaAccount
+from fp_simulator.engine.investment import IdecoAccount, NisaAccount, withdrawal_amount
 
 
 @dataclass
@@ -57,10 +57,13 @@ class MonthlyCashflow:
     death_benefit: int = 0
     survivor_pension: int = 0
     child_allowance: int = 0
+    ideco_withdrawal: int = 0
+    nisa_withdrawal: int = 0
     # 控除・税
     social_insurance: int = 0
     income_tax: int = 0
     resident_tax: int = 0
+    ideco_withdrawal_tax: int = 0
     # 支出
     living_expense: int = 0
     event_expense: int = 0
@@ -83,6 +86,8 @@ class MonthlyCashflow:
             + self.death_benefit
             + self.survivor_pension
             + self.child_allowance
+            + self.ideco_withdrawal
+            + self.nisa_withdrawal
         )
 
     @property
@@ -99,7 +104,12 @@ class MonthlyCashflow:
 
     @property
     def total_tax_si(self) -> int:
-        return self.social_insurance + self.income_tax + self.resident_tax
+        return (
+            self.social_insurance
+            + self.income_tax
+            + self.resident_tax
+            + self.ideco_withdrawal_tax
+        )
 
     @property
     def net(self) -> int:
@@ -653,6 +663,41 @@ def simulate(
                         "note": "全額所得控除(小規模企業共済等掛金控除)",
                     })
                 )
+            if (
+                ideco.receive_start_age is not None
+                and member_age >= ideco.receive_start_age
+                and ideco.monthly_withdrawal > 0
+            ):
+                withdrawal = withdrawal_amount(updated.balance, ideco.monthly_withdrawal)
+                updated = IdecoAccount(
+                    balance=updated.balance - withdrawal,
+                    total_contributions=updated.total_contributions,
+                )
+                cf.ideco_withdrawal += withdrawal
+                withdrawal_tax = int(withdrawal * ideco.withdrawal_tax_rate)
+                cf.ideco_withdrawal_tax += withdrawal_tax
+                if withdrawal > 0:
+                    cf.traces.append(
+                        TraceEntry(
+                            "iDeCo受取",
+                            withdrawal,
+                            {
+                                "member": member.name,
+                                "月額": ideco.monthly_withdrawal,
+                                "概算税率": ideco.withdrawal_tax_rate,
+                                "概算税額": withdrawal_tax,
+                            },
+                        )
+                    )
+                    if withdrawal_tax > 0:
+                        cf.traces.append(
+                            TraceEntry(
+                                "iDeCo受取時税",
+                                withdrawal_tax,
+                                {"概算税率": ideco.withdrawal_tax_rate},
+                            )
+                        )
+            ideco_accounts[ideco.id] = updated
 
         # --- NISA ---
         for nisa in household.nisa_plans:
@@ -686,6 +731,29 @@ def simulate(
                         "note": "運用益非課税",
                     })
                 )
+            if (
+                nisa.receive_start_age is not None
+                and member_age >= nisa.receive_start_age
+                and nisa.monthly_withdrawal > 0
+            ):
+                withdrawal = withdrawal_amount(updated.balance, nisa.monthly_withdrawal)
+                nisa_accounts[nisa.id] = NisaAccount(
+                    balance=updated.balance - withdrawal,
+                    total_invested=updated.total_invested,
+                )
+                cf.nisa_withdrawal += withdrawal
+                if withdrawal > 0:
+                    cf.traces.append(
+                        TraceEntry(
+                            "NISA取崩",
+                            withdrawal,
+                            {
+                                "member": member.name,
+                                "月額": nisa.monthly_withdrawal,
+                                "税": "非課税",
+                            },
+                        )
+                    )
 
         cf.ideco_balance = sum(account.balance for account in ideco_accounts.values())
         cf.nisa_balance = sum(account.balance for account in nisa_accounts.values())

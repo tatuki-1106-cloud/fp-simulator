@@ -138,6 +138,8 @@ class IdecoPlan(BaseModel):
     end_age: int = 60  # 掛金拠出終了年齢
     receive_start_age: int = 65  # 受取開始年齢
     receive_type: Literal["一時金", "年金", "一時金+年金"] = "一時金"
+    monthly_withdrawal: int = Field(default=0, ge=0)  # 明示的な受取月額
+    withdrawal_tax_rate: float = Field(default=0.0, ge=0, le=1)  # 概算源泉税率
     annual_return_rate: float = 0.0  # 運用利回り
 
 
@@ -150,6 +152,8 @@ class NisaPlan(BaseModel):
     monthly_investment: int  # 月額投資
     start_age: int = 0
     end_age: int | None = None  # None=生涯
+    receive_start_age: int | None = None  # 明示的な取崩開始年齢
+    monthly_withdrawal: int = Field(default=0, ge=0)  # 受取月額
     annual_return_rate: float = 0.0
 
 

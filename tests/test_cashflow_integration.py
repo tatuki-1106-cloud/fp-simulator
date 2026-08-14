@@ -253,6 +253,49 @@ class TestCashflowIntegration:
         assert first.nisa_balance > 500_000
         assert first.total_assets == first.balance + first.ideco_balance + first.nisa_balance
 
+    def test_investment_withdrawals_reduce_accounts_and_add_net_cashflow(
+        self, store, household: Household
+    ) -> None:
+        """明示した受取月額を開始年齢から反映し、iDeCo税を控除する."""
+        household.ideco_plans.append(
+            IdecoPlan(
+                id="ideco-withdrawal",
+                member_id="husband",
+                initial_balance=100_000,
+                monthly_contribution=0,
+                receive_start_age=30,
+                monthly_withdrawal=10_000,
+                withdrawal_tax_rate=0.1,
+            )
+        )
+        household.nisa_plans.append(
+            NisaPlan(
+                id="nisa-withdrawal",
+                member_id="husband",
+                initial_balance=100_000,
+                monthly_investment=0,
+                receive_start_age=30,
+                monthly_withdrawal=5_000,
+            )
+        )
+        result = simulate(store, household)
+        before = next(m for m in result.monthly if m.date == datetime.date(2026, 3, 1))
+        receive_month = next(m for m in result.monthly if m.date == datetime.date(2026, 4, 1))
+        assert before.ideco_withdrawal == 0
+        assert receive_month.ideco_withdrawal == 10_000
+        assert receive_month.ideco_withdrawal_tax == 1_000
+        assert receive_month.nisa_withdrawal == 5_000
+        assert receive_month.ideco_balance == 90_000
+        assert receive_month.nisa_balance == 95_000
+        assert receive_month.net == (
+            receive_month.total_income
+            - receive_month.total_expense
+            - receive_month.social_insurance
+            - receive_month.income_tax
+            - receive_month.resident_tax
+            - receive_month.ideco_withdrawal_tax
+        )
+
     def test_traces_exist(self, store, household: Household) -> None:
         """トレーサビリティ情報が付与されている."""
         result = simulate(store, household)

@@ -42,7 +42,7 @@
 <h2>年次キャッシュフロー</h2>
 <table>
   <thead>
-    <tr><th>年</th><th>年齢</th><th>収入</th><th>支出</th><th>税・社保</th><th>収支</th><th>現金・預金</th><th>iDeCo</th><th>NISA</th><th>金融資産合計</th></tr>
+    <tr><th>年</th><th>年齢</th><th>収入</th><th>支出</th><th>税・社保</th><th>収支</th><th>現金・預金</th><th>iDeCo</th><th>NISA</th><th>iDeCo受取</th><th>NISA取崩</th><th>金融資産合計</th></tr>
   </thead>
   <tbody>
   {% for y in yearly %}
@@ -56,6 +56,8 @@
       <td>{{ "{:,}".format(y.balance_end) }}</td>
       <td>{{ "{:,}".format(y.ideco_balance_end) }}</td>
       <td>{{ "{:,}".format(y.nisa_balance_end) }}</td>
+      <td>{{ "{:,}".format(y.ideco_withdrawal) }}</td>
+      <td>{{ "{:,}".format(y.nisa_withdrawal) }}</td>
       <td>{{ "{:,}".format(y.total_assets_end) }}</td>
     </tr>
   {% endfor %}
