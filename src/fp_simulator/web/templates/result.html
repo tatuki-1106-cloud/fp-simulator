@@ -1,5 +1,45 @@
 {% extends "base.html" %}
 {% from "lifemap.html" import lifemap %}
+{% block head %}
+<style>
+  .summary-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 0.8rem;
+    margin: 1rem 0;
+  }
+  .summary-card {
+    background: #fff;
+    border: 1px solid #ddd;
+    border-left: 4px solid #1a3a5c;
+    border-radius: 8px;
+    padding: 0.9rem 1rem;
+  }
+  .summary-card.ok { border-left-color: #2a7a4f; }
+  .summary-card.danger { border-left-color: #c0392b; }
+  .summary-card .card-label { font-size: 0.85rem; color: #666; }
+  .summary-card .card-value { font-size: 1.35rem; font-weight: 700; margin-top: 0.25rem; }
+  .summary-card .card-sub { font-size: 0.8rem; color: #666; margin-top: 0.2rem; }
+  .summary-card .card-value.ok { color: #2a7a4f; }
+  .summary-card .card-value.danger { color: #c0392b; }
+  .chart-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 1rem;
+    margin: 1rem 0;
+  }
+  .chart-box {
+    background: #fff;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    padding: 0.9rem 1rem;
+    min-width: 0;
+  }
+  .chart-box canvas { max-width: 100%; }
+  .chart-box h3 { margin: 0 0 0.5rem; font-size: 1rem; }
+  .chart-box .chart-note { font-size: 0.8rem; color: #666; margin: 0 0 0.5rem; }
+</style>
+{% endblock %}
 {% block content %}
 <h1>シミュレーション結果 — {{ household.name }}</h1>
 {{ lifemap(household) }}
@@ -29,6 +69,26 @@
 </p>
 
 <h2>サマリー</h2>
+<div class="summary-cards">
+  <div class="summary-card {% if min_balance < 0 %}danger{% else %}ok{% endif %}">
+    <div class="card-label">最低貯蓄残高</div>
+    <div class="card-value {% if min_balance < 0 %}danger{% else %}ok{% endif %}">{{ "{:,}".format(min_balance) }}円</div>
+    <div class="card-sub">{{ min_balance_month }} 時点</div>
+  </div>
+  <div class="summary-card">
+    <div class="card-label">最終金融資産</div>
+    <div class="card-value">{{ "{:,}".format(final_assets) }}円</div>
+    <div class="card-sub">現金・預金 {{ "{:,}".format(final_balance) }}円 + iDeCo・NISA</div>
+  </div>
+  <div class="summary-card {% if min_balance < 0 %}danger{% else %}ok{% endif %}">
+    <div class="card-label">判定</div>
+    {% if min_balance < 0 %}
+      <div class="card-value danger">貯蓄が枯渇する時期があります</div>
+    {% else %}
+      <div class="card-value ok">生涯、貯蓄が赤字になることはありません</div>
+    {% endif %}
+  </div>
+</div>
 <table>
   <tr><th>最低貯蓄残高</th><td>{{ "{:,}".format(min_balance) }}円 ({{ min_balance_month }})</td></tr>
   <tr><th>最終貯蓄残高</th><td>{{ "{:,}".format(final_balance) }}円</td></tr>
@@ -45,6 +105,20 @@
 <h2>貯蓄残高推移</h2>
 <p>現金・預金に加えて、iDeCo・NISA・金融資産合計を表示しています。</p>
 <canvas id="balanceChart" height="100"></canvas>
+
+<h2>収支の内訳</h2>
+<div class="chart-grid">
+  <div class="chart-box">
+    <h3>年次収入構成</h3>
+    <p class="chart-note">生涯全体。給与・年金・退職金・その他収入の推移です。</p>
+    <canvas id="incomeChart"></canvas>
+  </div>
+  <div class="chart-box">
+    <h3>生涯の支出内訳</h3>
+    <p class="chart-note">生涯合計。税・社会保険とiDeCo・NISA掛金を含みます。</p>
+    <canvas id="expenseChart"></canvas>
+  </div>
+</div>
 
 <h2>前提条件</h2>
 <p style="font-size:0.9rem;color:#555;">
@@ -121,6 +195,64 @@ new Chart(ctx, {
     scales: {
       x: { ticks: { maxTicksLimit: 20 } },
       y: { ticks: { callback: v => (v/10000).toLocaleString() + '万円' } }
+    }
+  }
+});
+
+const incomeSeriesColors = ['#1a3a5c', '#2e8b57', '#d2691e', '#9370db'];
+new Chart(document.getElementById('incomeChart'), {
+  type: 'bar',
+  data: {
+    labels: {{ income_years | tojson }},
+    datasets: {{ income_series_labels | tojson }}.map((label, i) => ({
+      label: label,
+      data: {{ income_series_values | tojson }}[i],
+      backgroundColor: incomeSeriesColors[i],
+    }))
+  },
+  options: {
+    scales: {
+      x: { stacked: true, ticks: { maxTicksLimit: 20 } },
+      y: {
+        stacked: true,
+        ticks: { callback: v => (v/10000).toLocaleString() + '万円' }
+      }
+    },
+    plugins: {
+      tooltip: {
+        callbacks: {
+          label: ctx => ctx.dataset.label + ': ' + ctx.parsed.y.toLocaleString() + '円'
+        }
+      }
+    }
+  }
+});
+
+const expenseColors = [
+  '#1a3a5c', '#2e8b57', '#d2691e', '#9370db', '#c0392b',
+  '#4a90d9', '#8b7355', '#e67e22', '#16a085',
+];
+new Chart(document.getElementById('expenseChart'), {
+  type: 'doughnut',
+  data: {
+    labels: {{ expense_breakdown_labels | tojson }},
+    datasets: [{
+      data: {{ expense_breakdown_values | tojson }},
+      backgroundColor: expenseColors,
+    }]
+  },
+  options: {
+    plugins: {
+      legend: { position: 'bottom' },
+      tooltip: {
+        callbacks: {
+          label: ctx => {
+            const total = ctx.dataset.data.reduce((a, b) => a + b, 0);
+            const pct = total > 0 ? (ctx.parsed / total * 100).toFixed(1) : 0;
+            return ctx.label + ': ' + ctx.parsed.toLocaleString() + '円 (' + pct + '%)';
+          }
+        }
+      }
     }
   }
 });

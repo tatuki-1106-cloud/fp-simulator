@@ -1530,6 +1530,57 @@ async def simulate_result(
     )
     final_balance = all_balances[-1] if all_balances else 0
 
+    # 生涯の支出内訳(円グラフ用・表示範囲に連動しない)
+    lifetime_expense_categories = {
+        "生活費": sum(m.living_expense for m in result.monthly),
+        "教育費": sum(m.education_expense for m in result.monthly),
+        "住宅関連": sum(
+            m.housing_down_payment + m.property_tax + m.repair_expense
+            for m in result.monthly
+        ),
+        "乗り物関連": sum(
+            m.vehicle_purchase_expense
+            + m.vehicle_maintenance
+            + m.vehicle_tax_repair
+            + m.vehicle_inspection_expense
+            for m in result.monthly
+        ),
+        "ローン返済": sum(m.loan_payment for m in result.monthly),
+        "保険料": sum(m.insurance_premium for m in result.monthly),
+        "イベント": sum(m.event_expense for m in result.monthly),
+        "税・社会保険": sum(m.total_tax_si for m in result.monthly),
+        "iDeCo・NISA掛金": sum(
+            m.ideco_contribution + m.nisa_investment for m in result.monthly
+        ),
+    }
+    expense_breakdown_labels = [
+        label for label, amount in lifetime_expense_categories.items() if amount > 0
+    ]
+    expense_breakdown_values = [
+        amount for amount in lifetime_expense_categories.values() if amount > 0
+    ]
+
+    # 生涯の年次収入構成(積み上げ棒グラフ用・表示範囲に連動しない)
+    income_years = sorted({m.date.year for m in result.monthly})
+    income_by_year: dict[int, list] = {}
+    for m in result.monthly:
+        yearly_income = income_by_year.setdefault(m.date.year, [0, 0, 0, 0])
+        yearly_income[0] += m.salary_income
+        yearly_income[1] += m.pension_income + m.survivor_pension
+        yearly_income[2] += m.retirement_income
+        yearly_income[3] += (
+            m.other_income
+            + m.death_benefit
+            + m.child_allowance
+            + m.ideco_withdrawal
+            + m.nisa_withdrawal
+            + m.vehicle_sale_income
+        )
+    income_series_labels = ["給与", "年金", "退職金", "その他"]
+    income_series_values = [
+        [income_by_year[year][i] for year in income_years] for i in range(4)
+    ]
+
     return templates.TemplateResponse(
         request,
         "result.html",
@@ -1550,6 +1601,11 @@ async def simulate_result(
             "ideco_balances": ideco_balances,
             "nisa_balances": nisa_balances,
             "total_assets": display_total_assets,
+            "expense_breakdown_labels": expense_breakdown_labels,
+            "expense_breakdown_values": expense_breakdown_values,
+            "income_years": income_years,
+            "income_series_labels": income_series_labels,
+            "income_series_values": income_series_values,
             "active_q": "sim",
         },
     )
@@ -1851,6 +1907,28 @@ async def disaster_scenarios(
     )
 
 
+def _monthly_detail_items(month) -> list[tuple[str, int]]:
+    """月次表の詳細列を展開表示するための非ゼロ内訳項目."""
+    flow_items = [
+        ("乗り物売却", month.vehicle_sale_income),
+        ("住宅頭金", month.housing_down_payment),
+        ("固定資産税", month.property_tax),
+        ("修繕費", month.repair_expense),
+        ("乗り物購入", month.vehicle_purchase_expense),
+        ("乗り物維持費", month.vehicle_maintenance),
+        ("乗り物税金・修繕", month.vehicle_tax_repair),
+        ("車検", month.vehicle_inspection_expense),
+        ("iDeCo受取", month.ideco_withdrawal),
+        ("NISA取崩", month.nisa_withdrawal),
+    ]
+    details = [(label, amount) for label, amount in flow_items if amount != 0]
+    if month.ideco_balance or month.nisa_balance:
+        details.append(("iDeCo残高", month.ideco_balance))
+        details.append(("NISA残高", month.nisa_balance))
+        details.append(("金融資産合計", month.total_assets))
+    return details
+
+
 @app.get("/households/{household_id}/simulate/monthly", response_class=HTMLResponse)
 async def monthly_simulation_result(
     request: Request, household_id: str, year: int, plan_id: str | None = None
@@ -1888,6 +1966,9 @@ async def monthly_simulation_result(
         ]
         for month in monthly
     }
+    monthly_details = {
+        month.date.isoformat(): _monthly_detail_items(month) for month in monthly
+    }
 
     return templates.TemplateResponse(
         request,
@@ -1904,6 +1985,7 @@ async def monthly_simulation_result(
             "previous_year": previous_year,
             "next_year": next_year,
             "trace_source_links": trace_source_links,
+            "monthly_details": monthly_details,
             "active_q": "sim",
         },
     )

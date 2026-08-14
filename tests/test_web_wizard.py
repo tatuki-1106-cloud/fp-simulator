@@ -51,6 +51,9 @@ async def test_create_household_and_full_flow(client: AsyncClient) -> None:
     r = await client.get(f"/households/{household_id}/members")
     assert r.status_code == 200
     assert "たろう" in r.text
+    assert "@media (max-width: 720px)" in r.text
+    assert "min-height: 44px" in r.text
+    assert "overflow-x: auto" in r.text
 
     # 3. 収入追加
     from fp_simulator.db.database import get_household
@@ -254,6 +257,15 @@ async def test_create_household_and_full_flow(client: AsyncClient) -> None:
     assert "乗り物売却" in r.text
     assert "乗り物購入" in r.text
     assert "表示範囲" in r.text
+    # 重要指標カードと収支内訳グラフ(生涯全体)
+    assert 'class="summary-cards"' in r.text
+    assert "card-value" in r.text
+    assert 'id="incomeChart"' in r.text
+    assert 'id="expenseChart"' in r.text
+    assert "年次収入構成" in r.text
+    assert "生涯の支出内訳" in r.text
+    # 円グラフのカテゴリラベルはJSON内でUnicodeエスケープされて出力される
+    assert "\\u4e57\\u308a\\u7269\\u95a2\\u9023" in r.text  # 乗り物関連
 
     r = await client.get(f"/households/{household_id}/simulate?display_range=1")
     assert r.status_code == 200
@@ -287,10 +299,26 @@ async def test_create_household_and_full_flow(client: AsyncClient) -> None:
     assert "月末残高" in r.text
     assert "2026/01" in r.text
     assert "計算根拠" in r.text
+    # 月次表は主要8列＋内訳・計算根拠列に削減され、詳細列は展開内の金額内訳へ移動
+    assert "内訳・計算根拠" in r.text
+    assert "金額内訳" in r.text
+    assert "<th>乗り物売却</th>" not in r.text
+    assert "<th>車検</th>" not in r.text
+    assert "<th>iDeCo受取</th>" not in r.text
+    # 2026/01は乗り物購入・住宅頭金が発生する月ではないが、iDeCo/NISA残高があれば表示される
+    # 2026/04は住宅頭金が発生する月
+    assert "住宅頭金" in r.text
     assert "社会保険料" in r.text
     assert "2026年の集計" in r.text
     assert "税・社会保険合計" in r.text
     assert "翌年 →" in r.text
+    # 年ナビゲーションはセレクトボックス＋前後ボタン方式
+    assert 'class="year-nav"' in r.text
+    assert '<select name="year"' in r.text
+    assert '<option value="2026" selected>2026年</option>' in r.text
+    assert '<option value="2027" >2027年</option>' in r.text or '<option value="2027">2027年</option>' in r.text
+    # 60年分の年リンクが個別アンカーとして並ばないこと
+    assert r.text.count("simulate/monthly?year=") <= 4  # 前年・翌年リンクのみ
     assert "標準報酬月額" in r.text
     assert "公式出典" in r.text
     assert "日本年金機構: 厚生年金保険料率" in r.text
