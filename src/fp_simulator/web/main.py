@@ -1064,7 +1064,7 @@ async def insurance_add(
     household.insurances.append(
         Insurance(
             id=str(uuid.uuid4()),
-            name=name,
+            name=name.strip() or "保険",
             insurance_type=insurance_type,
             insured_member_id=insured_member_id,
             payer_member_id=payer_member_id,

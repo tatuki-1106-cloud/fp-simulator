@@ -20,7 +20,13 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from fp_simulator.parameters.loader import ParameterStore
-from fp_simulator.engine.models import Household, Member, Relationship, SocialInsuranceType
+from fp_simulator.engine.models import (
+    Expense,
+    Household,
+    Member,
+    Relationship,
+    SocialInsuranceType,
+)
 from fp_simulator.engine.income import salary_income_after_deduction
 from fp_simulator.engine.income_tax import (
     Deductions,
@@ -34,6 +40,11 @@ from fp_simulator.engine.retirement import net_retirement_allowance
 from fp_simulator.engine.dependency import calc_deductions_for_household, age_at_year_end, age_at
 from fp_simulator.engine.investment import IdecoAccount, NisaAccount, withdrawal_amount
 from fp_simulator.engine.loan import LoanTerms, MonthlyRepayment, loan_schedule
+from fp_simulator.engine.insurance import (
+    InsurancePolicy,
+    death_benefit_if_died,
+    monthly_premium_in_period,
+)
 
 
 @dataclass
@@ -800,14 +811,17 @@ def simulate(
                     )
 
         for expense in household.expenses:
+                target_member = None
                 if expense.member_id is not None:
-                    member = next((m for m in household.members if m.id == expense.member_id), None)
-                    if member is None:
+                    target_member = next(
+                        (m for m in household.members if m.id == expense.member_id), None
+                    )
+                    if target_member is None:
                         continue
-                    if not member_alive(member, current):
+                    if not member_alive(target_member, current):
                         continue
                     if expense.start_date is None:
-                        member_age = age_at(member.birth_date, current)
+                        member_age = age_at(target_member.birth_date, current)
                         if member_age < expense.start_age:
                             continue
                         if expense.end_age is not None and member_age > expense.end_age:
@@ -842,23 +856,35 @@ def simulate(
                     recurring_amount = int(expense.disaster_amount * inflation_factor)
                     once_amount = recurring_amount
 
+                def add_event_expense(amount: int, expense: Expense = expense) -> None:
+                    cf.event_expense += amount
+                    if amount > 0:
+                        cf.traces.append(
+                            TraceEntry(
+                                "ライフイベント",
+                                amount,
+                                {"name": expense.name, "type": expense.event_type, "周期": expense.cycle},
+                            )
+                        )
+
                 if expense.cycle == "monthly" and expense.event_type == "生活費":
                     cf.living_expense += recurring_amount
                 elif expense.cycle == "monthly":
-                    cf.event_expense += recurring_amount
+                    add_event_expense(recurring_amount)
                 elif expense.cycle == "yearly" and month == expense.yearly_month:
-                    cf.event_expense += recurring_amount
+                    add_event_expense(recurring_amount)
                 elif expense.cycle == "once":
-                    # 開始年月の1回のみ
+                    # 開始年月の1回のみ。対象者指定時は対象者の年齢を基準にする
+                    anchor = target_member if target_member is not None else householder
                     event_date = expense.start_date or datetime.date(
                         assumptions.base_year
                         if expense.start_age == 0
-                        else householder.birth_date.year + expense.start_age,
+                        else anchor.birth_date.year + expense.start_age,
                         expense.start_month,
                         1,
                     )
                     if current == event_date:
-                        cf.event_expense += once_amount
+                        add_event_expense(once_amount)
 
         if (
             scenario
@@ -903,25 +929,25 @@ def simulate(
 
         # --- 保険 ---
         for ins in household.insurances:
-            ins_start = datetime.date(ins.start_year, ins.start_month, 1)
-            ins_end = datetime.date(ins.end_year, ins.end_month, 1)
-            from fp_simulator.engine.insurance import InsurancePolicy, monthly_premium_in_period
-
             policy = InsurancePolicy(
                 name=ins.name,
                 insured_member_id=ins.insured_member_id,
                 payer_member_id=ins.payer_member_id,
                 monthly_premium=ins.monthly_premium,
-                start_date=ins_start,
-                end_date=ins_end,
+                start_date=datetime.date(ins.start_year, ins.start_month, 1),
+                end_date=datetime.date(ins.end_year, ins.end_month, 1),
                 death_benefit=ins.death_benefit,
                 surrender_value_rate=ins.surrender_value_rate,
                 insurance_type=ins.insurance_type,
             )
             payer = next((m for m in household.members if m.id == ins.payer_member_id), None)
+            insured = next((m for m in household.members if m.id == ins.insured_member_id), None)
+            # 被保険者の死亡で契約は消滅するため、以後の保険料は計上しない
+            insured_alive = insured is None or member_alive(insured, current)
+            payer_alive = payer is None or member_alive(payer, current)
             premium = (
                 monthly_premium_in_period(policy, current)
-                if payer is None or member_alive(payer, current)
+                if insured_alive and payer_alive
                 else 0
             )
             cf.insurance_premium += premium
@@ -930,14 +956,14 @@ def simulate(
                     TraceEntry("保険料", premium, {"name": ins.name, "type": ins.insurance_type})
                 )
 
-            insured = next((m for m in household.members if m.id == ins.insured_member_id), None)
             if (
                 death_date
                 and insured
                 and insured.id == deceased.id
                 and current == death_date
             ):
-                benefit = int(ins.death_benefit)
+                # 保障期間内の死亡のみ保険金を支払う
+                benefit = death_benefit_if_died(policy, death_date)
                 cf.death_benefit += benefit
                 if benefit > 0:
                     cf.traces.append(

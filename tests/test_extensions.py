@@ -158,6 +158,29 @@ class TestInsurance:
         assert summary.death_benefit == 10_000_000
         assert summary.by_type == {"死亡保障": 10_000_000}
 
+    def test_insurance_model_rejects_invalid_period(self) -> None:
+        """終了が開始より前の保険はモデル段階で拒否する."""
+        from fp_simulator.engine.models import Insurance
+
+        with pytest.raises(ValueError, match="must not precede"):
+            Insurance(
+                id="invalid",
+                name="不正な保険",
+                insured_member_id="m1",
+                payer_member_id="m1",
+                monthly_premium=1_000,
+                start_year=2030,
+                end_year=2029,
+            )
+        with pytest.raises(ValueError):
+            Insurance(
+                id="negative",
+                name="負の保険料",
+                insured_member_id="m1",
+                payer_member_id="m1",
+                monthly_premium=-1,
+            )
+
 
 class TestChildcareLeave:
     """産休・育休."""

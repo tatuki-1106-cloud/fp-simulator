@@ -227,13 +227,19 @@ class Insurance(BaseModel):
     insurance_type: Literal["死亡保障", "医療", "就業不能", "個人年金"] = "死亡保障"
     insured_member_id: str
     payer_member_id: str
-    monthly_premium: int
-    start_year: int = 2026
-    start_month: int = 1
-    end_year: int = 2090
-    end_month: int = 12
-    death_benefit: int = 0
-    surrender_value_rate: float = 0.0
+    monthly_premium: int = Field(ge=0)
+    start_year: int = Field(default=2026, ge=1900, le=2200)
+    start_month: int = Field(default=1, ge=1, le=12)
+    end_year: int = Field(default=2090, ge=1900, le=2200)
+    end_month: int = Field(default=12, ge=1, le=12)
+    death_benefit: int = Field(default=0, ge=0)
+    surrender_value_rate: float = Field(default=0.0, ge=0, le=1)  # 累計保険料に対する割合
+
+    @model_validator(mode="after")
+    def validate_period(self) -> Insurance:
+        if (self.end_year, self.end_month) < (self.start_year, self.start_month):
+            raise ValueError("insurance end must not precede start")
+        return self
 
 
 class ChildcareLeave(BaseModel):

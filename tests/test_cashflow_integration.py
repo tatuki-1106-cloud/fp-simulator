@@ -542,6 +542,84 @@ class TestCashflowIntegration:
         assert first.insurance_premium == 10_000
         assert death.death_benefit == 10_000_000
 
+    def test_death_benefit_not_paid_after_policy_end(
+        self, store, household: Household
+    ) -> None:
+        """保障期間終了後の死亡では死亡保険金を支払わない."""
+        household.insurances.append(
+            Insurance(
+                id="term-life",
+                name="定期生命保険",
+                insured_member_id="husband",
+                payer_member_id="husband",
+                monthly_premium=5_000,
+                start_year=2026,
+                start_month=1,
+                end_year=2030,
+                end_month=12,
+                death_benefit=10_000_000,
+            )
+        )
+        result = simulate(store, household, DisasterScenario("husband", 40))
+        death = next(m for m in result.monthly if m.date == datetime.date(2036, 4, 1))
+        after_end = next(m for m in result.monthly if m.date == datetime.date(2031, 1, 1))
+        assert death.death_benefit == 0
+        assert after_end.insurance_premium == 0
+
+    def test_premium_stops_when_insured_dies(
+        self, store, household: Household
+    ) -> None:
+        """被保険者の死亡で契約が消滅し、以後の保険料は計上しない."""
+        household.insurances.append(
+            Insurance(
+                id="life",
+                name="終身保険",
+                insured_member_id="husband",
+                payer_member_id="wife",
+                monthly_premium=10_000,
+                start_year=2026,
+                start_month=1,
+                end_year=2060,
+                end_month=12,
+                death_benefit=5_000_000,
+            )
+        )
+        result = simulate(store, household, DisasterScenario("husband", 40))
+        before = next(m for m in result.monthly if m.date == datetime.date(2036, 3, 1))
+        at_death = next(m for m in result.monthly if m.date == datetime.date(2036, 4, 1))
+        after = next(m for m in result.monthly if m.date == datetime.date(2036, 5, 1))
+        assert before.insurance_premium == 10_000
+        assert at_death.insurance_premium == 0
+        assert at_death.death_benefit == 5_000_000
+        assert after.insurance_premium == 0
+
+    def test_once_event_uses_target_member_age(
+        self, store, household: Household
+    ) -> None:
+        """対象者を指定した1回イベントは対象者の年齢で発火する."""
+        household.expenses.append(
+            Expense(
+                id="child-wedding",
+                name="子の結婚援助",
+                event_type="結婚援助",
+                member_id="child1",
+                monthly_amount=1_000_000,
+                cycle="once",
+                start_age=30,
+                start_month=1,
+            )
+        )
+        result = simulate(store, household)
+        # 子(2026年1月生まれ)が30歳になるのは2056年1月
+        fired = next(m for m in result.monthly if m.date == datetime.date(2056, 1, 1))
+        not_fired = next(m for m in result.monthly if m.date == datetime.date(2055, 12, 1))
+        assert fired.event_expense == 1_000_000
+        assert not_fired.event_expense == 0
+        assert any(
+            trace.item == "ライフイベント" and trace.basis.get("name") == "子の結婚援助"
+            for trace in fired.traces
+        )
+
     def test_traces_exist(self, store, household: Household) -> None:
         """トレーサビリティ情報が付与されている."""
         result = simulate(store, household)

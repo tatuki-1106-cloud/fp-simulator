@@ -21,7 +21,7 @@ class InsurancePolicy:
     start_date: datetime.date
     end_date: datetime.date  # 保障期間終了
     death_benefit: int = 0  # 死亡保険金
-    surrender_value_rate: float = 0.0  # 解約返戻率(年率、簡易)
+    surrender_value_rate: float = 0.0  # 解約返戻率(累計保険料に対する割合、簡易)
     insurance_type: str = "死亡保障"
 
 
