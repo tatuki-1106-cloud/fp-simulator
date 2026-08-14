@@ -9,7 +9,7 @@
   <thead>
     <tr>
       <th>年月</th><th>年齢</th><th>収入</th><th>税・社保</th>
-      <th>支出</th><th>収支</th><th>月末残高（現金・預金）</th><th>iDeCo</th><th>NISA</th><th>iDeCo受取</th><th>NISA取崩</th><th>金融資産合計</th>
+      <th>支出</th><th>収支</th><th>月末残高（現金・預金）</th><th>iDeCo</th><th>NISA</th><th>iDeCo受取</th><th>NISA取崩</th><th>金融資産合計</th><th>計算根拠</th>
     </tr>
   </thead>
   <tbody>
@@ -27,6 +27,19 @@
       <td>{{ "{:,}".format(m.ideco_withdrawal) }}</td>
       <td>{{ "{:,}".format(m.nisa_withdrawal) }}</td>
       <td>{{ "{:,}".format(m.total_assets) }}</td>
+      <td>
+        <details>
+          <summary>{{ m.traces | length }}件</summary>
+          <ul>
+          {% for trace in m.traces %}
+            <li>
+              <strong>{{ trace.item }}</strong>: {{ "{:,}".format(trace.amount) }}円
+              <code>{{ trace.basis | tojson }}</code>
+            </li>
+          {% endfor %}
+          </ul>
+        </details>
+      </td>
     </tr>
   {% endfor %}
   </tbody>

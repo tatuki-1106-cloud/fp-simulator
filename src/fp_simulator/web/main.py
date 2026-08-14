@@ -631,6 +631,99 @@ async def education_add(
     return RedirectResponse(f"/households/{household_id}/education", status_code=303)
 
 
+async def _wizard_placeholder(
+    request: Request,
+    household_id: str,
+    q_number: str,
+    page_title: str,
+    description: str,
+    notes: list[str],
+    links: list[dict[str, str]],
+    event_expenses: list | None = None,
+) -> HTMLResponse:
+    """未統合のFP-UNIV入力タブを明示的なMVP画面として表示."""
+    household = await get_household(household_id)
+    if household is None:
+        return RedirectResponse("/", status_code=303)
+    context = {
+        "title": f"{q_number}. {page_title}",
+        "household": household,
+        "q_number": q_number,
+        "page_title": page_title,
+        "description": description,
+        "notes": notes,
+        "links": links,
+        "active_q": q_number,
+    }
+    if event_expenses is not None:
+        context["event_expenses"] = event_expenses
+    return templates.TemplateResponse(request, "wizard/placeholder.html", context)
+
+
+@app.get("/households/{household_id}/housing", response_class=HTMLResponse)
+async def housing_edit(request: Request, household_id: str) -> HTMLResponse:
+    """Q6: 住まい設定."""
+    return await _wizard_placeholder(
+        request,
+        household_id,
+        "Q6",
+        "住まい",
+        "FP-UNIVの住まい入力に対応するタブです。現在は計算モデルへ未統合です。",
+        [
+            "賃貸の家賃・初期費用はQ4「生活費」で入力してください。",
+            "住宅ローンはQ9「ローン」で入力してください。",
+        ],
+        [
+            {"path": f"/households/{household_id}/expenses", "label": "Q4 生活費へ"},
+            {"path": f"/households/{household_id}/loans", "label": "Q9 ローンへ"},
+        ],
+    )
+
+
+@app.get("/households/{household_id}/vehicles", response_class=HTMLResponse)
+async def vehicles_edit(request: Request, household_id: str) -> HTMLResponse:
+    """Q7: 乗り物設定."""
+    return await _wizard_placeholder(
+        request,
+        household_id,
+        "Q7",
+        "乗り物",
+        "FP-UNIVの乗り物入力に対応するタブです。現在は専用の資産・維持費モデルへ未統合です。",
+        [
+            "車両購入・維持費・買替費はQ4「生活費」のイベント支出として入力してください。",
+            "自動車ローンはQ9「ローン」で入力してください。",
+        ],
+        [
+            {"path": f"/households/{household_id}/expenses", "label": "Q4 生活費へ"},
+            {"path": f"/households/{household_id}/loans", "label": "Q9 ローンへ"},
+        ],
+    )
+
+
+@app.get("/households/{household_id}/events", response_class=HTMLResponse)
+async def events_edit(request: Request, household_id: str) -> HTMLResponse:
+    """Q8: ライフイベント設定."""
+    household = await get_household(household_id)
+    event_expenses = (
+        [expense for expense in household.expenses if expense.cycle != "monthly"]
+        if household is not None
+        else []
+    )
+    return await _wizard_placeholder(
+        request,
+        household_id,
+        "Q8",
+        "ライフイベント",
+        "イベント支出は既存のExpenseモデルで計算され、Q4で入力できます。",
+        [
+            "周期支出・一回支出をイベントとして表示しています。",
+            "結婚援助・葬儀費などの専用フォームは今後追加します。",
+        ],
+        [{"path": f"/households/{household_id}/expenses", "label": "Q4 生活費でイベントを編集"}],
+        event_expenses=event_expenses,
+    )
+
+
 @app.get("/households/{household_id}/insurance", response_class=HTMLResponse)
 async def insurance_edit(request: Request, household_id: str) -> HTMLResponse:
     household = await get_household(household_id)
@@ -703,6 +796,7 @@ async def ideco_add(
         or monthly_contribution < 0
         or monthly_withdrawal < 0
         or not 0 <= withdrawal_tax_rate <= 1
+        or not 0 <= receive_start_age <= 120
     ):
         return HTMLResponse("iDeCoの入力値が不正です", status_code=400)
     household.ideco_plans.append(
@@ -742,7 +836,12 @@ async def nisa_add(
     household = await get_household(household_id)
     if household is None:
         return RedirectResponse("/", status_code=303)
-    if initial_balance < 0 or monthly_investment < 0 or monthly_withdrawal < 0:
+    if (
+        initial_balance < 0
+        or monthly_investment < 0
+        or monthly_withdrawal < 0
+        or (receive_start_age is not None and not 0 <= receive_start_age <= 120)
+    ):
         return HTMLResponse("NISAの入力値が不正です", status_code=400)
     household.nisa_plans.append(
         NisaPlan(
@@ -949,7 +1048,10 @@ def _yearly_summary(monthly) -> list[dict]:
 
 @app.get("/households/{household_id}/simulate", response_class=HTMLResponse)
 async def simulate_result(
-    request: Request, household_id: str, plan_id: str | None = None
+    request: Request,
+    household_id: str,
+    plan_id: str | None = None,
+    display_range: str = "all",
 ) -> HTMLResponse:
     """シミュレーション実行・結果表示."""
     household = await get_household(household_id)
@@ -965,19 +1067,39 @@ async def simulate_result(
 
     result = simulate(store, simulation_household)
 
-    yearly_list = _yearly_summary(result.monthly)
+    range_options = [
+        {"value": "1", "label": "1年"},
+        {"value": "3", "label": "3年"},
+        {"value": "5", "label": "5年"},
+        {"value": "10", "label": "10年"},
+        {"value": "all", "label": "全期間"},
+    ]
+    valid_ranges = {option["value"] for option in range_options}
+    if display_range not in valid_ranges:
+        display_range = "all"
+
+    display_monthly = result.monthly
+    if display_range != "all" and result.monthly:
+        display_end_year = result.monthly[0].date.year + int(display_range) - 1
+        display_monthly = [
+            month for month in result.monthly if month.date.year <= display_end_year
+        ]
+    yearly_list = _yearly_summary(display_monthly)
 
     # グラフ用データ
-    labels = [f"{m.date.year}/{m.date.month}" for m in result.monthly]
-    balances = [m.balance for m in result.monthly]
-    ideco_balances = [m.ideco_balance for m in result.monthly]
-    nisa_balances = [m.nisa_balance for m in result.monthly]
-    total_assets = [m.total_assets for m in result.monthly]
+    labels = [f"{m.date.year}/{m.date.month}" for m in display_monthly]
+    balances = [m.balance for m in display_monthly]
+    ideco_balances = [m.ideco_balance for m in display_monthly]
+    nisa_balances = [m.nisa_balance for m in display_monthly]
+    display_total_assets = [m.total_assets for m in display_monthly]
 
     # サマリー指標
-    min_balance = min(balances) if balances else 0
-    min_balance_month = result.monthly[balances.index(min_balance)].date if balances else None
-    final_balance = balances[-1] if balances else 0
+    all_balances = [m.balance for m in result.monthly]
+    min_balance = min(all_balances) if all_balances else 0
+    min_balance_month = (
+        result.monthly[all_balances.index(min_balance)].date if all_balances else None
+    )
+    final_balance = all_balances[-1] if all_balances else 0
 
     return templates.TemplateResponse(
         request,
@@ -987,16 +1109,18 @@ async def simulate_result(
             "household": household,
             "simulation_household": simulation_household,
             "plan_id": plan_id,
+            "display_range": display_range,
+            "range_options": range_options,
             "yearly": yearly_list,
             "labels": labels,
             "balances": balances,
             "min_balance": min_balance,
             "min_balance_month": min_balance_month,
             "final_balance": final_balance,
-            "final_assets": total_assets[-1] if total_assets else 0,
+            "final_assets": result.monthly[-1].total_assets if result.monthly else 0,
             "ideco_balances": ideco_balances,
             "nisa_balances": nisa_balances,
-            "total_assets": total_assets,
+            "total_assets": display_total_assets,
             "active_q": "sim",
         },
     )

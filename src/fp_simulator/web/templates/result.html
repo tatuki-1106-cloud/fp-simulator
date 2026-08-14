@@ -15,6 +15,18 @@
   <a href="/households/{{ household.id }}/export.xlsx?granularity=yearly{% if plan_id %}&plan_id={{ plan_id }}{% endif %}">Excel（年次）</a> |
   <a href="/households/{{ household.id }}/export.xlsx?granularity=monthly{% if plan_id %}&plan_id={{ plan_id }}{% endif %}">Excel（月次）</a>
 </p>
+<p>
+  表示範囲:
+  {% for option in range_options %}
+    {% if not loop.first %} | {% endif %}
+    {% if option.value == display_range %}
+      <strong>{{ option.label }}</strong>
+    {% else %}
+      <a href="/households/{{ household.id }}/simulate?display_range={{ option.value }}{% if plan_id %}&plan_id={{ plan_id }}{% endif %}">{{ option.label }}</a>
+    {% endif %}
+  {% endfor %}
+  <small>サマリーとエクスポートは生涯全体です。</small>
+</p>
 
 <h2>サマリー</h2>
 <table>

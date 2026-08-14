@@ -101,6 +101,15 @@ async def test_create_household_and_full_flow(client: AsyncClient) -> None:
     )
     assert r.status_code == 303
 
+    for path, label in [
+        ("housing", "Q6. 住まい"),
+        ("vehicles", "Q7. 乗り物"),
+        ("events", "Q8. ライフイベント"),
+    ]:
+        r = await client.get(f"/households/{household_id}/{path}")
+        assert r.status_code == 200
+        assert label in r.text
+
     # 7. シミュレーション実行
     r = await client.get(f"/households/{household_id}/simulate")
     assert r.status_code == 200
@@ -110,6 +119,13 @@ async def test_create_household_and_full_flow(client: AsyncClient) -> None:
     # 残高が表示されている
     assert "最低貯蓄残高" in r.text
     assert "金融資産合計" in r.text
+    assert "表示範囲" in r.text
+
+    r = await client.get(f"/households/{household_id}/simulate?display_range=1")
+    assert r.status_code == 200
+    assert "display_range=3" in r.text
+    assert f"/households/{household_id}/simulate/monthly?year=2026" in r.text
+    assert f"/households/{household_id}/simulate/monthly?year=2027" not in r.text
 
     # CSV/Excelエクスポート
     csv_response = await client.get(
@@ -134,6 +150,8 @@ async def test_create_household_and_full_flow(client: AsyncClient) -> None:
     assert "2026年 月次キャッシュフロー" in r.text
     assert "月末残高" in r.text
     assert "2026/01" in r.text
+    assert "計算根拠" in r.text
+    assert "社会保険料" in r.text
 
     # 現行プランと前提変更プランを比較
     r = await client.get(

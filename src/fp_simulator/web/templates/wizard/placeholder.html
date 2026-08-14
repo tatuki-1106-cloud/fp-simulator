@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% from "lifemap.html" import lifemap %}
+{% block content %}
+<h1>{{ q_number }}. {{ page_title }} — {{ household.name }}</h1>
+{{ lifemap(household) }}
+
+<div class="form-card">
+  <h2>現在の対応範囲</h2>
+  <p>{{ description }}</p>
+  <ul>
+  {% for note in notes %}
+    <li>{{ note }}</li>
+  {% endfor %}
+  </ul>
+</div>
+
+{% if event_expenses is defined %}
+<h2>登録済みイベント支出</h2>
+{% if event_expenses %}
+<table>
+  <thead><tr><th>内容</th><th>周期</th><th>金額</th><th>開始年齢</th></tr></thead>
+  <tbody>
+  {% for expense in event_expenses %}
+    <tr>
+      <td>{{ expense.name }}</td>
+      <td>{{ expense.cycle }}</td>
+      <td>{{ "{:,}".format(expense.monthly_amount) }}円</td>
+      <td>{{ expense.start_age }}歳</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p>登録済みのイベント支出はありません。</p>
+{% endif %}
+{% endif %}
+
+<p>
+{% for link in links %}
+  {% if not loop.first %} | {% endif %}
+  <a href="{{ link.path }}">{{ link.label }}</a>
+{% endfor %}
+</p>
+{% endblock %}

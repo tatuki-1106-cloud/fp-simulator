@@ -296,6 +296,25 @@ class TestCashflowIntegration:
             - receive_month.ideco_withdrawal_tax
         )
 
+    def test_investment_plan_validation_rejects_invalid_input(
+        self, store, household: Household
+    ) -> None:
+        """iDeCo/NISAのモデルが不正な値を拒否する."""
+        with pytest.raises(Exception):  # Pydantic ValidationError
+            IdecoPlan(
+                id="bad-ideco",
+                member_id="husband",
+                initial_balance=-1,
+                monthly_contribution=0,
+            )
+        with pytest.raises(Exception):  # Pydantic ValidationError
+            NisaPlan(
+                id="bad-nisa",
+                member_id="husband",
+                initial_balance=0,
+                monthly_investment=-1000,
+            )
+
     def test_traces_exist(self, store, household: Household) -> None:
         """トレーサビリティ情報が付与されている."""
         result = simulate(store, household)
