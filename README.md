@@ -88,6 +88,30 @@ OAuthクライアントの設定反映には数分かかる場合があります
 
 `deploy/litestream.yml` を参照。Cloud StorageバケットへSQLiteを継続レプリケーションします。
 
+バックアップの存在確認:
+
+```powershell
+gcloud storage ls --recursive gs://fp-simulator-backup-168688416857/**
+```
+
+復旧確認は、本番サービスとは別の一時Cloud Run Jobで実行します。実行後は検証用Jobを削除してください。
+
+```powershell
+$image = "asia-northeast1-docker.pkg.dev/fp-simulator/fp-simulator/app:latest"
+gcloud run jobs create fp-simulator-backup-verify `
+  --image $image --region asia-northeast1 --project fp-simulator `
+  --service-account 168688416857-compute@developer.gserviceaccount.com `
+  --command litestream `
+  --args "restore,-config,/app/litestream.yml,-if-replica-exists,/app/data/fp_simulator.db" `
+  --max-retries 0 --task-timeout 5m
+gcloud run jobs execute fp-simulator-backup-verify `
+  --region asia-northeast1 --project fp-simulator --wait
+gcloud run jobs delete fp-simulator-backup-verify `
+  --region asia-northeast1 --project fp-simulator --quiet
+```
+
+`database not found in config` が出る場合は、リストア先を `/app/data/fp_simulator.db` にしてください。Litestream設定のDBパスと一致している必要があります。
+
 ### 運用監視
 
 Cloud Runの5xxレスポンスをCloud Monitoringで監視します。アラートポリシーは次のファイルから作成できます。
