@@ -1,12 +1,13 @@
 {% extends "base.html" %}
 {% from "lifemap.html" import lifemap %}
+{% from "wizard/_form_helpers.html" import error_banner, edit_mode_banner %}
 {% block content %}
 <h1>Q9. ローン — {{ household.name }}</h1>
 {{ lifemap(household) }}
 
 {% if household.loans %}
 <table>
-  <thead><tr><th>名前</th><th>対象者</th><th>借入額</th><th>金利</th><th>期間</th><th>返済方式</th><th>開始</th></tr></thead>
+  <thead><tr><th>名前</th><th>対象者</th><th>借入額</th><th>金利</th><th>期間</th><th>返済方式</th><th>開始</th><th></th></tr></thead>
   <tbody>
   {% for l in household.loans %}
   {% set member = household.members | selectattr("id", "equalto", l.member_id) | first %}
@@ -18,30 +19,52 @@
       <td>{{ l.years }}年</td>
       <td>{{ l.repayment_type }}</td>
       <td>{{ l.start_year }}/{{ l.start_month }}</td>
+      <td>
+        {% if household.vehicles | selectattr("loan_id", "equalto", l.id) | list | length == 0 %}
+        <div class="row-actions">
+          <a href="/households/{{ household.id }}/loans?edit_id={{ l.id }}" class="btn-edit-link">編集</a>
+          <form method="post" action="/households/{{ household.id }}/loans/{{ l.id }}/delete" style="display:inline">
+            <button type="submit">削除</button>
+          </form>
+        </div>
+        {% else %}
+        <small class="field-hint">Q7の乗り物から参照中</small>
+        {% endif %}
+      </td>
     </tr>
   {% endfor %}
   </tbody>
 </table>
 {% endif %}
 
-<h2>ローンを追加</h2>
+<h2>{{ "ローンを編集" if edit_target else "ローンを追加" }}</h2>
+{{ error_banner(error) }}
+{{ edit_mode_banner(edit_target.id if edit_target else "", "/households/" ~ household.id ~ "/loans") }}
 <form method="post" action="/households/{{ household.id }}/loans">
+  <input type="hidden" name="edit_id" value="{{ edit_target.id if edit_target else '' }}">
+  {% set v = values if values else edit_target %}
   <p><label>対象者:
     <select name="member_id">
-      {% for m in household.members %}<option value="{{ m.id }}">{{ m.name }}({{ m.relationship.value }})</option>{% endfor %}
-    </select></label></p>
-  <p><label>名前: <input type="text" name="name" value="住宅ローン"></label></p>
-  <p><label>借入額: <input type="number" name="principal" required></label>円</p>
-  <p><label>年利: <input type="number" name="annual_rate" step="0.001" value="0.015"></label>(例: 0.015 = 1.5%)</p>
-  <p><label>返済期間: <input type="number" name="years" value="35"></label>年</p>
+      {% set current_member = v.member_id if v else "" %}
+      {% for m in household.members %}<option value="{{ m.id }}" {% if m.id == current_member %}selected{% endif %}>{{ m.name }}({{ m.relationship.value }})</option>{% endfor %}
+    </select></label>
+     <small class="field-hint">ローンの契約者(債務者)を選択します。</small></p>
+  <p><label>名前: <input type="text" name="name" value="{{ v.name if v else '住宅ローン' }}"></label>
+     <small class="field-hint">例: 住宅ローン、自動車ローン、教育ローンなど。</small></p>
+  <p><label>借入額: <input type="number" name="principal" required min="0" value="{{ v.principal if v else '' }}"></label>円
+     <small class="field-hint">借入時点の元本総額です。</small></p>
+  <p><label>年利: <input type="number" name="annual_rate" step="0.001" min="0" value="{{ v.annual_rate if v else 0.015 }}"></label>(例: 0.015 = 1.5%)</p>
+  <p><label>返済期間: <input type="number" name="years" min="1" value="{{ v.years if v else 35 }}"></label>年</p>
   <p><label>返済方式:
     <select name="repayment_type">
-      <option value="元利均等">元利均等</option>
-      <option value="元金均等">元金均等</option>
-    </select></label></p>
-  <p><label>開始年: <input type="number" name="start_year" value="2026"></label>
-     <label>開始月: <input type="number" name="start_month" value="1" min="1" max="12"></label></p>
-  <p><label>ボーナス払い(1回): <input type="number" name="bonus_amount" value="0"></label>円(6月・12月)</p>
-  <p><button type="submit">追加</button></p>
+      {% set current_rt = v.repayment_type if v else "元利均等" %}
+      <option value="元利均等" {% if current_rt == "元利均等" %}selected{% endif %}>元利均等</option>
+      <option value="元金均等" {% if current_rt == "元金均等" %}selected{% endif %}>元金均等</option>
+    </select></label>
+     <small class="field-hint">元利均等は毎月返済額が一定、元金均等は元金部分が一定で返済初期の負担が大きくなります。</small></p>
+  <p><label>開始年: <input type="number" name="start_year" min="1900" max="2200" value="{{ v.start_year if v else 2026 }}"></label>
+     <label>開始月: <input type="number" name="start_month" value="{{ v.start_month if v else 1 }}" min="1" max="12"></label></p>
+  <p><label>ボーナス払い(1回): <input type="number" name="bonus_amount" min="0" value="{{ v.bonus_amount if v else 0 }}"></label>円(6月・12月)</p>
+  <p><button type="submit">{{ "更新" if edit_target else "追加" }}</button></p>
 </form>
 {% endblock %}

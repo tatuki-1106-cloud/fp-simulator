@@ -1,30 +1,46 @@
 {% extends "base.html" %}
 {% from "lifemap.html" import lifemap %}
+{% from "wizard/_form_helpers.html" import error_banner, edit_mode_banner %}
 {% block content %}
 <h1>Q11. 貯蓄・資産 — {{ household.name }}</h1>
 {{ lifemap(household) }}
 
 {% if household.accounts %}
 <table>
-  <thead><tr><th>口座名</th><th>月初残高</th><th>金利(年)</th></tr></thead>
+  <thead><tr><th>口座名</th><th>月初残高</th><th>金利(年)</th><th></th></tr></thead>
   <tbody>
   {% for a in household.accounts %}
     <tr>
       <td>{{ a.name }}</td>
       <td>{{ "{:,}".format(a.balance) }}円</td>
       <td>{{ a.interest_rate }}</td>
+      <td>
+        <div class="row-actions">
+          <a href="/households/{{ household.id }}/accounts?edit_account_id={{ a.id }}" class="btn-edit-link">編集</a>
+          <form method="post" action="/households/{{ household.id }}/accounts/{{ a.id }}/delete" style="display:inline">
+            <button type="submit">削除</button>
+          </form>
+        </div>
+      </td>
     </tr>
   {% endfor %}
   </tbody>
 </table>
 {% endif %}
 
-<h2>口座を追加</h2>
+<h2>{{ "口座を編集" if edit_account else "口座を追加" }}</h2>
+{% if error_section == "account" %}{{ error_banner(error) }}{% endif %}
+{{ edit_mode_banner(edit_account.id if edit_account else "", "/households/" ~ household.id ~ "/accounts") }}
 <form method="post" action="/households/{{ household.id }}/accounts">
-  <p><label>口座名: <input type="text" name="name" required placeholder="例: 普通預金"></label></p>
-  <p><label>月初残高: <input type="number" name="balance" required></label>円</p>
-  <p><label>金利(年率): <input type="number" name="interest_rate" value="0" step="0.001"></label>(例: 0.001 = 0.1%)</p>
-  <p><button type="submit">追加</button></p>
+  <input type="hidden" name="edit_id" value="{{ edit_account.id if edit_account else '' }}">
+  {% set av = account_values if account_values else edit_account %}
+  <p><label>口座名: <input type="text" name="name" required placeholder="例: 普通預金" value="{{ av.name if av else '' }}"></label>
+     <small class="field-hint">現金・普通預金・定期預金など、資金の保管先ごとに登録します。</small></p>
+  <p><label>月初残高: <input type="number" name="balance" required min="0" value="{{ av.balance if av else '' }}"></label>円
+     <small class="field-hint">シミュレーション基準月({{ household.assumptions.base_year }}年{{ household.assumptions.base_month }}月)の月初時点の残高です。</small></p>
+  <p><label>金利(年率): <input type="number" name="interest_rate" value="{{ av.interest_rate if av else 0 }}" step="0.001"></label>(例: 0.001 = 0.1%)
+     <small class="field-hint">単利で毎年の利息を概算します。</small></p>
+  <p><button type="submit">{{ "更新" if edit_account else "追加" }}</button></p>
 </form>
 
 <hr style="margin: 2rem 0;">
@@ -32,51 +48,94 @@
 <h2>iDeCo設定</h2>
 {% if household.ideco_plans %}
 <table>
-  <thead><tr><th>対象者</th><th>初期残高</th><th>月額掛金</th><th>運用利回り</th><th>受取開始/受取月額</th></tr></thead>
+  <thead><tr><th>対象者</th><th>初期残高</th><th>月額掛金</th><th>運用利回り</th><th>受取開始/受取月額</th><th></th></tr></thead>
   <tbody>
   {% for p in household.ideco_plans %}
   {% set member = household.members | selectattr("id", "equalto", p.member_id) | first %}
-    <tr><td>{{ member.name if member else p.member_id }}</td><td>{{ "{:,}".format(p.initial_balance) }}円</td><td>{{ "{:,}".format(p.monthly_contribution) }}円</td><td>{{ p.annual_return_rate }}</td><td>{{ p.receive_start_age }}歳 / {{ "{:,}".format(p.monthly_withdrawal) }}円</td></tr>
+    <tr>
+      <td>{{ member.name if member else p.member_id }}</td><td>{{ "{:,}".format(p.initial_balance) }}円</td><td>{{ "{:,}".format(p.monthly_contribution) }}円</td><td>{{ p.annual_return_rate }}</td><td>{{ p.receive_start_age }}歳 / {{ "{:,}".format(p.monthly_withdrawal) }}円</td>
+      <td>
+        <div class="row-actions">
+          <a href="/households/{{ household.id }}/accounts?edit_ideco_id={{ p.id }}" class="btn-edit-link">編集</a>
+          <form method="post" action="/households/{{ household.id }}/ideco/{{ p.id }}/delete" style="display:inline">
+            <button type="submit">削除</button>
+          </form>
+        </div>
+      </td>
+    </tr>
   {% endfor %}
   </tbody>
 </table>
 {% endif %}
+<h3>{{ "iDeCo設定を編集" if edit_ideco else "iDeCoを追加" }}</h3>
+{% if error_section == "ideco" %}{{ error_banner(error) }}{% endif %}
+{{ edit_mode_banner(edit_ideco.id if edit_ideco else "", "/households/" ~ household.id ~ "/accounts") }}
 <form method="post" action="/households/{{ household.id }}/ideco">
+  <input type="hidden" name="edit_id" value="{{ edit_ideco.id if edit_ideco else '' }}">
+  {% set iv = ideco_values if ideco_values else edit_ideco %}
   <p><label>対象者:
     <select name="member_id">
-      {% for m in household.members %}<option value="{{ m.id }}">{{ m.name }}</option>{% endfor %}
-    </select></label></p>
-  <p><label>初期残高: <input type="number" name="initial_balance" value="0"></label>円</p>
-  <p><label>月額掛金: <input type="number" name="monthly_contribution" value="23000"></label>円</p>
-  <p><label>受取開始年齢: <input type="number" name="receive_start_age" value="65" min="0"></label>歳</p>
-  <p><label>受取月額(明示設定): <input type="number" name="monthly_withdrawal" value="0" min="0"></label>円</p>
-  <p><label>受取時の概算税率: <input type="number" name="withdrawal_tax_rate" value="0" min="0" max="1" step="0.01"></label>（例: 0.2 = 20%。制度判定ではなく入力前提）</p>
-  <p><label>運用利回り(年率): <input type="number" name="annual_return_rate" value="0" step="0.01"></label></p>
-  <p><button type="submit">iDeCoを追加</button></p>
+      {% set current_member = iv.member_id if iv else "" %}
+      {% for m in household.members %}<option value="{{ m.id }}" {% if m.id == current_member %}selected{% endif %}>{{ m.name }}</option>{% endfor %}
+    </select></label>
+     <small class="field-hint">iDeCoの加入者を選択します。</small></p>
+  <p><label>初期残高: <input type="number" name="initial_balance" min="0" value="{{ iv.initial_balance if iv else 0 }}"></label>円
+     <small class="field-hint">現時点までの拠出済み残高です。</small></p>
+  <p><label>月額掛金: <input type="number" name="monthly_contribution" min="0" value="{{ iv.monthly_contribution if iv else 23000 }}"></label>円
+     <small class="field-hint">加入区分により拠出限度額が異なります(例: 会社員は月23,000円が上限の場合あり)。</small></p>
+  <p><label>受取開始年齢: <input type="number" name="receive_start_age" value="{{ iv.receive_start_age if iv else 65 }}" min="0"></label>歳
+     <small class="field-hint">原則60〜75歳の間で受取開始年齢を選べます。</small></p>
+  <p><label>受取月額(明示設定): <input type="number" name="monthly_withdrawal" value="{{ iv.monthly_withdrawal if iv else 0 }}" min="0"></label>円
+     <small class="field-hint">0の場合はシミュレーション側で按分計算します。</small></p>
+  <p><label>受取時の概算税率: <input type="number" name="withdrawal_tax_rate" value="{{ iv.withdrawal_tax_rate if iv else 0 }}" min="0" max="1" step="0.01"></label>（例: 0.2 = 20%。制度判定ではなく入力前提）</p>
+  <p><label>運用利回り(年率): <input type="number" name="annual_return_rate" value="{{ iv.annual_return_rate if iv else 0 }}" step="0.01"></label>
+     <small class="field-hint">拠出金の想定運用利回りです。</small></p>
+  <p><button type="submit">{{ "更新" if edit_ideco else "iDeCoを追加" }}</button></p>
 </form>
 
 <h2>NISA設定</h2>
 {% if household.nisa_plans %}
 <table>
-  <thead><tr><th>対象者</th><th>初期残高</th><th>月額投資</th><th>運用利回り</th><th>取崩開始/取崩月額</th></tr></thead>
+  <thead><tr><th>対象者</th><th>初期残高</th><th>月額投資</th><th>運用利回り</th><th>取崩開始/取崩月額</th><th></th></tr></thead>
   <tbody>
   {% for p in household.nisa_plans %}
   {% set member = household.members | selectattr("id", "equalto", p.member_id) | first %}
-    <tr><td>{{ member.name if member else p.member_id }}</td><td>{{ "{:,}".format(p.initial_balance) }}円</td><td>{{ "{:,}".format(p.monthly_investment) }}円</td><td>{{ p.annual_return_rate }}</td><td>{{ p.receive_start_age or '-' }}{% if p.receive_start_age is not none %}歳{% endif %} / {{ "{:,}".format(p.monthly_withdrawal) }}円</td></tr>
+    <tr>
+      <td>{{ member.name if member else p.member_id }}</td><td>{{ "{:,}".format(p.initial_balance) }}円</td><td>{{ "{:,}".format(p.monthly_investment) }}円</td><td>{{ p.annual_return_rate }}</td><td>{{ p.receive_start_age or '-' }}{% if p.receive_start_age is not none %}歳{% endif %} / {{ "{:,}".format(p.monthly_withdrawal) }}円</td>
+      <td>
+        <div class="row-actions">
+          <a href="/households/{{ household.id }}/accounts?edit_nisa_id={{ p.id }}" class="btn-edit-link">編集</a>
+          <form method="post" action="/households/{{ household.id }}/nisa/{{ p.id }}/delete" style="display:inline">
+            <button type="submit">削除</button>
+          </form>
+        </div>
+      </td>
+    </tr>
   {% endfor %}
   </tbody>
 </table>
 {% endif %}
+<h3>{{ "NISA設定を編集" if edit_nisa else "NISAを追加" }}</h3>
+{% if error_section == "nisa" %}{{ error_banner(error) }}{% endif %}
+{{ edit_mode_banner(edit_nisa.id if edit_nisa else "", "/households/" ~ household.id ~ "/accounts") }}
 <form method="post" action="/households/{{ household.id }}/nisa">
+  <input type="hidden" name="edit_id" value="{{ edit_nisa.id if edit_nisa else '' }}">
+  {% set nv = nisa_values if nisa_values else edit_nisa %}
   <p><label>対象者:
     <select name="member_id">
-      {% for m in household.members %}<option value="{{ m.id }}">{{ m.name }}</option>{% endfor %}
-    </select></label></p>
-  <p><label>初期残高: <input type="number" name="initial_balance" value="0"></label>円</p>
-  <p><label>月額投資: <input type="number" name="monthly_investment" value="0"></label>円</p>
-  <p><label>取崩開始年齢: <input type="number" name="receive_start_age" min="0"></label>歳（未入力=取崩なし）</p>
-  <p><label>取崩月額: <input type="number" name="monthly_withdrawal" value="0" min="0"></label>円</p>
-  <p><label>運用利回り(年率): <input type="number" name="annual_return_rate" value="0" step="0.01"></label></p>
-  <p><button type="submit">NISAを追加</button></p>
+      {% set current_member = nv.member_id if nv else "" %}
+      {% for m in household.members %}<option value="{{ m.id }}" {% if m.id == current_member %}selected{% endif %}>{{ m.name }}</option>{% endfor %}
+    </select></label>
+     <small class="field-hint">NISA口座の名義人を選択します。</small></p>
+  <p><label>初期残高: <input type="number" name="initial_balance" min="0" value="{{ nv.initial_balance if nv else 0 }}"></label>円
+     <small class="field-hint">現時点までの投資済み評価額です。</small></p>
+  <p><label>月額投資: <input type="number" name="monthly_investment" min="0" value="{{ nv.monthly_investment if nv else 0 }}"></label>円
+     <small class="field-hint">つみたて投資枠・成長投資枠の合計月額を入力します。</small></p>
+  <p><label>取崩開始年齢: <input type="number" name="receive_start_age" min="0" value="{{ nv.receive_start_age if nv is not none and nv.receive_start_age is not none else '' }}"></label>歳（未入力=取崩なし）</p>
+  <p><label>取崩月額: <input type="number" name="monthly_withdrawal" value="{{ nv.monthly_withdrawal if nv else 0 }}" min="0"></label>円
+     <small class="field-hint">取崩開始年齢以降、毎月取り崩す金額です。</small></p>
+  <p><label>運用利回り(年率): <input type="number" name="annual_return_rate" value="{{ nv.annual_return_rate if nv else 0 }}" step="0.01"></label>
+     <small class="field-hint">投資信託・株式などの想定運用利回りです。</small></p>
+  <p><button type="submit">{{ "更新" if edit_nisa else "NISAを追加" }}</button></p>
 </form>
 {% endblock %}

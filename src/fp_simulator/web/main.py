@@ -80,6 +80,21 @@ app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 templates = Jinja2Templates(directory=BASE_DIR / "templates")
 
 
+def _wizard_error(
+    request: Request,
+    template_name: str,
+    context: dict,
+    error: str,
+    values: dict,
+    values_key: str = "values",
+) -> HTMLResponse:
+    """入力エラー時に、送信済みの値を保持したまま同じフォームをHTTP 400で再表示する."""
+    ctx = dict(context)
+    ctx["error"] = error
+    ctx[values_key] = values
+    return templates.TemplateResponse(request, template_name, ctx, status_code=400)
+
+
 def _export_rows(result, granularity: str) -> list[list[object]]:
     """シミュレーション結果をCSV/Excel共通の行データへ変換."""
     if granularity == "yearly":
@@ -271,15 +286,22 @@ async def household_create(
 
 
 @app.get("/households/{household_id}/members", response_class=HTMLResponse)
-async def members_edit(request: Request, household_id: str) -> HTMLResponse:
+async def members_edit(request: Request, household_id: str, edit_id: str = "") -> HTMLResponse:
     """Q1: 家族設定."""
     household = await get_household(household_id)
     if household is None:
         return RedirectResponse("/", status_code=303)
+    edit_target = next((m for m in household.members if m.id == edit_id), None) if edit_id else None
     return templates.TemplateResponse(
         request,
         "wizard/members.html",
-        {"title": "Q1 ご家族", "household": household, "relationships": list(Relationship), "active_q": "Q1"},
+        {
+            "title": "Q1 ご家族",
+            "household": household,
+            "relationships": list(Relationship),
+            "active_q": "Q1",
+            "edit_target": edit_target,
+        },
     )
 
 
@@ -293,28 +315,58 @@ async def members_add(
     gender: str = Form(""),
     life_expectancy_age: int = Form(90),
     prefecture: str = Form("東京都"),
-) -> RedirectResponse:
-    """家族メンバーを追加."""
+    edit_id: str = Form(""),
+) -> Response:
+    """家族メンバーを追加・更新."""
     household = await get_household(household_id)
     if household is None:
         return RedirectResponse("/", status_code=303)
-    household.members.append(
-        Member(
-            id=str(uuid.uuid4()),
-            name=name,
-            relationship=relationship,
-            birth_date=datetime.date.fromisoformat(birth_date),
-            gender=gender or None,
-            life_expectancy_age=life_expectancy_age,
-            prefecture=prefecture,
+    values = {
+        "name": name,
+        "relationship": relationship.value if isinstance(relationship, Relationship) else relationship,
+        "birth_date": birth_date,
+        "gender": gender,
+        "life_expectancy_age": life_expectancy_age,
+        "prefecture": prefecture,
+    }
+    context = {
+        "title": "Q1 ご家族",
+        "household": household,
+        "relationships": list(Relationship),
+        "active_q": "Q1",
+        "edit_target": next((m for m in household.members if m.id == edit_id), None) if edit_id else None,
+    }
+    if not name.strip():
+        return _wizard_error(request, "wizard/members.html", context, "氏名を入力してください", values)
+    try:
+        parsed_birth_date = datetime.date.fromisoformat(birth_date)
+    except ValueError:
+        return _wizard_error(request, "wizard/members.html", context, "生年月日の形式が正しくありません", values)
+    if not 0 <= life_expectancy_age <= 120:
+        return _wizard_error(
+            request, "wizard/members.html", context, "想定寿命は0〜120才の範囲で入力してください", values
         )
+    if edit_id and not any(m.id == edit_id for m in household.members):
+        return _wizard_error(request, "wizard/members.html", context, "編集対象のメンバーが見つかりません", values)
+    member = Member(
+        id=edit_id or str(uuid.uuid4()),
+        name=name,
+        relationship=relationship,
+        birth_date=parsed_birth_date,
+        gender=gender or None,
+        life_expectancy_age=life_expectancy_age,
+        prefecture=prefecture,
     )
+    if edit_id:
+        household.members = [member if m.id == edit_id else m for m in household.members]
+    else:
+        household.members.append(member)
     await save_household(household)
     await add_audit_log(
         household_id,
         getattr(request.state, "authenticated_email", None) or "web-user",
         "web",
-        "household.member.add",
+        "household.member.update" if edit_id else "household.member.add",
         details={"name": name, "relationship": str(relationship)},
     )
     return RedirectResponse(f"/households/{household_id}/members", status_code=303)
@@ -340,11 +392,12 @@ async def members_delete(request: Request, household_id: str, member_id: str) ->
 
 
 @app.get("/households/{household_id}/incomes", response_class=HTMLResponse)
-async def incomes_edit(request: Request, household_id: str) -> HTMLResponse:
+async def incomes_edit(request: Request, household_id: str, edit_id: str = "") -> HTMLResponse:
     """Q2: 収入設定."""
     household = await get_household(household_id)
     if household is None:
         return RedirectResponse("/", status_code=303)
+    edit_target = next((i for i in household.incomes if i.id == edit_id), None) if edit_id else None
     return templates.TemplateResponse(
         request,
         "wizard/incomes.html",
@@ -353,6 +406,7 @@ async def incomes_edit(request: Request, household_id: str) -> HTMLResponse:
             "household": household,
             "si_types": list(SocialInsuranceType),
             "active_q": "Q2",
+            "edit_target": edit_target,
         },
     )
 
@@ -370,32 +424,63 @@ async def incomes_add(
     bonus_amount: int = Form(0),
     retirement_allowance: int = Form(0),
     retirement_age: int = Form(60),
-) -> RedirectResponse:
-    """収入を追加."""
+    edit_id: str = Form(""),
+) -> Response:
+    """収入を追加・更新."""
     household = await get_household(household_id)
     if household is None:
         return RedirectResponse("/", status_code=303)
-    household.incomes.append(
-        Income(
-            id=str(uuid.uuid4()),
-            member_id=member_id,
-            name=name,
-            social_insurance_type=social_insurance_type,
-            start_age=start_age,
-            end_age=end_age,
-            monthly_amount=monthly_amount,
-            bonus_months=[6, 12] if bonus_amount > 0 else [],
-            bonus_amount=bonus_amount,
-            retirement_allowance=retirement_allowance,
-            retirement_age=retirement_age,
+    values = {
+        "member_id": member_id,
+        "name": name,
+        "social_insurance_type": social_insurance_type,
+        "start_age": start_age,
+        "end_age": end_age,
+        "monthly_amount": monthly_amount,
+        "bonus_amount": bonus_amount,
+        "retirement_allowance": retirement_allowance,
+        "retirement_age": retirement_age,
+    }
+    context = {
+        "title": "Q2 収入",
+        "household": household,
+        "si_types": list(SocialInsuranceType),
+        "active_q": "Q2",
+        "edit_target": next((i for i in household.incomes if i.id == edit_id), None) if edit_id else None,
+    }
+    if not any(member.id == member_id for member in household.members):
+        return _wizard_error(request, "wizard/incomes.html", context, "対象者が見つかりません", values)
+    if monthly_amount < 0 or bonus_amount < 0 or retirement_allowance < 0:
+        return _wizard_error(request, "wizard/incomes.html", context, "金額は0以上で入力してください", values)
+    if end_age < start_age:
+        return _wizard_error(
+            request, "wizard/incomes.html", context, "終了年齢は開始年齢以降にしてください", values
         )
+    if edit_id and not any(i.id == edit_id for i in household.incomes):
+        return _wizard_error(request, "wizard/incomes.html", context, "編集対象の収入が見つかりません", values)
+    income = Income(
+        id=edit_id or str(uuid.uuid4()),
+        member_id=member_id,
+        name=name,
+        social_insurance_type=social_insurance_type,
+        start_age=start_age,
+        end_age=end_age,
+        monthly_amount=monthly_amount,
+        bonus_months=[6, 12] if bonus_amount > 0 else [],
+        bonus_amount=bonus_amount,
+        retirement_allowance=retirement_allowance,
+        retirement_age=retirement_age,
     )
+    if edit_id:
+        household.incomes = [income if i.id == edit_id else i for i in household.incomes]
+    else:
+        household.incomes.append(income)
     await save_household(household)
     await add_audit_log(
         household_id,
         getattr(request.state, "authenticated_email", None) or "web-user",
         "web",
-        "household.income.add",
+        "household.income.update" if edit_id else "household.income.add",
         details={"name": name, "monthly_amount": monthly_amount},
     )
     return RedirectResponse(f"/households/{household_id}/incomes", status_code=303)
@@ -421,13 +506,18 @@ async def incomes_delete(request: Request, household_id: str, income_id: str) ->
 
 
 @app.get("/households/{household_id}/pensions", response_class=HTMLResponse)
-async def pensions_edit(request: Request, household_id: str) -> HTMLResponse:
+async def pensions_edit(request: Request, household_id: str, edit_id: str = "") -> HTMLResponse:
     """Q3: 年金設定."""
     household = await get_household(household_id)
     if household is None:
         return RedirectResponse("/", status_code=303)
+    edit_target = (
+        next((p for p in household.pension_records if p.id == edit_id), None) if edit_id else None
+    )
     return templates.TemplateResponse(
-        request, "wizard/pensions.html", {"title": "Q3 年金", "household": household, "active_q": "Q3"}
+        request,
+        "wizard/pensions.html",
+        {"title": "Q3 年金", "household": household, "active_q": "Q3", "edit_target": edit_target},
     )
 
 
@@ -440,40 +530,93 @@ async def pensions_add(
     kousei_months: int = Form(0),
     avg_standard_remuneration: int = Form(0),
     start_age: int = Form(65),
-) -> RedirectResponse:
-    """年金加入記録を追加."""
+    edit_id: str = Form(""),
+) -> Response:
+    """年金加入記録を追加・更新."""
     household = await get_household(household_id)
     if household is None:
         return RedirectResponse("/", status_code=303)
-    household.pension_records.append(
-        PensionRecordInput(
-            member_id=member_id,
-            kokumin_months=kokumin_months,
-            kousei_months=kousei_months,
-            avg_standard_remuneration=avg_standard_remuneration,
-            kousei_months_after_2003_04=kousei_months,
-            start_age=start_age,
+    values = {
+        "member_id": member_id,
+        "kokumin_months": kokumin_months,
+        "kousei_months": kousei_months,
+        "avg_standard_remuneration": avg_standard_remuneration,
+        "start_age": start_age,
+    }
+    context = {
+        "title": "Q3 年金",
+        "household": household,
+        "active_q": "Q3",
+        "edit_target": (
+            next((p for p in household.pension_records if p.id == edit_id), None) if edit_id else None
+        ),
+    }
+    if not any(member.id == member_id for member in household.members):
+        return _wizard_error(request, "wizard/pensions.html", context, "対象者が見つかりません", values)
+    if kokumin_months < 0 or kousei_months < 0 or avg_standard_remuneration < 0:
+        return _wizard_error(request, "wizard/pensions.html", context, "月数・金額は0以上で入力してください", values)
+    if not 0 <= start_age <= 120:
+        return _wizard_error(
+            request, "wizard/pensions.html", context, "受給開始年齢は0〜120才の範囲で入力してください", values
         )
+    if edit_id and not any(p.id == edit_id for p in household.pension_records):
+        return _wizard_error(request, "wizard/pensions.html", context, "編集対象の年金記録が見つかりません", values)
+    record = PensionRecordInput(
+        id=edit_id or str(uuid.uuid4()),
+        member_id=member_id,
+        kokumin_months=kokumin_months,
+        kousei_months=kousei_months,
+        avg_standard_remuneration=avg_standard_remuneration,
+        kousei_months_after_2003_04=kousei_months,
+        start_age=start_age,
     )
+    if edit_id:
+        household.pension_records = [
+            record if p.id == edit_id else p for p in household.pension_records
+        ]
+    else:
+        household.pension_records.append(record)
     await save_household(household)
     await add_audit_log(
         household_id,
         getattr(request.state, "authenticated_email", None) or "web-user",
         "web",
-        "household.pension.add",
+        "household.pension.update" if edit_id else "household.pension.add",
         details={"kokumin_months": kokumin_months, "kousei_months": kousei_months},
     )
     return RedirectResponse(f"/households/{household_id}/pensions", status_code=303)
 
 
+@app.post("/households/{household_id}/pensions/{record_id}/delete")
+async def pensions_delete(request: Request, household_id: str, record_id: str) -> RedirectResponse:
+    """年金加入記録を削除."""
+    household = await get_household(household_id)
+    if household is None:
+        return RedirectResponse("/", status_code=303)
+    household.pension_records = [p for p in household.pension_records if p.id != record_id]
+    await save_household(household)
+    await add_audit_log(
+        household_id,
+        getattr(request.state, "authenticated_email", None) or "web-user",
+        "web",
+        "household.pension.delete",
+        record_id,
+        {},
+    )
+    return RedirectResponse(f"/households/{household_id}/pensions", status_code=303)
+
+
 @app.get("/households/{household_id}/expenses", response_class=HTMLResponse)
-async def expenses_edit(request: Request, household_id: str) -> HTMLResponse:
+async def expenses_edit(request: Request, household_id: str, edit_id: str = "") -> HTMLResponse:
     """Q4: 生活費設定."""
     household = await get_household(household_id)
     if household is None:
         return RedirectResponse("/", status_code=303)
+    edit_target = next((e for e in household.expenses if e.id == edit_id), None) if edit_id else None
     return templates.TemplateResponse(
-        request, "wizard/expenses.html", {"title": "Q4 生活費", "household": household, "active_q": "Q4"}
+        request,
+        "wizard/expenses.html",
+        {"title": "Q4 生活費", "household": household, "active_q": "Q4", "edit_target": edit_target},
     )
 
 
@@ -485,39 +628,110 @@ async def expenses_add(
     monthly_amount: int = Form(...),
     start_age: int = Form(0),
     end_age: int = Form(0),  # 0=生涯
-) -> RedirectResponse:
-    """支出を追加."""
+    edit_id: str = Form(""),
+) -> Response:
+    """支出を追加・更新."""
     household = await get_household(household_id)
     if household is None:
         return RedirectResponse("/", status_code=303)
-    household.expenses.append(
-        Expense(
-            id=str(uuid.uuid4()),
-            name=name,
-            monthly_amount=monthly_amount,
-            start_age=start_age,
-            end_age=end_age if end_age > 0 else None,
+    values = {
+        "name": name,
+        "monthly_amount": monthly_amount,
+        "start_age": start_age,
+        "end_age": end_age,
+    }
+    context = {
+        "title": "Q4 生活費",
+        "household": household,
+        "active_q": "Q4",
+        "edit_target": next((e for e in household.expenses if e.id == edit_id), None) if edit_id else None,
+    }
+    if not name.strip():
+        return _wizard_error(request, "wizard/expenses.html", context, "内容を入力してください", values)
+    if monthly_amount < 0:
+        return _wizard_error(request, "wizard/expenses.html", context, "月額は0以上で入力してください", values)
+    if end_age and end_age < start_age:
+        return _wizard_error(
+            request, "wizard/expenses.html", context, "終了年齢は開始年齢以降にしてください", values
         )
+    if edit_id and not any(e.id == edit_id for e in household.expenses):
+        return _wizard_error(request, "wizard/expenses.html", context, "編集対象の支出が見つかりません", values)
+    expense = Expense(
+        id=edit_id or str(uuid.uuid4()),
+        name=name,
+        monthly_amount=monthly_amount,
+        start_age=start_age,
+        end_age=end_age if end_age > 0 else None,
     )
+    if edit_id:
+        household.expenses = [expense if e.id == edit_id else e for e in household.expenses]
+    else:
+        household.expenses.append(expense)
     await save_household(household)
     await add_audit_log(
         household_id,
         getattr(request.state, "authenticated_email", None) or "web-user",
         "web",
-        "household.expense.add",
+        "household.expense.update" if edit_id else "household.expense.add",
         details={"name": name, "monthly_amount": monthly_amount},
     )
     return RedirectResponse(f"/households/{household_id}/expenses", status_code=303)
 
 
+@app.post("/households/{household_id}/expenses/{expense_id}/delete")
+async def expenses_delete(request: Request, household_id: str, expense_id: str) -> RedirectResponse:
+    """支出(生活費)を削除."""
+    household = await get_household(household_id)
+    if household is None:
+        return RedirectResponse("/", status_code=303)
+    removed = next((e for e in household.expenses if e.id == expense_id), None)
+    household.expenses = [
+        e for e in household.expenses if e.id != expense_id or e.event_type != "生活費"
+    ]
+    await save_household(household)
+    await add_audit_log(
+        household_id,
+        getattr(request.state, "authenticated_email", None) or "web-user",
+        "web",
+        "household.expense.delete",
+        expense_id,
+        {"name": removed.name} if removed else {},
+    )
+    return RedirectResponse(f"/households/{household_id}/expenses", status_code=303)
+
+
 @app.get("/households/{household_id}/accounts", response_class=HTMLResponse)
-async def accounts_edit(request: Request, household_id: str) -> HTMLResponse:
+async def accounts_edit(
+    request: Request,
+    household_id: str,
+    edit_account_id: str = "",
+    edit_ideco_id: str = "",
+    edit_nisa_id: str = "",
+) -> HTMLResponse:
     """Q11: 貯蓄・資産設定."""
     household = await get_household(household_id)
     if household is None:
         return RedirectResponse("/", status_code=303)
+    edit_account = (
+        next((a for a in household.accounts if a.id == edit_account_id), None) if edit_account_id else None
+    )
+    edit_ideco = (
+        next((p for p in household.ideco_plans if p.id == edit_ideco_id), None) if edit_ideco_id else None
+    )
+    edit_nisa = (
+        next((p for p in household.nisa_plans if p.id == edit_nisa_id), None) if edit_nisa_id else None
+    )
     return templates.TemplateResponse(
-        request, "wizard/accounts.html", {"title": "Q11 貯蓄・資産", "household": household, "active_q": "Q11"}
+        request,
+        "wizard/accounts.html",
+        {
+            "title": "Q11 貯蓄・資産",
+            "household": household,
+            "active_q": "Q11",
+            "edit_account": edit_account,
+            "edit_ideco": edit_ideco,
+            "edit_nisa": edit_nisa,
+        },
     )
 
 
@@ -528,33 +742,89 @@ async def accounts_add(
     name: str = Form(...),
     balance: int = Form(...),
     interest_rate: float = Form(0.0),
-) -> RedirectResponse:
-    """口座を追加."""
+    edit_id: str = Form(""),
+) -> Response:
+    """口座を追加・更新."""
     household = await get_household(household_id)
     if household is None:
         return RedirectResponse("/", status_code=303)
-    household.accounts.append(
-        Account(id=str(uuid.uuid4()), name=name, balance=balance, interest_rate=interest_rate)
-    )
+    values = {"name": name, "balance": balance, "interest_rate": interest_rate}
+    context = {
+        "title": "Q11 貯蓄・資産",
+        "household": household,
+        "active_q": "Q11",
+        "error_section": "account",
+        "edit_account": next((a for a in household.accounts if a.id == edit_id), None) if edit_id else None,
+        "edit_ideco": None,
+        "edit_nisa": None,
+    }
+    if not name.strip():
+        return _wizard_error(
+            request, "wizard/accounts.html", context, "口座名を入力してください", values, "account_values"
+        )
+    if balance < 0:
+        return _wizard_error(
+            request, "wizard/accounts.html", context, "月初残高は0以上で入力してください", values, "account_values"
+        )
+    if edit_id and not any(a.id == edit_id for a in household.accounts):
+        return _wizard_error(
+            request, "wizard/accounts.html", context, "編集対象の口座が見つかりません", values, "account_values"
+        )
+    account = Account(id=edit_id or str(uuid.uuid4()), name=name, balance=balance, interest_rate=interest_rate)
+    if edit_id:
+        household.accounts = [account if a.id == edit_id else a for a in household.accounts]
+    else:
+        household.accounts.append(account)
     await save_household(household)
     await add_audit_log(
         household_id,
         getattr(request.state, "authenticated_email", None) or "web-user",
         "web",
-        "household.account.add",
+        "household.account.update" if edit_id else "household.account.add",
         details={"name": name, "balance": balance},
     )
     return RedirectResponse(f"/households/{household_id}/accounts", status_code=303)
 
 
+@app.post("/households/{household_id}/accounts/{account_id}/delete")
+async def accounts_delete(request: Request, household_id: str, account_id: str) -> RedirectResponse:
+    """口座を削除."""
+    household = await get_household(household_id)
+    if household is None:
+        return RedirectResponse("/", status_code=303)
+    removed = next((a for a in household.accounts if a.id == account_id), None)
+    household.accounts = [a for a in household.accounts if a.id != account_id]
+    await save_household(household)
+    await add_audit_log(
+        household_id,
+        getattr(request.state, "authenticated_email", None) or "web-user",
+        "web",
+        "household.account.delete",
+        account_id,
+        {"name": removed.name} if removed else {},
+    )
+    return RedirectResponse(f"/households/{household_id}/accounts", status_code=303)
+
+
 @app.get("/households/{household_id}/loans", response_class=HTMLResponse)
-async def loans_edit(request: Request, household_id: str) -> HTMLResponse:
+async def loans_edit(
+    request: Request, household_id: str, edit_id: str = "", error: str = ""
+) -> HTMLResponse:
     """Q9: ローン設定."""
     household = await get_household(household_id)
     if household is None:
         return RedirectResponse("/", status_code=303)
+    edit_target = next((l for l in household.loans if l.id == edit_id), None) if edit_id else None
     return templates.TemplateResponse(
-        request, "wizard/loans.html", {"title": "Q9 ローン", "household": household, "active_q": "Q9"}
+        request,
+        "wizard/loans.html",
+        {
+            "title": "Q9 ローン",
+            "household": household,
+            "active_q": "Q9",
+            "edit_target": edit_target,
+            "error": error,
+        },
     )
 
 
@@ -571,44 +841,109 @@ async def loans_add(
     start_year: int = Form(2026),
     start_month: int = Form(1),
     bonus_amount: int = Form(0),
-) -> RedirectResponse:
-    """ローンを追加."""
+    edit_id: str = Form(""),
+) -> Response:
+    """ローンを追加・更新."""
     household = await get_household(household_id)
     if household is None:
         return RedirectResponse("/", status_code=303)
-    household.loans.append(
-        Loan(
-            id=str(uuid.uuid4()),
-            member_id=member_id,
-            name=name,
-            principal=principal,
-            annual_rate=annual_rate,
-            years=years,
-            repayment_type=repayment_type,
-            start_year=start_year,
-            start_month=start_month,
-            bonus_amount=bonus_amount,
-            bonus_months=[6, 12] if bonus_amount > 0 else [],
-        )
+    values = {
+        "member_id": member_id,
+        "name": name,
+        "principal": principal,
+        "annual_rate": annual_rate,
+        "years": years,
+        "repayment_type": repayment_type,
+        "start_year": start_year,
+        "start_month": start_month,
+        "bonus_amount": bonus_amount,
+    }
+    context = {
+        "title": "Q9 ローン",
+        "household": household,
+        "active_q": "Q9",
+        "edit_target": next((l for l in household.loans if l.id == edit_id), None) if edit_id else None,
+    }
+    if not any(member.id == member_id for member in household.members):
+        return _wizard_error(request, "wizard/loans.html", context, "対象者が見つかりません", values)
+    if principal < 0 or bonus_amount < 0:
+        return _wizard_error(request, "wizard/loans.html", context, "借入額・ボーナス払いは0以上で入力してください", values)
+    if annual_rate < 0:
+        return _wizard_error(request, "wizard/loans.html", context, "年利は0以上で入力してください", values)
+    if years <= 0:
+        return _wizard_error(request, "wizard/loans.html", context, "返済期間は1年以上で入力してください", values)
+    if repayment_type not in {"元利均等", "元金均等"}:
+        return _wizard_error(request, "wizard/loans.html", context, "返済方式が正しくありません", values)
+    if not 1900 <= start_year <= 2200 or not 1 <= start_month <= 12:
+        return _wizard_error(request, "wizard/loans.html", context, "開始年月が正しくありません", values)
+    if edit_id and not any(l.id == edit_id for l in household.loans):
+        return _wizard_error(request, "wizard/loans.html", context, "編集対象のローンが見つかりません", values)
+    loan = Loan(
+        id=edit_id or str(uuid.uuid4()),
+        member_id=member_id,
+        name=name,
+        principal=principal,
+        annual_rate=annual_rate,
+        years=years,
+        repayment_type=repayment_type,
+        start_year=start_year,
+        start_month=start_month,
+        bonus_amount=bonus_amount,
+        bonus_months=[6, 12] if bonus_amount > 0 else [],
     )
+    if edit_id:
+        household.loans = [loan if l.id == edit_id else l for l in household.loans]
+    else:
+        household.loans.append(loan)
     await save_household(household)
     await add_audit_log(
         household_id,
         getattr(request.state, "authenticated_email", None) or "web-user",
         "web",
-        "household.loan.add",
+        "household.loan.update" if edit_id else "household.loan.add",
         details={"name": name, "principal": principal},
     )
     return RedirectResponse(f"/households/{household_id}/loans", status_code=303)
 
 
-@app.get("/households/{household_id}/education", response_class=HTMLResponse)
-async def education_edit(request: Request, household_id: str) -> HTMLResponse:
+@app.post("/households/{household_id}/loans/{loan_id}/delete")
+async def loans_delete(request: Request, household_id: str, loan_id: str) -> Response:
+    """ローンを削除(乗り物から参照中の場合は削除しない)."""
     household = await get_household(household_id)
     if household is None:
         return RedirectResponse("/", status_code=303)
+    if any(v.loan_id == loan_id for v in household.vehicles):
+        return await loans_edit(
+            request,
+            household_id,
+            error="このローンは乗り物から参照中のため削除できません。先にQ7で紐付けを外してください。",
+        )
+    removed = next((l for l in household.loans if l.id == loan_id), None)
+    household.loans = [l for l in household.loans if l.id != loan_id]
+    await save_household(household)
+    await add_audit_log(
+        household_id,
+        getattr(request.state, "authenticated_email", None) or "web-user",
+        "web",
+        "household.loan.delete",
+        loan_id,
+        {"name": removed.name} if removed else {},
+    )
+    return RedirectResponse(f"/households/{household_id}/loans", status_code=303)
+
+
+@app.get("/households/{household_id}/education", response_class=HTMLResponse)
+async def education_edit(request: Request, household_id: str, edit_id: str = "") -> HTMLResponse:
+    household = await get_household(household_id)
+    if household is None:
+        return RedirectResponse("/", status_code=303)
+    edit_target = (
+        next((e for e in household.education_plans if e.id == edit_id), None) if edit_id else None
+    )
     return templates.TemplateResponse(
-        request, "wizard/education.html", {"title": "Q5 教育費", "household": household, "active_q": "Q5"}
+        request,
+        "wizard/education.html",
+        {"title": "Q5 教育費", "household": household, "active_q": "Q5", "edit_target": edit_target},
     )
 
 
@@ -619,25 +954,64 @@ async def education_add(
     member_id: str = Form(...),
     path: str = Form("公立"),
     include_lessons: str = Form(""),
-) -> RedirectResponse:
+    edit_id: str = Form(""),
+) -> Response:
     household = await get_household(household_id)
     if household is None:
         return RedirectResponse("/", status_code=303)
-    household.education_plans.append(
-        EducationPlan(
-            id=str(uuid.uuid4()),
-            member_id=member_id,
-            path=path,
-            include_lessons=bool(include_lessons),
-        )
+    values = {"member_id": member_id, "path": path, "include_lessons": include_lessons}
+    context = {
+        "title": "Q5 教育費",
+        "household": household,
+        "active_q": "Q5",
+        "edit_target": (
+            next((e for e in household.education_plans if e.id == edit_id), None) if edit_id else None
+        ),
+    }
+    if not any(m.id == member_id for m in household.members):
+        return _wizard_error(request, "wizard/education.html", context, "対象の子が見つかりません", values)
+    if path not in {"公立", "私立"}:
+        return _wizard_error(request, "wizard/education.html", context, "進学パスが正しくありません", values)
+    if edit_id and not any(e.id == edit_id for e in household.education_plans):
+        return _wizard_error(request, "wizard/education.html", context, "編集対象の教育費プランが見つかりません", values)
+    plan = EducationPlan(
+        id=edit_id or str(uuid.uuid4()),
+        member_id=member_id,
+        path=path,
+        include_lessons=bool(include_lessons),
     )
+    if edit_id:
+        household.education_plans = [
+            plan if e.id == edit_id else e for e in household.education_plans
+        ]
+    else:
+        household.education_plans.append(plan)
     await save_household(household)
     await add_audit_log(
         household_id,
         getattr(request.state, "authenticated_email", None) or "web-user",
         "web",
-        "household.education.add",
+        "household.education.update" if edit_id else "household.education.add",
         details={"path": path},
+    )
+    return RedirectResponse(f"/households/{household_id}/education", status_code=303)
+
+
+@app.post("/households/{household_id}/education/{plan_id}/delete")
+async def education_delete(request: Request, household_id: str, plan_id: str) -> RedirectResponse:
+    """教育費プランを削除."""
+    household = await get_household(household_id)
+    if household is None:
+        return RedirectResponse("/", status_code=303)
+    household.education_plans = [e for e in household.education_plans if e.id != plan_id]
+    await save_household(household)
+    await add_audit_log(
+        household_id,
+        getattr(request.state, "authenticated_email", None) or "web-user",
+        "web",
+        "household.education.delete",
+        plan_id,
+        {},
     )
     return RedirectResponse(f"/households/{household_id}/education", status_code=303)
 
@@ -699,14 +1073,29 @@ async def housing_save(
     household = await get_household(household_id)
     if household is None:
         return RedirectResponse("/", status_code=303)
+    values = {
+        "property_price": property_price,
+        "down_payment": down_payment,
+        "purchase_year": purchase_year,
+        "purchase_month": purchase_month,
+        "annual_property_tax": annual_property_tax,
+        "annual_repair_cost": annual_repair_cost,
+    }
+    context = {"title": "Q6 住まい", "household": household, "active_q": "Q6"}
     if property_price < 0 or down_payment < 0:
-        return Response("property_price and down_payment must not be negative", status_code=400)
+        return _wizard_error(
+            request, "wizard/housing.html", context, "物件価格・頭金は0以上で入力してください", values
+        )
     if down_payment > property_price:
-        return Response("down_payment must not exceed property_price", status_code=400)
+        return _wizard_error(
+            request, "wizard/housing.html", context, "頭金は物件価格を超えないようにしてください", values
+        )
     if annual_property_tax < 0 or annual_repair_cost < 0:
-        return Response("housing costs must not be negative", status_code=400)
+        return _wizard_error(
+            request, "wizard/housing.html", context, "固定資産税・修繕費は0以上で入力してください", values
+        )
     if not 1900 <= purchase_year <= 2200 or not 1 <= purchase_month <= 12:
-        return Response("purchase date is invalid", status_code=400)
+        return _wizard_error(request, "wizard/housing.html", context, "購入年月が正しくありません", values)
     household.owned_housing = OwnedHousingPlan(
         property_price=property_price,
         down_payment=down_payment,
@@ -731,15 +1120,16 @@ async def housing_save(
 
 
 @app.get("/households/{household_id}/vehicles", response_class=HTMLResponse)
-async def vehicles_edit(request: Request, household_id: str) -> HTMLResponse:
+async def vehicles_edit(request: Request, household_id: str, edit_id: str = "") -> HTMLResponse:
     """Q7: 乗り物設定."""
     household = await get_household(household_id)
     if household is None:
         return RedirectResponse("/", status_code=303)
+    edit_target = next((v for v in household.vehicles if v.id == edit_id), None) if edit_id else None
     return templates.TemplateResponse(
         request,
         "wizard/vehicles.html",
-        {"title": "Q7 乗り物", "household": household, "active_q": "Q7"},
+        {"title": "Q7 乗り物", "household": household, "active_q": "Q7", "edit_target": edit_target},
     )
 
 
@@ -766,15 +1156,43 @@ async def vehicles_add(
     replacement_loan_years: int = Form(0),
     replacement_loan_fee: int = Form(0),
     replacement_loan_repayment_type: str = Form("元利均等"),
+    edit_id: str = Form(""),
 ) -> Response:
-    """乗り物を追加."""
+    """乗り物を追加/編集."""
     household = await get_household(household_id)
     if household is None:
         return RedirectResponse("/", status_code=303)
+    values = {
+        "name": name,
+        "vehicle_type": vehicle_type,
+        "ownership_start_year": ownership_start_year,
+        "ownership_start_month": ownership_start_month,
+        "ownership_end_year": ownership_end_year,
+        "ownership_end_month": ownership_end_month,
+        "purchase_price": purchase_price,
+        "monthly_maintenance": monthly_maintenance,
+        "annual_tax_repair": annual_tax_repair,
+        "replacement_cycle_years": replacement_cycle_years,
+        "sale_price": sale_price,
+        "inspection_cost": inspection_cost,
+        "inspection_cycle_years": inspection_cycle_years,
+        "loan_id": loan_id,
+        "replacement_loan_principal": replacement_loan_principal,
+        "replacement_loan_annual_rate": replacement_loan_annual_rate,
+        "replacement_loan_years": replacement_loan_years,
+        "replacement_loan_fee": replacement_loan_fee,
+        "replacement_loan_repayment_type": replacement_loan_repayment_type,
+    }
+    context = {
+        "title": "Q7 乗り物",
+        "household": household,
+        "active_q": "Q7",
+        "edit_target": next((v for v in household.vehicles if v.id == edit_id), None) if edit_id else None,
+    }
     if vehicle_type not in {"新車", "中古車"}:
-        return Response("vehicle_type is invalid", status_code=400)
+        return _wizard_error(request, "wizard/vehicles.html", context, "車種区分が正しくありません", values)
     if loan_id and not any(loan.id == loan_id for loan in household.loans):
-        return Response("loan_id does not exist", status_code=400)
+        return _wizard_error(request, "wizard/vehicles.html", context, "紐付けるローンが見つかりません", values)
     if any(
         value < 0
         for value in (
@@ -789,54 +1207,62 @@ async def vehicles_add(
             replacement_loan_fee,
         )
     ):
-        return Response("vehicle amounts must not be negative", status_code=400)
+        return _wizard_error(request, "wizard/vehicles.html", context, "金額・年数は0以上で入力してください", values)
     if replacement_loan_annual_rate < 0:
-        return Response("replacement_loan_annual_rate must not be negative", status_code=400)
+        return _wizard_error(request, "wizard/vehicles.html", context, "買い替えローンの金利は0以上で入力してください", values)
     if replacement_loan_repayment_type not in {"元利均等", "元金均等"}:
-        return Response("replacement_loan_repayment_type is invalid", status_code=400)
+        return _wizard_error(request, "wizard/vehicles.html", context, "買い替えローンの返済方式が正しくありません", values)
     if replacement_loan_principal > 0 and replacement_loan_years <= 0:
-        return Response("replacement_loan_years is required when replacement loan is used", status_code=400)
+        return _wizard_error(
+            request, "wizard/vehicles.html", context, "買い替えローンを設定する場合は返済期間が必要です", values
+        )
     if not 1900 <= ownership_start_year <= 2200 or not 1900 <= ownership_end_year <= 2200:
-        return Response("ownership year is invalid", status_code=400)
+        return _wizard_error(request, "wizard/vehicles.html", context, "所有開始・終了年が正しくありません", values)
     if not 1 <= ownership_start_month <= 12 or not 1 <= ownership_end_month <= 12:
-        return Response("ownership month is invalid", status_code=400)
+        return _wizard_error(request, "wizard/vehicles.html", context, "所有開始・終了月が正しくありません", values)
     if not 1 <= inspection_cycle_years <= 10:
-        return Response("inspection_cycle_years is invalid", status_code=400)
+        return _wizard_error(request, "wizard/vehicles.html", context, "車検周期が正しくありません(1〜10年)", values)
     if ownership_end_year < ownership_start_year or (
         ownership_end_year == ownership_start_year
         and ownership_end_month < ownership_start_month
     ):
-        return Response("ownership_end must not precede ownership_start", status_code=400)
-    household.vehicles.append(
-        Vehicle(
-            id=str(uuid.uuid4()),
-            name=name,
-            vehicle_type=vehicle_type,
-            ownership_start_year=ownership_start_year,
-            ownership_start_month=ownership_start_month,
-            ownership_end_year=ownership_end_year,
-            ownership_end_month=ownership_end_month,
-            purchase_price=purchase_price,
-            monthly_maintenance=monthly_maintenance,
-            annual_tax_repair=annual_tax_repair,
-            replacement_cycle_years=replacement_cycle_years,
-            sale_price=sale_price,
-            inspection_cost=inspection_cost,
-            inspection_cycle_years=inspection_cycle_years,
-            loan_id=loan_id or None,
-            replacement_loan_principal=replacement_loan_principal,
-            replacement_loan_annual_rate=replacement_loan_annual_rate,
-            replacement_loan_years=replacement_loan_years,
-            replacement_loan_fee=replacement_loan_fee,
-            replacement_loan_repayment_type=replacement_loan_repayment_type,
+        return _wizard_error(
+            request, "wizard/vehicles.html", context, "所有終了は所有開始より後にしてください", values
         )
+    if edit_id and not any(v.id == edit_id for v in household.vehicles):
+        return _wizard_error(request, "wizard/vehicles.html", context, "編集対象の乗り物が見つかりません", values)
+    vehicle = Vehicle(
+        id=edit_id or str(uuid.uuid4()),
+        name=name,
+        vehicle_type=vehicle_type,
+        ownership_start_year=ownership_start_year,
+        ownership_start_month=ownership_start_month,
+        ownership_end_year=ownership_end_year,
+        ownership_end_month=ownership_end_month,
+        purchase_price=purchase_price,
+        monthly_maintenance=monthly_maintenance,
+        annual_tax_repair=annual_tax_repair,
+        replacement_cycle_years=replacement_cycle_years,
+        sale_price=sale_price,
+        inspection_cost=inspection_cost,
+        inspection_cycle_years=inspection_cycle_years,
+        loan_id=loan_id or None,
+        replacement_loan_principal=replacement_loan_principal,
+        replacement_loan_annual_rate=replacement_loan_annual_rate,
+        replacement_loan_years=replacement_loan_years,
+        replacement_loan_fee=replacement_loan_fee,
+        replacement_loan_repayment_type=replacement_loan_repayment_type,
     )
+    if edit_id:
+        household.vehicles = [vehicle if v.id == edit_id else v for v in household.vehicles]
+    else:
+        household.vehicles.append(vehicle)
     await save_household(household)
     await add_audit_log(
         household_id,
         getattr(request.state, "authenticated_email", None) or "web-user",
         "web",
-        "household.vehicle.add",
+        "household.vehicle.update" if edit_id else "household.vehicle.add",
         details={"name": name, "purchase_price": purchase_price},
     )
     return RedirectResponse(f"/households/{household_id}/vehicles", status_code=303)
@@ -863,11 +1289,13 @@ async def vehicles_delete(request: Request, household_id: str, vehicle_id: str) 
 
 
 @app.get("/households/{household_id}/events", response_class=HTMLResponse)
-async def events_edit(request: Request, household_id: str) -> HTMLResponse:
+async def events_edit(request: Request, household_id: str, edit_id: str = "") -> HTMLResponse:
     """Q8: ライフイベント設定."""
     household = await get_household(household_id)
     if household is None:
         return RedirectResponse("/", status_code=303)
+    event_expenses = [expense for expense in household.expenses if expense.event_type != "生活費"]
+    edit_target = next((e for e in event_expenses if e.id == edit_id), None) if edit_id else None
     return templates.TemplateResponse(
         request,
         "wizard/events.html",
@@ -875,7 +1303,8 @@ async def events_edit(request: Request, household_id: str) -> HTMLResponse:
             "title": "Q8 ライフイベント",
             "household": household,
             "active_q": "Q8",
-            "event_expenses": [expense for expense in household.expenses if expense.event_type != "生活費"],
+            "event_expenses": event_expenses,
+            "edit_target": edit_target,
         },
     )
 
@@ -898,65 +1327,105 @@ async def events_add(
     end_date_raw: str = Form("", alias="end_date"),
     annual_raise_rate: float = Form(0.0),
     disaster_amount_raw: str = Form(""),
+    edit_id: str = Form(""),
 ) -> Response:
-    """Q8のライフイベントを追加."""
+    """Q8のライフイベントを追加・更新."""
     household = await get_household(household_id)
     if household is None:
         return RedirectResponse("/", status_code=303)
+    values = {
+        "event_type": event_type,
+        "name": name,
+        "member_id": member_id,
+        "monthly_amount": monthly_amount,
+        "cycle": cycle,
+        "yearly_month": yearly_month,
+        "start_age": start_age,
+        "start_month": start_month,
+        "end_age": end_age,
+        "end_month": end_month,
+        "start_date": start_date_raw,
+        "end_date": end_date_raw,
+        "annual_raise_rate": annual_raise_rate,
+        "disaster_amount": disaster_amount_raw,
+    }
+
+    def build_context() -> dict:
+        event_expenses = [expense for expense in household.expenses if expense.event_type != "生活費"]
+        return {
+            "title": "Q8 ライフイベント",
+            "household": household,
+            "active_q": "Q8",
+            "event_expenses": event_expenses,
+            "edit_target": next((e for e in event_expenses if e.id == edit_id), None) if edit_id else None,
+        }
+
     if event_type not in {"汎用", "結婚援助", "葬儀費"}:
-        return Response("event_type is invalid", status_code=400)
+        return _wizard_error(request, "wizard/events.html", build_context(), "イベント種別が正しくありません", values)
     if cycle not in {"monthly", "yearly", "once"}:
-        return Response("cycle is invalid", status_code=400)
+        return _wizard_error(request, "wizard/events.html", build_context(), "頻度が正しくありません", values)
     if member_id and not any(member.id == member_id for member in household.members):
-        return Response("member_id does not exist", status_code=400)
+        return _wizard_error(request, "wizard/events.html", build_context(), "対象者が見つかりません", values)
     if annual_raise_rate < -1:
-        return Response("annual_raise_rate is invalid", status_code=400)
+        return _wizard_error(request, "wizard/events.html", build_context(), "上昇率が正しくありません", values)
     try:
         disaster_amount = int(disaster_amount_raw) if disaster_amount_raw.strip() else None
     except ValueError:
-        return Response("disaster_amount is invalid", status_code=400)
+        return _wizard_error(request, "wizard/events.html", build_context(), "災害時支出額は数値で入力してください", values)
     try:
         start_date = (
             datetime.date.fromisoformat(start_date_raw) if start_date_raw.strip() else None
         )
         end_date = datetime.date.fromisoformat(end_date_raw) if end_date_raw.strip() else None
     except ValueError:
-        return Response("event date is invalid", status_code=400)
+        return _wizard_error(request, "wizard/events.html", build_context(), "日付の形式が正しくありません", values)
     if start_date and end_date and end_date < start_date:
-        return Response("end_date must not precede start_date", status_code=400)
-    if monthly_amount < 0 or (disaster_amount is not None and disaster_amount < 0):
-        return Response("event amounts must not be negative", status_code=400)
-    if not 0 <= start_age <= 120 or not 0 <= end_age <= 120:
-        return Response("event age is invalid", status_code=400)
-    if end_age and end_age < start_age:
-        return Response("end_age must not precede start_age", status_code=400)
-    if not 1 <= start_month <= 12 or not 1 <= end_month <= 12 or not 1 <= yearly_month <= 12:
-        return Response("event month is invalid", status_code=400)
-    household.expenses.append(
-        Expense(
-            id=str(uuid.uuid4()),
-            name=name.strip() or "ライフイベント",
-            event_type=event_type,
-            member_id=member_id or None,
-            monthly_amount=monthly_amount,
-            cycle=cycle,
-            yearly_month=yearly_month,
-            start_age=start_age,
-            start_month=start_month,
-            end_age=end_age if end_age > 0 else None,
-            end_month=end_month,
-            start_date=start_date,
-            end_date=end_date,
-            annual_raise_rate=annual_raise_rate,
-            disaster_amount=disaster_amount,
+        return _wizard_error(
+            request, "wizard/events.html", build_context(), "終了日は開始日以降にしてください", values
         )
+    if monthly_amount < 0 or (disaster_amount is not None and disaster_amount < 0):
+        return _wizard_error(request, "wizard/events.html", build_context(), "金額は0以上で入力してください", values)
+    if not 0 <= start_age <= 120 or not 0 <= end_age <= 120:
+        return _wizard_error(request, "wizard/events.html", build_context(), "年齢は0〜120の範囲で入力してください", values)
+    if end_age and end_age < start_age:
+        return _wizard_error(
+            request, "wizard/events.html", build_context(), "終了年齢は開始年齢以降にしてください", values
+        )
+    if not 1 <= start_month <= 12 or not 1 <= end_month <= 12 or not 1 <= yearly_month <= 12:
+        return _wizard_error(request, "wizard/events.html", build_context(), "月は1〜12の範囲で入力してください", values)
+    if edit_id and not any(
+        e.id == edit_id and e.event_type != "生活費" for e in household.expenses
+    ):
+        return _wizard_error(
+            request, "wizard/events.html", build_context(), "編集対象のライフイベントが見つかりません", values
+        )
+    event = Expense(
+        id=edit_id or str(uuid.uuid4()),
+        name=name.strip() or "ライフイベント",
+        event_type=event_type,
+        member_id=member_id or None,
+        monthly_amount=monthly_amount,
+        cycle=cycle,
+        yearly_month=yearly_month,
+        start_age=start_age,
+        start_month=start_month,
+        end_age=end_age if end_age > 0 else None,
+        end_month=end_month,
+        start_date=start_date,
+        end_date=end_date,
+        annual_raise_rate=annual_raise_rate,
+        disaster_amount=disaster_amount,
     )
+    if edit_id:
+        household.expenses = [event if e.id == edit_id else e for e in household.expenses]
+    else:
+        household.expenses.append(event)
     await save_household(household)
     await add_audit_log(
         household_id,
         getattr(request.state, "authenticated_email", None) or "web-user",
         "web",
-        "household.event.add",
+        "household.event.update" if edit_id else "household.event.add",
         details={"event_type": event_type, "name": name, "cycle": cycle},
     )
     return RedirectResponse(f"/households/{household_id}/events", status_code=303)
@@ -990,7 +1459,7 @@ async def events_delete(request: Request, household_id: str, expense_id: str) ->
 
 
 @app.get("/households/{household_id}/insurance", response_class=HTMLResponse)
-async def insurance_edit(request: Request, household_id: str) -> Response:
+async def insurance_edit(request: Request, household_id: str, edit_id: str = "") -> Response:
     household = await get_household(household_id)
     if household is None:
         return RedirectResponse("/", status_code=303)
@@ -1012,6 +1481,7 @@ async def insurance_edit(request: Request, household_id: str) -> Response:
         policies,
         datetime.date(household.assumptions.base_year, household.assumptions.base_month, 1),
     )
+    edit_target = next((i for i in household.insurances if i.id == edit_id), None) if edit_id else None
     return templates.TemplateResponse(
         request,
         "wizard/insurance.html",
@@ -1020,6 +1490,7 @@ async def insurance_edit(request: Request, household_id: str) -> Response:
             "household": household,
             "active_q": "Q10",
             "insurance_analysis": analysis,
+            "edit_target": edit_target,
         },
     )
 
@@ -1039,50 +1510,104 @@ async def insurance_add(
     end_month: int = Form(12),
     death_benefit: int = Form(0),
     surrender_value_rate: float = Form(0.0),
+    edit_id: str = Form(""),
 ) -> Response:
     household = await get_household(household_id)
     if household is None:
         return RedirectResponse("/", status_code=303)
+    values = {
+        "name": name,
+        "insurance_type": insurance_type,
+        "insured_member_id": insured_member_id,
+        "payer_member_id": payer_member_id,
+        "monthly_premium": monthly_premium,
+        "start_year": start_year,
+        "start_month": start_month,
+        "end_year": end_year,
+        "end_month": end_month,
+        "death_benefit": death_benefit,
+        "surrender_value_rate": surrender_value_rate,
+    }
+
+    def error_context() -> dict:
+        policies = [
+            InsurancePolicy(
+                name=insurance.name,
+                insurance_type=insurance.insurance_type,
+                insured_member_id=insurance.insured_member_id,
+                payer_member_id=insurance.payer_member_id,
+                monthly_premium=insurance.monthly_premium,
+                start_date=datetime.date(insurance.start_year, insurance.start_month, 1),
+                end_date=datetime.date(insurance.end_year, insurance.end_month, 1),
+                death_benefit=insurance.death_benefit,
+                surrender_value_rate=insurance.surrender_value_rate,
+            )
+            for insurance in household.insurances
+        ]
+        analysis = analyze_coverage(
+            policies,
+            datetime.date(household.assumptions.base_year, household.assumptions.base_month, 1),
+        )
+        return {
+            "title": "Q10 保険",
+            "household": household,
+            "active_q": "Q10",
+            "insurance_analysis": analysis,
+            "edit_target": (
+                next((i for i in household.insurances if i.id == edit_id), None) if edit_id else None
+            ),
+        }
+
     if insurance_type not in {"死亡保障", "医療", "就業不能", "個人年金"}:
-        return Response("insurance_type is invalid", status_code=400)
+        return _wizard_error(request, "wizard/insurance.html", error_context(), "保険種別が正しくありません", values)
     if not any(member.id == insured_member_id for member in household.members):
-        return Response("insured_member_id does not exist", status_code=400)
+        return _wizard_error(request, "wizard/insurance.html", error_context(), "被保険者が見つかりません", values)
     if not any(member.id == payer_member_id for member in household.members):
-        return Response("payer_member_id does not exist", status_code=400)
+        return _wizard_error(request, "wizard/insurance.html", error_context(), "契約者(支払者)が見つかりません", values)
     if monthly_premium < 0 or death_benefit < 0:
-        return Response("insurance amounts must not be negative", status_code=400)
+        return _wizard_error(request, "wizard/insurance.html", error_context(), "保険料・保険金は0以上で入力してください", values)
     if not 0 <= surrender_value_rate <= 1:
-        return Response("surrender_value_rate must be between 0 and 1", status_code=400)
+        return _wizard_error(
+            request, "wizard/insurance.html", error_context(), "解約返戻率は0〜1の範囲で入力してください", values
+        )
     if not 1900 <= start_year <= 2200 or not 1900 <= end_year <= 2200:
-        return Response("insurance year is invalid", status_code=400)
+        return _wizard_error(request, "wizard/insurance.html", error_context(), "開始・終了年が正しくありません", values)
     if not 1 <= start_month <= 12 or not 1 <= end_month <= 12:
-        return Response("insurance month is invalid", status_code=400)
+        return _wizard_error(request, "wizard/insurance.html", error_context(), "開始・終了月が正しくありません", values)
     start_date = datetime.date(start_year, start_month, 1)
     end_date = datetime.date(end_year, end_month, 1)
     if end_date < start_date:
-        return Response("insurance end must not precede start", status_code=400)
-    household.insurances.append(
-        Insurance(
-            id=str(uuid.uuid4()),
-            name=name.strip() or "保険",
-            insurance_type=insurance_type,
-            insured_member_id=insured_member_id,
-            payer_member_id=payer_member_id,
-            monthly_premium=monthly_premium,
-            start_year=start_year,
-            start_month=start_month,
-            end_year=end_year,
-            end_month=end_month,
-            death_benefit=death_benefit,
-            surrender_value_rate=surrender_value_rate,
+        return _wizard_error(
+            request, "wizard/insurance.html", error_context(), "終了は開始以降にしてください", values
         )
+    if edit_id and not any(i.id == edit_id for i in household.insurances):
+        return _wizard_error(
+            request, "wizard/insurance.html", error_context(), "編集対象の保険が見つかりません", values
+        )
+    policy = Insurance(
+        id=edit_id or str(uuid.uuid4()),
+        name=name.strip() or "保険",
+        insurance_type=insurance_type,
+        insured_member_id=insured_member_id,
+        payer_member_id=payer_member_id,
+        monthly_premium=monthly_premium,
+        start_year=start_year,
+        start_month=start_month,
+        end_year=end_year,
+        end_month=end_month,
+        death_benefit=death_benefit,
+        surrender_value_rate=surrender_value_rate,
     )
+    if edit_id:
+        household.insurances = [policy if i.id == edit_id else i for i in household.insurances]
+    else:
+        household.insurances.append(policy)
     await save_household(household)
     await add_audit_log(
         household_id,
         getattr(request.state, "authenticated_email", None) or "web-user",
         "web",
-        "household.insurance.add",
+        "household.insurance.update" if edit_id else "household.insurance.add",
         details={"name": name, "monthly_premium": monthly_premium},
     )
     return RedirectResponse(f"/households/{household_id}/insurance", status_code=303)
@@ -1126,10 +1651,34 @@ async def ideco_add(
     monthly_withdrawal: int = Form(0),
     withdrawal_tax_rate: float = Form(0.0),
     annual_return_rate: float = Form(0.0),
-) -> RedirectResponse:
+    edit_id: str = Form(""),
+) -> Response:
+    """iDeCoプランを追加・更新."""
     household = await get_household(household_id)
     if household is None:
         return RedirectResponse("/", status_code=303)
+    values = {
+        "member_id": member_id,
+        "initial_balance": initial_balance,
+        "monthly_contribution": monthly_contribution,
+        "receive_start_age": receive_start_age,
+        "monthly_withdrawal": monthly_withdrawal,
+        "withdrawal_tax_rate": withdrawal_tax_rate,
+        "annual_return_rate": annual_return_rate,
+    }
+    context = {
+        "title": "Q11 貯蓄・資産",
+        "household": household,
+        "active_q": "Q11",
+        "error_section": "ideco",
+        "edit_account": None,
+        "edit_ideco": next((p for p in household.ideco_plans if p.id == edit_id), None) if edit_id else None,
+        "edit_nisa": None,
+    }
+    if not any(member.id == member_id for member in household.members):
+        return _wizard_error(
+            request, "wizard/accounts.html", context, "対象者が見つかりません", values, "ideco_values"
+        )
     if (
         initial_balance < 0
         or monthly_contribution < 0
@@ -1137,26 +1686,53 @@ async def ideco_add(
         or not 0 <= withdrawal_tax_rate <= 1
         or not 0 <= receive_start_age <= 120
     ):
-        return HTMLResponse("iDeCoの入力値が不正です", status_code=400)
-    household.ideco_plans.append(
-        IdecoPlan(
-            id=str(uuid.uuid4()),
-            member_id=member_id,
-            initial_balance=initial_balance,
-            monthly_contribution=monthly_contribution,
-            receive_start_age=receive_start_age,
-            monthly_withdrawal=monthly_withdrawal,
-            withdrawal_tax_rate=withdrawal_tax_rate,
-            annual_return_rate=annual_return_rate,
+        return _wizard_error(
+            request, "wizard/accounts.html", context, "iDeCoの入力値が不正です", values, "ideco_values"
         )
+    if edit_id and not any(p.id == edit_id for p in household.ideco_plans):
+        return _wizard_error(
+            request, "wizard/accounts.html", context, "編集対象のiDeCoが見つかりません", values, "ideco_values"
+        )
+    plan = IdecoPlan(
+        id=edit_id or str(uuid.uuid4()),
+        member_id=member_id,
+        initial_balance=initial_balance,
+        monthly_contribution=monthly_contribution,
+        receive_start_age=receive_start_age,
+        monthly_withdrawal=monthly_withdrawal,
+        withdrawal_tax_rate=withdrawal_tax_rate,
+        annual_return_rate=annual_return_rate,
     )
+    if edit_id:
+        household.ideco_plans = [plan if p.id == edit_id else p for p in household.ideco_plans]
+    else:
+        household.ideco_plans.append(plan)
     await save_household(household)
     await add_audit_log(
         household_id,
         getattr(request.state, "authenticated_email", None) or "web-user",
         "web",
-        "household.ideco.add",
+        "household.ideco.update" if edit_id else "household.ideco.add",
         details={"monthly_contribution": monthly_contribution},
+    )
+    return RedirectResponse(f"/households/{household_id}/accounts", status_code=303)
+
+
+@app.post("/households/{household_id}/ideco/{plan_id}/delete")
+async def ideco_delete(request: Request, household_id: str, plan_id: str) -> RedirectResponse:
+    """iDeCoプランを削除."""
+    household = await get_household(household_id)
+    if household is None:
+        return RedirectResponse("/", status_code=303)
+    household.ideco_plans = [p for p in household.ideco_plans if p.id != plan_id]
+    await save_household(household)
+    await add_audit_log(
+        household_id,
+        getattr(request.state, "authenticated_email", None) or "web-user",
+        "web",
+        "household.ideco.delete",
+        plan_id,
+        {},
     )
     return RedirectResponse(f"/households/{household_id}/accounts", status_code=303)
 
@@ -1171,35 +1747,85 @@ async def nisa_add(
     receive_start_age: int | None = Form(None),
     monthly_withdrawal: int = Form(0),
     annual_return_rate: float = Form(0.0),
-) -> RedirectResponse:
+    edit_id: str = Form(""),
+) -> Response:
+    """NISAプランを追加・更新."""
     household = await get_household(household_id)
     if household is None:
         return RedirectResponse("/", status_code=303)
+    values = {
+        "member_id": member_id,
+        "initial_balance": initial_balance,
+        "monthly_investment": monthly_investment,
+        "receive_start_age": receive_start_age,
+        "monthly_withdrawal": monthly_withdrawal,
+        "annual_return_rate": annual_return_rate,
+    }
+    context = {
+        "title": "Q11 貯蓄・資産",
+        "household": household,
+        "active_q": "Q11",
+        "error_section": "nisa",
+        "edit_account": None,
+        "edit_ideco": None,
+        "edit_nisa": next((p for p in household.nisa_plans if p.id == edit_id), None) if edit_id else None,
+    }
+    if not any(member.id == member_id for member in household.members):
+        return _wizard_error(
+            request, "wizard/accounts.html", context, "対象者が見つかりません", values, "nisa_values"
+        )
     if (
         initial_balance < 0
         or monthly_investment < 0
         or monthly_withdrawal < 0
         or (receive_start_age is not None and not 0 <= receive_start_age <= 120)
     ):
-        return HTMLResponse("NISAの入力値が不正です", status_code=400)
-    household.nisa_plans.append(
-        NisaPlan(
-            id=str(uuid.uuid4()),
-            member_id=member_id,
-            initial_balance=initial_balance,
-            monthly_investment=monthly_investment,
-            receive_start_age=receive_start_age,
-            monthly_withdrawal=monthly_withdrawal,
-            annual_return_rate=annual_return_rate,
+        return _wizard_error(
+            request, "wizard/accounts.html", context, "NISAの入力値が不正です", values, "nisa_values"
         )
+    if edit_id and not any(p.id == edit_id for p in household.nisa_plans):
+        return _wizard_error(
+            request, "wizard/accounts.html", context, "編集対象のNISAが見つかりません", values, "nisa_values"
+        )
+    plan = NisaPlan(
+        id=edit_id or str(uuid.uuid4()),
+        member_id=member_id,
+        initial_balance=initial_balance,
+        monthly_investment=monthly_investment,
+        receive_start_age=receive_start_age,
+        monthly_withdrawal=monthly_withdrawal,
+        annual_return_rate=annual_return_rate,
     )
+    if edit_id:
+        household.nisa_plans = [plan if p.id == edit_id else p for p in household.nisa_plans]
+    else:
+        household.nisa_plans.append(plan)
     await save_household(household)
     await add_audit_log(
         household_id,
         getattr(request.state, "authenticated_email", None) or "web-user",
         "web",
-        "household.nisa.add",
+        "household.nisa.update" if edit_id else "household.nisa.add",
         details={"monthly_investment": monthly_investment},
+    )
+    return RedirectResponse(f"/households/{household_id}/accounts", status_code=303)
+
+
+@app.post("/households/{household_id}/nisa/{plan_id}/delete")
+async def nisa_delete(request: Request, household_id: str, plan_id: str) -> RedirectResponse:
+    """NISAプランを削除."""
+    household = await get_household(household_id)
+    if household is None:
+        return RedirectResponse("/", status_code=303)
+    household.nisa_plans = [p for p in household.nisa_plans if p.id != plan_id]
+    await save_household(household)
+    await add_audit_log(
+        household_id,
+        getattr(request.state, "authenticated_email", None) or "web-user",
+        "web",
+        "household.nisa.delete",
+        plan_id,
+        {},
     )
     return RedirectResponse(f"/households/{household_id}/accounts", status_code=303)
 

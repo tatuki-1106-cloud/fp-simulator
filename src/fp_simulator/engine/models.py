@@ -69,6 +69,7 @@ class Income(BaseModel):
 class PensionRecordInput(BaseModel):
     """年金加入記録の入力."""
 
+    id: str | None = None  # Web UIでの編集・削除用(未設定=旧データ互換)
     member_id: str
     kokumin_months: int = 0
     kousei_months: int = 0

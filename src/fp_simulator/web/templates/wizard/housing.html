@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% from "lifemap.html" import lifemap %}
+{% from "wizard/_form_helpers.html" import error_banner %}
 {% block content %}
 <h1>Q6. 住まい — {{ household.name }}</h1>
 {{ lifemap(household) }}
@@ -18,13 +19,21 @@
   {% endif %}
 </div>
 
+{{ error_banner(error) }}
 <form method="post" action="/households/{{ household.id }}/housing">
-  <p><label>物件価格: <input type="number" name="property_price" min="0" required value="{{ household.owned_housing.property_price if household.owned_housing else 0 }}"></label>円</p>
-  <p><label>頭金: <input type="number" name="down_payment" min="0" required value="{{ household.owned_housing.down_payment if household.owned_housing else 0 }}"></label>円</p>
-  <p><label>購入年: <input type="number" name="purchase_year" min="1900" max="2200" required value="{{ household.owned_housing.purchase_year if household.owned_housing else household.assumptions.base_year }}"></label></p>
-  <p><label>購入月: <input type="number" name="purchase_month" min="1" max="12" required value="{{ household.owned_housing.purchase_month if household.owned_housing else household.assumptions.base_month }}"></label></p>
-  <p><label>固定資産税: <input type="number" name="annual_property_tax" min="0" required value="{{ household.owned_housing.annual_property_tax if household.owned_housing else 0 }}"></label>円/年</p>
-  <p><label>修繕費: <input type="number" name="annual_repair_cost" min="0" required value="{{ household.owned_housing.annual_repair_cost if household.owned_housing else 0 }}"></label>円/年</p>
+  {% set v = values %}
+  <p><label>物件価格: <input type="number" name="property_price" min="0" required value="{{ v.property_price if v else (household.owned_housing.property_price if household.owned_housing else 0) }}"></label>円
+     <small class="field-hint">土地・建物を含めた物件全体の価格です。</small></p>
+  <p><label>頭金: <input type="number" name="down_payment" min="0" required value="{{ v.down_payment if v else (household.owned_housing.down_payment if household.owned_housing else 0) }}"></label>円
+     <small class="field-hint">物件価格を超えない金額で入力してください。残額はQ9でローンとして設定します。</small></p>
+  <p><label>購入年: <input type="number" name="purchase_year" min="1900" max="2200" required value="{{ v.purchase_year if v else (household.owned_housing.purchase_year if household.owned_housing else household.assumptions.base_year) }}"></label>
+     <small class="field-hint">1900〜2200年の範囲で入力してください。</small></p>
+  <p><label>購入月: <input type="number" name="purchase_month" min="1" max="12" required value="{{ v.purchase_month if v else (household.owned_housing.purchase_month if household.owned_housing else household.assumptions.base_month) }}"></label>
+     <small class="field-hint">1〜12の範囲で入力してください。</small></p>
+  <p><label>固定資産税: <input type="number" name="annual_property_tax" min="0" required value="{{ v.annual_property_tax if v else (household.owned_housing.annual_property_tax if household.owned_housing else 0) }}"></label>円/年
+     <small class="field-hint">毎年の固定資産税・都市計画税の目安です。</small></p>
+  <p><label>修繕費: <input type="number" name="annual_repair_cost" min="0" required value="{{ v.annual_repair_cost if v else (household.owned_housing.annual_repair_cost if household.owned_housing else 0) }}"></label>円/年
+     <small class="field-hint">マンション管理費・修繕積立金や戸建ての修繕費の年間目安です。</small></p>
   <p><button type="submit">保存</button></p>
 </form>
 

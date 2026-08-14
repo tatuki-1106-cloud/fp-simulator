@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% from "lifemap.html" import lifemap %}
+{% from "wizard/_form_helpers.html" import error_banner, edit_mode_banner %}
 {% block content %}
 <h1>Q7. 乗り物 — {{ household.name }}</h1>
 {{ lifemap(household) }}
@@ -20,7 +21,12 @@
       <td>{{ vehicle.replacement_cycle_years or "なし" }}{% if vehicle.replacement_cycle_years %}年{% endif %}</td>
       <td>{{ "{:,}".format(vehicle.sale_price) }}円</td>
       <td>{{ "{:,}".format(vehicle.replacement_loan_principal) }}円{% if vehicle.replacement_loan_years %} / {{ vehicle.replacement_loan_years }}年{% endif %}</td>
-      <td><form method="post" action="/households/{{ household.id }}/vehicles/{{ vehicle.id }}/delete"><button type="submit">削除</button></form></td>
+      <td>
+        <div class="row-actions">
+          <a href="/households/{{ household.id }}/vehicles?edit_id={{ vehicle.id }}" class="btn-edit-link">編集</a>
+          <form method="post" action="/households/{{ household.id }}/vehicles/{{ vehicle.id }}/delete"><button type="submit">削除</button></form>
+        </div>
+      </td>
     </tr>
     {% endfor %}
     </tbody>
@@ -30,41 +36,52 @@
   {% endif %}
 </div>
 
-<h2>乗り物を追加</h2>
+<h2>{{ "乗り物を編集" if edit_target else "乗り物を追加" }}</h2>
+{{ error_banner(error) }}
+{{ edit_mode_banner(edit_target.id if edit_target else "", "/households/" ~ household.id ~ "/vehicles") }}
 <form method="post" action="/households/{{ household.id }}/vehicles">
-  <p><label>名称: <input type="text" name="name" value="自動車" required></label></p>
+  <input type="hidden" name="edit_id" value="{{ edit_target.id if edit_target else '' }}">
+  {% set v = values if values else edit_target %}
+  <p><label>名称: <input type="text" name="name" value="{{ v.name if v else '自動車' }}" required></label>
+     <small class="field-hint">例: 自動車、バイクなど。</small></p>
   <p><label>種別:
-    <select name="vehicle_type"><option value="新車">新車</option><option value="中古車">中古車</option></select>
-  </label></p>
-  <p><label>所有開始年: <input type="number" name="ownership_start_year" value="{{ household.assumptions.base_year }}" min="1900" max="2200"></label>
-     <label>月: <input type="number" name="ownership_start_month" value="{{ household.assumptions.base_month }}" min="1" max="12"></label></p>
-  <p><label>所有終了年: <input type="number" name="ownership_end_year" value="2090" min="1900" max="2200"></label>
-     <label>月: <input type="number" name="ownership_end_month" value="12" min="1" max="12"></label></p>
-  <p><label>取得価格: <input type="number" name="purchase_price" min="0" required></label>円</p>
-  <p><label>維持費: <input type="number" name="monthly_maintenance" min="0" value="0"></label>円/月</p>
-  <p><label>税金・修繕費: <input type="number" name="annual_tax_repair" min="0" value="0"></label>円/年</p>
-  <p><label>買替周期: <input type="number" name="replacement_cycle_years" min="0" value="0"></label>年（0=買替なし）</p>
-  <p><label>売却額: <input type="number" name="sale_price" min="0" value="0"></label>円（買替・所有終了時）</p>
-  <p><label>車検費用: <input type="number" name="inspection_cost" min="0" value="0"></label>円</p>
-  <p><label>車検周期: <input type="number" name="inspection_cycle_years" min="1" max="10" value="2"></label>年</p>
+    {% set current_vt = v.vehicle_type if v else "新車" %}
+    <select name="vehicle_type"><option value="新車" {% if current_vt == "新車" %}selected{% endif %}>新車</option><option value="中古車" {% if current_vt == "中古車" %}selected{% endif %}>中古車</option></select>
+  </label>
+     <small class="field-hint">新車・中古車で維持費/耐用年数の目安が変わります。</small></p>
+  <p><label>所有開始年: <input type="number" name="ownership_start_year" value="{{ v.ownership_start_year if v else household.assumptions.base_year }}" min="1900" max="2200"></label>
+     <label>月: <input type="number" name="ownership_start_month" value="{{ v.ownership_start_month if v else household.assumptions.base_month }}" min="1" max="12"></label></p>
+  <p><label>所有終了年: <input type="number" name="ownership_end_year" value="{{ v.ownership_end_year if v else 2090 }}" min="1900" max="2200"></label>
+     <label>月: <input type="number" name="ownership_end_month" value="{{ v.ownership_end_month if v else 12 }}" min="1" max="12"></label>
+     <small class="field-hint">所有終了は所有開始より後の年月にしてください。</small></p>
+  <p><label>取得価格: <input type="number" name="purchase_price" min="0" required value="{{ v.purchase_price if v else '' }}"></label>円</p>
+  <p><label>維持費: <input type="number" name="monthly_maintenance" min="0" value="{{ v.monthly_maintenance if v else 0 }}"></label>円/月</p>
+  <p><label>税金・修繕費: <input type="number" name="annual_tax_repair" min="0" value="{{ v.annual_tax_repair if v else 0 }}"></label>円/年</p>
+  <p><label>買替周期: <input type="number" name="replacement_cycle_years" min="0" value="{{ v.replacement_cycle_years if v else 0 }}"></label>年（0=買替なし）</p>
+  <p><label>売却額: <input type="number" name="sale_price" min="0" value="{{ v.sale_price if v else 0 }}"></label>円（買替・所有終了時）</p>
+  <p><label>車検費用: <input type="number" name="inspection_cost" min="0" value="{{ v.inspection_cost if v else 0 }}"></label>円</p>
+  <p><label>車検周期: <input type="number" name="inspection_cycle_years" min="1" max="10" value="{{ v.inspection_cycle_years if v else 2 }}"></label>年
+     <small class="field-hint">1〜10年の範囲で入力してください。</small></p>
   <p><label>初回購入ローン:
+    {% set current_loan = v.loan_id if v else "" %}
     <select name="loan_id">
       <option value="">なし</option>
-      {% for loan in household.loans %}<option value="{{ loan.id }}">{{ loan.name }}（{{ "{:,}".format(loan.principal) }}円）</option>{% endfor %}
+      {% for loan in household.loans %}<option value="{{ loan.id }}" {% if loan.id == current_loan %}selected{% endif %}>{{ loan.name }}（{{ "{:,}".format(loan.principal) }}円）</option>{% endfor %}
     </select>
   </label></p>
   <p><small>初回購入のみ、取得価格から選択したQ9ローンの借入額を差し引きます。ローン返済はQ9で計上されます。</small></p>
-  <p><label>買替時の借入額: <input type="number" name="replacement_loan_principal" min="0" value="0"></label>円</p>
-  <p><label>買替ローン年利: <input type="number" name="replacement_loan_annual_rate" min="0" step="0.001" value="0"></label>
-     <label>返済期間: <input type="number" name="replacement_loan_years" min="0" value="0"></label>年</p>
-  <p><label>買替ローン手数料: <input type="number" name="replacement_loan_fee" min="0" value="0"></label>円
+  <p><label>買替時の借入額: <input type="number" name="replacement_loan_principal" min="0" value="{{ v.replacement_loan_principal if v else 0 }}"></label>円</p>
+  <p><label>買替ローン年利: <input type="number" name="replacement_loan_annual_rate" min="0" step="0.001" value="{{ v.replacement_loan_annual_rate if v else 0 }}"></label>
+     <label>返済期間: <input type="number" name="replacement_loan_years" min="0" value="{{ v.replacement_loan_years if v else 0 }}"></label>年</p>
+  <p><label>買替ローン手数料: <input type="number" name="replacement_loan_fee" min="0" value="{{ v.replacement_loan_fee if v else 0 }}"></label>円
      <label>返済方式:
+       {% set current_rlrt = v.replacement_loan_repayment_type if v else "元利均等" %}
        <select name="replacement_loan_repayment_type">
-         <option value="元利均等">元利均等</option>
-         <option value="元金均等">元金均等</option>
+         <option value="元利均等" {% if current_rlrt == "元利均等" %}selected{% endif %}>元利均等</option>
+         <option value="元金均等" {% if current_rlrt == "元金均等" %}selected{% endif %}>元金均等</option>
        </select>
      </label></p>
   <p><small>買替時に同じ条件のローンを自動作成します。既存ローンは買替月に残債を精算し、以後の返済を停止します。</small></p>
-  <p><button type="submit">追加</button></p>
+  <p><button type="submit">{{ "更新" if edit_target else "追加" }}</button></p>
 </form>
 {% endblock %}

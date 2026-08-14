@@ -34,14 +34,56 @@
     button:hover { background: #2a4a6c; }
     .btn-secondary { background: #666; }
     .btn-danger { background: #c0392b; }
+    .field-hint { display: block; color: #666; font-size: 0.85rem; margin-top: 0.2rem; }
+    .form-error { background: #fdecea; color: #7a1f1f; border: 1px solid #f3b7b3; border-radius: 4px; padding: 0.7rem 0.9rem; margin: 0.8rem 0; }
+    .edit-mode-banner { background: #fff8e1; color: #7a5c00; border: 1px solid #f0dca0; border-radius: 4px; padding: 0.6rem 0.9rem; margin: 0.8rem 0; display: flex; align-items: center; justify-content: space-between; gap: 0.6rem; flex-wrap: wrap; }
+    .btn-edit-link { display: inline-block; min-height: 44px; line-height: 44px; padding: 0 0.9rem; background: #4a90d9; color: #fff; border-radius: 4px; text-decoration: none; font-size: 0.95rem; }
+    .btn-edit-link:hover { background: #3a7cc0; }
+    .row-actions { display: flex; gap: 0.4rem; flex-wrap: wrap; }
     .positive { color: #1a7f37; font-weight: 600; }
     .negative { color: #c0392b; font-weight: 600; }
     .neutral { color: #666; }
-    .lifemap { background: #f8fbfd; border: 1px solid #d0e0ea; border-radius: 6px; padding: 0.8rem; margin-bottom: 1rem; overflow-x: auto; }
-    .lifemap-timeline { display: flex; min-width: 800px; }
-    .lifemap-year { flex: 1; text-align: center; font-size: 0.8rem; color: #666; border-left: 1px dashed #ccc; padding: 0.3rem; }
-    .lifemap-year:first-child { border-left: none; }
-    .lifemap-event { font-size: 0.75rem; color: #1a3a5c; margin-top: 0.2rem; }
+    .lifemap { background: #f8fbfd; border: 1px solid #d0e0ea; border-radius: 6px; padding: 0.8rem; margin-bottom: 1rem; }
+    .lifemap-title { display: flex; align-items: baseline; gap: 0.35rem; flex-wrap: wrap; }
+    .lifemap-subtitle { color: #666; font-size: 0.85rem; }
+    .lifemap-scroll { overflow-x: auto; padding-bottom: 0.3rem; -webkit-overflow-scrolling: touch; }
+    .lifemap-grid {
+      display: grid;
+      grid-template-columns: minmax(8rem, 1.2fr) repeat(13, minmax(5rem, 1fr));
+      min-width: 900px;
+      border: 1px solid #d8e3ea;
+      border-radius: 4px;
+      overflow: hidden;
+      margin-top: 0.65rem;
+    }
+    .lifemap-corner, .lifemap-axis, .lifemap-member, .lifemap-cell {
+      min-height: 3.1rem;
+      padding: 0.35rem 0.45rem;
+      border-right: 1px solid #e2e8ed;
+      border-bottom: 1px solid #e2e8ed;
+    }
+    .lifemap-corner { background: #eaf2f7; font-weight: 600; }
+    .lifemap-axis { background: #eaf2f7; text-align: center; font-size: 0.75rem; color: #445; }
+    .lifemap-axis.current { background: #d9efe3; color: #1a5c38; font-weight: 700; }
+    .lifemap-axis-year { display: block; font-weight: 700; }
+    .lifemap-axis-age { display: block; color: #666; margin-top: 0.15rem; }
+    .lifemap-member { background: #fff; font-weight: 600; }
+    .lifemap-member small { display: block; color: #666; font-size: 0.75rem; font-weight: 400; margin-top: 0.2rem; }
+    .lifemap-cell { background: #fff; color: #1a3a5c; font-size: 0.85rem; }
+    .lifemap-cell.current { background: #f1fbf5; box-shadow: inset 2px 0 #2a7a4f, inset -2px 0 #2a7a4f; }
+    .lifemap-age-value { display: inline-flex; align-items: center; justify-content: center; min-width: 2.1rem; min-height: 1.7rem; border-radius: 999px; background: #e8f0f5; }
+    .lifemap-events-label { background: #fffaf0; color: #78551c; }
+    .lifemap-event-cell { background: #fffdf7; }
+    .lifemap-marker { display: block; margin: 0.1rem 0; padding: 0.2rem 0.3rem; border-radius: 3px; font-size: 0.7rem; line-height: 1.25; overflow-wrap: anywhere; }
+    .lifemap-marker.event { background: #fff0cf; color: #76551e; border-left: 3px solid #d79b2d; }
+    .lifemap-marker.housing { background: #e6f1ff; color: #1d4f83; border-left: 3px solid #4a90d9; }
+    .lifemap-marker.vehicle { background: #f2eafd; color: #633b8c; border-left: 3px solid #8e62ba; }
+    .lifemap-legend { display: flex; gap: 0.7rem; flex-wrap: wrap; margin-top: 0.5rem; color: #555; font-size: 0.75rem; }
+    .lifemap-legend-item { display: inline-flex; align-items: center; gap: 0.25rem; }
+    .lifemap-legend-swatch { width: 0.75rem; height: 0.75rem; border-radius: 2px; }
+    .lifemap-legend-swatch.event { background: #fff0cf; border-left: 3px solid #d79b2d; }
+    .lifemap-legend-swatch.housing { background: #e6f1ff; border-left: 3px solid #4a90d9; }
+    .lifemap-legend-swatch.vehicle { background: #f2eafd; border-left: 3px solid #8e62ba; }
     @media (max-width: 720px) {
       .layout { display: block; }
       .sidebar {

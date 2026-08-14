@@ -1,20 +1,83 @@
 {% macro lifemap(household) %}
 {% if household.members %}
+{% set base_year = household.assumptions.base_year %}
+{% set ns = namespace(events=[]) %}
+{% for expense in household.expenses %}
+  {% if expense.event_type != "生活費" %}
+    {% set anchor = namespace(birth_year=base_year) %}
+    {% if expense.member_id %}
+      {% for member in household.members %}
+        {% if member.id == expense.member_id %}{% set anchor.birth_year = member.birth_date.year %}{% endif %}
+      {% endfor %}
+    {% else %}
+      {% for member in household.members %}
+        {% if member.relationship.value == "世帯主" %}{% set anchor.birth_year = member.birth_date.year %}{% endif %}
+      {% endfor %}
+    {% endif %}
+    {% set event_year = expense.start_date.year if expense.start_date else (base_year if expense.start_age == 0 else anchor.birth_year + expense.start_age) %}
+    {% set _ = ns.events.append({"year": event_year, "label": expense.name, "kind": "event", "detail": expense.event_type}) %}
+  {% endif %}
+{% endfor %}
+{% if household.owned_housing %}
+  {% set _ = ns.events.append({"year": household.owned_housing.purchase_year, "label": "住宅購入", "kind": "housing", "detail": "{:,}円".format(household.owned_housing.property_price)}) %}
+{% endif %}
+{% for vehicle in household.vehicles %}
+  {% set _ = ns.events.append({"year": vehicle.ownership_start_year, "label": vehicle.name, "kind": "vehicle", "detail": "乗り物開始"}) %}
+{% endfor %}
 <div class="lifemap">
-  <strong>ライフマップ</strong> ({{ household.assumptions.base_year }}年{{ household.assumptions.base_month }}月現在)
-  <div class="lifemap-timeline">
-    {% set base_year = household.assumptions.base_year %}
-    {% for offset in [0, 10, 20, 30, 40, 50, 60] %}
-    <div class="lifemap-year">
-      {{ base_year + offset }}年{% if offset == 0 %}(現在){% else %}({{ offset }}年後){% endif %}
-      {% for m in household.members %}
-        {% set age = base_year + offset - m.birth_date.year %}
-        {% if age >= 0 and age <= m.life_expectancy_age %}
-        <div class="lifemap-event">{{ m.name }} {{ age }}才</div>
-        {% endif %}
+  <div class="lifemap-title">
+    <strong>ライフマップ</strong>
+    <span class="lifemap-subtitle">家族の年齢と主なライフイベント</span>
+    <span class="lifemap-subtitle">({{ base_year }}年{{ household.assumptions.base_month }}月現在)</span>
+  </div>
+  <div class="lifemap-scroll">
+    <div class="lifemap-grid">
+      <div class="lifemap-corner">家族 / イベント</div>
+      {% for offset in range(0, 61, 5) %}
+        <div class="lifemap-axis {% if offset == 0 %}current{% endif %}">
+          <span class="lifemap-axis-year">{{ base_year + offset }}年{% if offset == 0 %}(現在){% endif %}</span>
+          <span class="lifemap-axis-age">{{ offset }}年後</span>
+        </div>
+      {% endfor %}
+
+      {% for member in household.members %}
+        <div class="lifemap-member">
+          {{ member.name }}
+          <small>{{ member.relationship.value }}</small>
+        </div>
+        {% for offset in range(0, 61, 5) %}
+          {% set age = base_year + offset - member.birth_date.year %}
+          <div class="lifemap-cell {% if offset == 0 %}current{% endif %}">
+            {% if age >= 0 and age <= member.life_expectancy_age %}
+              <span class="lifemap-age-value">{{ age }}才</span>
+            {% endif %}
+          </div>
+        {% endfor %}
+      {% endfor %}
+
+      <div class="lifemap-member lifemap-events-label">
+        主なイベント
+        <small>{{ ns.events | length }}件</small>
+      </div>
+      {% for offset in range(0, 61, 5) %}
+        {% set target_year = base_year + offset %}
+        <div class="lifemap-cell lifemap-event-cell {% if offset == 0 %}current{% endif %}">
+          {% for event in ns.events %}
+            {% if event.year >= target_year and event.year < target_year + 5 %}
+              <span class="lifemap-marker {{ event.kind }}">
+                {{ event.year }}年 {{ event.label }}
+                {% if event.detail %}<br><small>{{ event.detail }}</small>{% endif %}
+              </span>
+            {% endif %}
+          {% endfor %}
+        </div>
       {% endfor %}
     </div>
-    {% endfor %}
+  </div>
+  <div class="lifemap-legend" aria-label="イベント種別">
+    <span class="lifemap-legend-item"><span class="lifemap-legend-swatch event"></span>ライフイベント</span>
+    <span class="lifemap-legend-item"><span class="lifemap-legend-swatch housing"></span>住宅</span>
+    <span class="lifemap-legend-item"><span class="lifemap-legend-swatch vehicle"></span>乗り物</span>
   </div>
 </div>
 {% endif %}

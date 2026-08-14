@@ -1,0 +1,16 @@
+{# 入力フォーム共通パーツ: バリデーションエラー表示・編集モード表示 #}
+
+{% macro error_banner(error) %}
+{% if error %}
+<div class="form-error" role="alert">⚠ {{ error }}</div>
+{% endif %}
+{% endmacro %}
+
+{% macro edit_mode_banner(edit_id, cancel_url, label="この項目を編集しています。") %}
+{% if edit_id %}
+<div class="edit-mode-banner">
+  <span>✎ {{ label }}</span>
+  <a href="{{ cancel_url }}">編集をキャンセル</a>
+</div>
+{% endif %}
+{% endmacro %}

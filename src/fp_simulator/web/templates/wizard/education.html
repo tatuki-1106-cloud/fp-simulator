@@ -1,12 +1,13 @@
 {% extends "base.html" %}
 {% from "lifemap.html" import lifemap %}
+{% from "wizard/_form_helpers.html" import error_banner, edit_mode_banner %}
 {% block content %}
 <h1>Q5. 教育費 — {{ household.name }}</h1>
 {{ lifemap(household) }}
 
 {% if household.education_plans %}
 <table>
-  <thead><tr><th>対象者</th><th>進学パス</th><th>習い事</th></tr></thead>
+  <thead><tr><th>対象者</th><th>進学パス</th><th>習い事</th><th></th></tr></thead>
   <tbody>
   {% for e in household.education_plans %}
   {% set member = household.members | selectattr("id", "equalto", e.member_id) | first %}
@@ -14,24 +15,41 @@
       <td>{{ member.name if member else e.member_id }}</td>
       <td>{{ e.path }}</td>
       <td>{{ "あり" if e.include_lessons else "なし" }}</td>
+      <td>
+        <div class="row-actions">
+          <a href="/households/{{ household.id }}/education?edit_id={{ e.id }}" class="btn-edit-link">編集</a>
+          <form method="post" action="/households/{{ household.id }}/education/{{ e.id }}/delete" style="display:inline">
+            <button type="submit">削除</button>
+          </form>
+        </div>
+      </td>
     </tr>
   {% endfor %}
   </tbody>
 </table>
 {% endif %}
 
-<h2>教育費を追加</h2>
+<h2>{{ "教育費プランを編集" if edit_target else "教育費を追加" }}</h2>
+{{ error_banner(error) }}
+{{ edit_mode_banner(edit_target.id if edit_target else "", "/households/" ~ household.id ~ "/education") }}
 <form method="post" action="/households/{{ household.id }}/education">
+  <input type="hidden" name="edit_id" value="{{ edit_target.id if edit_target else '' }}">
+  {% set v = values if values else edit_target %}
   <p><label>対象の子:
     <select name="member_id">
-      {% for m in household.members if m.relationship.value == "子" %}<option value="{{ m.id }}">{{ m.name }}</option>{% endfor %}
-    </select></label></p>
+      {% set current_member = v.member_id if v else "" %}
+      {% for m in household.members if m.relationship.value == "子" %}<option value="{{ m.id }}" {% if m.id == current_member %}selected{% endif %}>{{ m.name }}</option>{% endfor %}
+    </select></label>
+     <small class="field-hint">Q1で「子」として登録したメンバーが表示されます。</small></p>
   <p><label>進学パス:
     <select name="path">
-      <option value="公立">公立(幼稚園〜大学国立)</option>
-      <option value="私立">私立(幼稚園〜大学私立)</option>
-    </select></label></p>
-  <p><label><input type="checkbox" name="include_lessons" value="1"> 習い事を含める</label></p>
-  <p><button type="submit">追加</button></p>
+      {% set current_path = v.path if v else "公立" %}
+      <option value="公立" {% if current_path == "公立" %}selected{% endif %}>公立(幼稚園〜大学国立)</option>
+      <option value="私立" {% if current_path == "私立" %}selected{% endif %}>私立(幼稚園〜大学私立)</option>
+    </select></label>
+     <small class="field-hint">進学先の想定に応じて、教育費の目安が自動計算されます。</small></p>
+  <p><label><input type="checkbox" name="include_lessons" value="1" {% if v and v.include_lessons %}checked{% endif %}> 習い事を含める</label>
+     <small class="field-hint">塾・習い事の費用を上乗せするかどうかです。</small></p>
+  <p><button type="submit">{{ "更新" if edit_target else "追加" }}</button></p>
 </form>
 {% endblock %}

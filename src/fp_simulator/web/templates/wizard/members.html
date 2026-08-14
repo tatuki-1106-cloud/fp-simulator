@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% from "lifemap.html" import lifemap %}
+{% from "wizard/_form_helpers.html" import error_banner, edit_mode_banner %}
 {% block content %}
 <h1>Q1. ご家族 — {{ household.name }}</h1>
 {{ lifemap(household) }}
@@ -17,9 +18,12 @@
       <td>{{ m.life_expectancy_age }}才</td>
       <td>{{ m.prefecture }}</td>
       <td>
-        <form method="post" action="/households/{{ household.id }}/members/{{ m.id }}/delete" style="display:inline">
-          <button type="submit">削除</button>
-        </form>
+        <div class="row-actions">
+          <a href="/households/{{ household.id }}/members?edit_id={{ m.id }}" class="btn-edit-link">編集</a>
+          <form method="post" action="/households/{{ household.id }}/members/{{ m.id }}/delete" style="display:inline">
+            <button type="submit">削除</button>
+          </form>
+        </div>
       </td>
     </tr>
   {% endfor %}
@@ -27,18 +31,32 @@
 </table>
 {% endif %}
 
-<h2>メンバー追加</h2>
+<h2>{{ "メンバーを編集" if edit_target else "メンバー追加" }}</h2>
+{{ error_banner(error) }}
+{{ edit_mode_banner(edit_target.id if edit_target else "", "/households/" ~ household.id ~ "/members") }}
 <form method="post" action="/households/{{ household.id }}/members">
-  <p><label>氏名: <input type="text" name="name" required></label></p>
+  <input type="hidden" name="edit_id" value="{{ edit_target.id if edit_target else '' }}">
+  <p><label>氏名: <input type="text" name="name" required value="{{ values.name if values else (edit_target.name if edit_target else '') }}"></label>
+     <small class="field-hint">戸籍上の氏名でなくても構いません(表示用のニックネーム可)。</small></p>
   <p><label>続柄:
     <select name="relationship">
-      {% for r in relationships %}<option value="{{ r.value }}">{{ r.value }}</option>{% endfor %}
-    </select></label></p>
-  <p><label>生年月日: <input type="date" name="birth_date" required class="input-highlight"></label>
-     <small style="color:#666;">例: 1996-04-01(平成8年)</small></p>
-  <p><label>性別: <select name="gender"><option value="">—</option><option value="男">男</option><option value="女">女</option></select></label></p>
-  <p><label>想定寿命: <input type="number" name="life_expectancy_age" value="90" class="input-highlight"></label>才</p>
-  <p><label>居住地(都道府県): <input type="text" name="prefecture" value="東京都"></label></p>
-  <p><button type="submit">追加</button></p>
+      {% set current_relationship = values.relationship if values else (edit_target.relationship.value if edit_target else "") %}
+      {% for r in relationships %}<option value="{{ r.value }}" {% if r.value == current_relationship %}selected{% endif %}>{{ r.value }}</option>{% endfor %}
+    </select></label>
+     <small class="field-hint">世帯主は必ず1名指定してください。続柄により年金・税制上の扱いが変わります。</small></p>
+  <p><label>生年月日: <input type="date" name="birth_date" required value="{{ values.birth_date if values else (edit_target.birth_date if edit_target else '') }}" class="input-highlight"></label>
+     <small class="field-hint">例: 1996-04-01(平成8年)。年齢の計算に使用します。</small></p>
+  <p><label>性別: <select name="gender">
+      {% set current_gender = values.gender if values else (edit_target.gender if edit_target else "") %}
+      <option value="" {% if not current_gender %}selected{% endif %}>—</option>
+      <option value="男" {% if current_gender == "男" %}selected{% endif %}>男</option>
+      <option value="女" {% if current_gender == "女" %}selected{% endif %}>女</option>
+    </select></label>
+     <small class="field-hint">任意項目です。年金の受給開始年齢の判定に使用する場合があります。</small></p>
+  <p><label>想定寿命: <input type="number" name="life_expectancy_age" min="0" max="120" value="{{ values.life_expectancy_age if values else (edit_target.life_expectancy_age if edit_target else 90) }}" class="input-highlight"></label>才
+     <small class="field-hint">シミュレーションを終了する年齢の目安です(0〜120才)。</small></p>
+  <p><label>居住地(都道府県): <input type="text" name="prefecture" value="{{ values.prefecture if values else (edit_target.prefecture if edit_target else '東京都') }}"></label>
+     <small class="field-hint">健康保険料率の算出に使用します。</small></p>
+  <p><button type="submit">{{ "更新" if edit_target else "追加" }}</button></p>
 </form>
 {% endblock %}

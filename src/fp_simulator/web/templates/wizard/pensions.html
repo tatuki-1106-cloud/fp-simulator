@@ -1,12 +1,13 @@
 {% extends "base.html" %}
 {% from "lifemap.html" import lifemap %}
+{% from "wizard/_form_helpers.html" import error_banner, edit_mode_banner %}
 {% block content %}
 <h1>Q3. 年金 — {{ household.name }}</h1>
 {{ lifemap(household) }}
 
 {% if household.pension_records %}
 <table>
-  <thead><tr><th>対象者</th><th>国民年金(月数)</th><th>厚生年金(月数)</th><th>平均標準報酬額</th><th>受給開始</th></tr></thead>
+  <thead><tr><th>対象者</th><th>国民年金(月数)</th><th>厚生年金(月数)</th><th>平均標準報酬額</th><th>受給開始</th><th></th></tr></thead>
   <tbody>
   {% for p in household.pension_records %}
   {% set member = household.members | selectattr("id", "equalto", p.member_id) | first %}
@@ -16,22 +17,42 @@
       <td>{{ p.kousei_months }}月</td>
       <td>{{ "{:,}".format(p.avg_standard_remuneration) }}円</td>
       <td>{{ p.start_age }}才</td>
+      <td>
+        {% if p.id %}
+        <div class="row-actions">
+          <a href="/households/{{ household.id }}/pensions?edit_id={{ p.id }}" class="btn-edit-link">編集</a>
+          <form method="post" action="/households/{{ household.id }}/pensions/{{ p.id }}/delete" style="display:inline">
+            <button type="submit">削除</button>
+          </form>
+        </div>
+        {% endif %}
+      </td>
     </tr>
   {% endfor %}
   </tbody>
 </table>
 {% endif %}
 
-<h2>年金加入記録を追加</h2>
+<h2>{{ "年金加入記録を編集" if edit_target else "年金加入記録を追加" }}</h2>
+{{ error_banner(error) }}
+{{ edit_mode_banner(edit_target.id if edit_target else "", "/households/" ~ household.id ~ "/pensions") }}
 <form method="post" action="/households/{{ household.id }}/pensions">
+  <input type="hidden" name="edit_id" value="{{ edit_target.id if edit_target else '' }}">
+  {% set v = values if values else edit_target %}
   <p><label>対象者:
     <select name="member_id">
-      {% for m in household.members %}<option value="{{ m.id }}">{{ m.name }}({{ m.relationship.value }})</option>{% endfor %}
-    </select></label></p>
-  <p><label>国民年金加入月数: <input type="number" name="kokumin_months" value="480"></label>(480=40年満額)</p>
-  <p><label>厚生年金加入月数: <input type="number" name="kousei_months" value="0"></label></p>
-  <p><label>平均標準報酬額: <input type="number" name="avg_standard_remuneration" value="0"></label>円</p>
-  <p><label>受給開始年齢: <input type="number" name="start_age" value="65"></label></p>
-  <p><button type="submit">追加</button></p>
+      {% set current_member = v.member_id if v else "" %}
+      {% for m in household.members %}<option value="{{ m.id }}" {% if m.id == current_member %}selected{% endif %}>{{ m.name }}({{ m.relationship.value }})</option>{% endfor %}
+    </select></label>
+     <small class="field-hint">年金記録を登録する対象者を選択します。</small></p>
+  <p><label>国民年金加入月数: <input type="number" name="kokumin_months" min="0" value="{{ v.kokumin_months if v else 480 }}"></label>(480=40年満額)
+     <small class="field-hint">これまでの国民年金への加入月数の実績です。</small></p>
+  <p><label>厚生年金加入月数: <input type="number" name="kousei_months" min="0" value="{{ v.kousei_months if v else 0 }}"></label>
+     <small class="field-hint">会社員・公務員期間の厚生年金加入月数です。</small></p>
+  <p><label>平均標準報酬額: <input type="number" name="avg_standard_remuneration" min="0" value="{{ v.avg_standard_remuneration if v else 0 }}"></label>円
+     <small class="field-hint">厚生年金加入期間の平均月収(標準報酬月額)の目安です。</small></p>
+  <p><label>受給開始年齢: <input type="number" name="start_age" min="0" max="120" value="{{ v.start_age if v else 65 }}"></label>
+     <small class="field-hint">年金の受給を開始する年齢です(繰上げ・繰下げ受給の目安)。</small></p>
+  <p><button type="submit">{{ "更新" if edit_target else "追加" }}</button></p>
 </form>
 {% endblock %}

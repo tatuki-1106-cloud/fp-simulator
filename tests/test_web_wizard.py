@@ -257,6 +257,11 @@ async def test_create_household_and_full_flow(client: AsyncClient) -> None:
     assert "乗り物売却" in r.text
     assert "乗り物購入" in r.text
     assert "表示範囲" in r.text
+    assert "家族 / イベント" in r.text
+    assert "主なイベント" in r.text
+    assert "家族の年齢と主なライフイベント" in r.text
+    assert "住宅購入" in r.text
+    assert "ファミリーカー" in r.text
     # 重要指標カードと収支内訳グラフ(生涯全体)
     assert 'class="summary-cards"' in r.text
     assert "card-value" in r.text
@@ -394,3 +399,493 @@ async def test_create_household_and_full_flow(client: AsyncClient) -> None:
         "&living_expense_reduction_rate=1.1"
     )
     assert r.status_code == 400
+
+
+async def _new_household(client: AsyncClient, name: str = "テスト世帯") -> str:
+    """テスト用の世帯を作成しIDを返す."""
+    r = await client.post(
+        "/households/new", data={"name": name, "base_year": 2026, "base_month": 1}
+    )
+    assert r.status_code == 303
+    return r.headers["location"].split("/")[2]
+
+
+async def _add_member(client: AsyncClient, household_id: str, name: str = "たろう") -> str:
+    """テスト用のメンバーを追加し、そのIDを返す."""
+    from fp_simulator.db.database import get_household
+
+    r = await client.post(
+        f"/households/{household_id}/members",
+        data={
+            "name": name,
+            "relationship": "世帯主",
+            "birth_date": "1996-04-01",
+            "gender": "男",
+            "life_expectancy_age": 90,
+            "prefecture": "東京都",
+        },
+    )
+    assert r.status_code == 303
+    household = await get_household(household_id)
+    return household.members[-1].id
+
+
+async def test_wizard_forms_show_field_hints(client: AsyncClient) -> None:
+    """共通の入力ガイド(field-hint)が主要な入力フォームに表示される."""
+    household_id = await _new_household(client)
+    for path in ("members", "incomes", "pensions", "expenses", "accounts", "loans", "education"):
+        r = await client.get(f"/households/{household_id}/{path}")
+        assert r.status_code == 200
+        assert 'class="field-hint"' in r.text, f"{path} is missing field-hint guidance"
+
+
+async def test_invalid_member_submission_preserves_values_and_shows_error(
+    client: AsyncClient,
+) -> None:
+    """不正な入力(生年月日不正)を送信した際、エラーバナーと入力値が保持される."""
+    household_id = await _new_household(client)
+    r = await client.post(
+        f"/households/{household_id}/members",
+        data={
+            "name": "不正太郎",
+            "relationship": "世帯主",
+            "birth_date": "not-a-date",
+            "gender": "男",
+            "life_expectancy_age": 90,
+            "prefecture": "東京都",
+        },
+    )
+    assert r.status_code == 400
+    assert 'class="form-error"' in r.text
+    # 送信済みの値(氏名)がフォームに保持されていること
+    assert 'value="不正太郎"' in r.text
+
+
+async def test_members_edit_flow_updates_in_place(client: AsyncClient) -> None:
+    """編集リンクからのGETでプレフィルされ、POSTで新規追加ではなく上書き更新される."""
+    from fp_simulator.db.database import get_household
+
+    household_id = await _new_household(client)
+    member_id = await _add_member(client, household_id, "たろう")
+
+    r = await client.get(f"/households/{household_id}/members?edit_id={member_id}")
+    assert r.status_code == 200
+    assert 'value="たろう"' in r.text
+    assert ">更新<" in r.text
+    assert f'value="{member_id}"' in r.text
+
+    r = await client.post(
+        f"/households/{household_id}/members",
+        data={
+            "name": "たろう(改名)",
+            "relationship": "世帯主",
+            "birth_date": "1996-04-01",
+            "gender": "男",
+            "life_expectancy_age": 95,
+            "prefecture": "大阪府",
+            "edit_id": member_id,
+        },
+    )
+    assert r.status_code == 303
+    household = await get_household(household_id)
+    assert len(household.members) == 1
+    assert household.members[0].id == member_id
+    assert household.members[0].name == "たろう(改名)"
+    assert household.members[0].life_expectancy_age == 95
+
+
+async def test_pensions_edit_and_delete(client: AsyncClient) -> None:
+    """年金レコードの編集(上書き更新)と削除が機能する."""
+    from fp_simulator.db.database import get_household
+
+    household_id = await _new_household(client)
+    member_id = await _add_member(client, household_id)
+    r = await client.post(
+        f"/households/{household_id}/pensions",
+        data={
+            "member_id": member_id,
+            "kokumin_months": 480,
+            "kousei_months": 456,
+            "avg_standard_remuneration": 300000,
+            "start_age": 65,
+        },
+    )
+    assert r.status_code == 303
+    household = await get_household(household_id)
+    pension_id = household.pension_records[0].id
+    assert pension_id  # 新規保存分はidが必ず付与される
+
+    r = await client.get(f"/households/{household_id}/pensions?edit_id={pension_id}")
+    assert r.status_code == 200
+    assert ">更新<" in r.text
+
+    r = await client.post(
+        f"/households/{household_id}/pensions",
+        data={
+            "member_id": member_id,
+            "kokumin_months": 480,
+            "kousei_months": 400,
+            "avg_standard_remuneration": 350000,
+            "start_age": 65,
+            "edit_id": pension_id,
+        },
+    )
+    assert r.status_code == 303
+    household = await get_household(household_id)
+    assert len(household.pension_records) == 1
+    assert household.pension_records[0].id == pension_id
+    assert household.pension_records[0].kousei_months == 400
+
+    r = await client.post(f"/households/{household_id}/pensions/{pension_id}/delete")
+    assert r.status_code == 303
+    household = await get_household(household_id)
+    assert household.pension_records == []
+
+
+async def test_expenses_delete_guards_against_event_type_rows(client: AsyncClient) -> None:
+    """生活費削除ルートはevent_typeが「生活費」の行のみ削除する."""
+    from fp_simulator.db.database import get_household
+
+    household_id = await _new_household(client)
+    member_id = await _add_member(client, household_id)
+    r = await client.post(
+        f"/households/{household_id}/expenses",
+        data={"name": "生活費", "monthly_amount": 200000, "start_age": 0, "end_age": 0},
+    )
+    assert r.status_code == 303
+    r = await client.post(
+        f"/households/{household_id}/events",
+        data={
+            "event_type": "葬儀費",
+            "name": "葬儀費用",
+            "member_id": member_id,
+            "monthly_amount": 500000,
+            "cycle": "once",
+            "yearly_month": 1,
+            "start_age": 70,
+            "start_month": 1,
+            "end_age": 0,
+            "end_month": 12,
+            "annual_raise_rate": 0.0,
+        },
+    )
+    assert r.status_code == 303
+    household = await get_household(household_id)
+    living_expense_id = next(e.id for e in household.expenses if e.event_type == "生活費")
+    event_expense_id = next(e.id for e in household.expenses if e.event_type == "葬儀費")
+
+    # 生活費の削除ルートでイベント型の支出は削除されない
+    r = await client.post(f"/households/{household_id}/expenses/{event_expense_id}/delete")
+    assert r.status_code == 303
+    household = await get_household(household_id)
+    assert any(e.id == event_expense_id for e in household.expenses)
+
+    # イベントの削除ルートで生活費は削除されない
+    r = await client.post(f"/households/{household_id}/events/{living_expense_id}/delete")
+    assert r.status_code == 303
+    household = await get_household(household_id)
+    assert any(e.id == living_expense_id for e in household.expenses)
+
+    # 正しいルートであればそれぞれ削除される
+    r = await client.post(f"/households/{household_id}/expenses/{living_expense_id}/delete")
+    assert r.status_code == 303
+    r = await client.post(f"/households/{household_id}/events/{event_expense_id}/delete")
+    assert r.status_code == 303
+    household = await get_household(household_id)
+    assert household.expenses == []
+
+
+async def test_accounts_ideco_nisa_edit_and_delete(client: AsyncClient) -> None:
+    """Q11の口座・iDeCo・NISAの編集(上書き)・削除がそれぞれ独立して機能する."""
+    from fp_simulator.db.database import get_household
+
+    household_id = await _new_household(client)
+    member_id = await _add_member(client, household_id)
+
+    r = await client.post(
+        f"/households/{household_id}/accounts",
+        data={"name": "普通預金", "balance": 1000000, "interest_rate": 0.0},
+    )
+    assert r.status_code == 303
+    r = await client.post(
+        f"/households/{household_id}/ideco",
+        data={
+            "member_id": member_id,
+            "initial_balance": 0,
+            "monthly_contribution": 23000,
+            "receive_start_age": 65,
+            "monthly_withdrawal": 0,
+            "withdrawal_tax_rate": 0,
+            "annual_return_rate": 0.03,
+        },
+    )
+    assert r.status_code == 303
+    r = await client.post(
+        f"/households/{household_id}/nisa",
+        data={
+            "member_id": member_id,
+            "initial_balance": 0,
+            "monthly_investment": 30000,
+            "annual_return_rate": 0.03,
+        },
+    )
+    assert r.status_code == 303
+
+    household = await get_household(household_id)
+    account_id = household.accounts[0].id
+    ideco_id = household.ideco_plans[0].id
+    nisa_id = household.nisa_plans[0].id
+
+    # 口座編集(上書き)
+    r = await client.get(f"/households/{household_id}/accounts?edit_account_id={account_id}")
+    assert r.status_code == 200
+    assert ">更新<" in r.text
+    r = await client.post(
+        f"/households/{household_id}/accounts",
+        data={"name": "普通預金(更新)", "balance": 2000000, "interest_rate": 0.001, "edit_id": account_id},
+    )
+    assert r.status_code == 303
+    household = await get_household(household_id)
+    assert len(household.accounts) == 1
+    assert household.accounts[0].name == "普通預金(更新)"
+    assert household.accounts[0].balance == 2000000
+
+    # iDeCo編集(上書き)
+    r = await client.post(
+        f"/households/{household_id}/ideco",
+        data={
+            "member_id": member_id,
+            "initial_balance": 0,
+            "monthly_contribution": 12000,
+            "receive_start_age": 60,
+            "monthly_withdrawal": 0,
+            "withdrawal_tax_rate": 0,
+            "annual_return_rate": 0.02,
+            "edit_id": ideco_id,
+        },
+    )
+    assert r.status_code == 303
+    household = await get_household(household_id)
+    assert len(household.ideco_plans) == 1
+    assert household.ideco_plans[0].monthly_contribution == 12000
+
+    # NISA編集(上書き)
+    r = await client.post(
+        f"/households/{household_id}/nisa",
+        data={
+            "member_id": member_id,
+            "initial_balance": 0,
+            "monthly_investment": 50000,
+            "annual_return_rate": 0.05,
+            "edit_id": nisa_id,
+        },
+    )
+    assert r.status_code == 303
+    household = await get_household(household_id)
+    assert len(household.nisa_plans) == 1
+    assert household.nisa_plans[0].monthly_investment == 50000
+
+    # それぞれ独立に削除できる
+    r = await client.post(f"/households/{household_id}/accounts/{account_id}/delete")
+    assert r.status_code == 303
+    r = await client.post(f"/households/{household_id}/ideco/{ideco_id}/delete")
+    assert r.status_code == 303
+    r = await client.post(f"/households/{household_id}/nisa/{nisa_id}/delete")
+    assert r.status_code == 303
+    household = await get_household(household_id)
+    assert household.accounts == []
+    assert household.ideco_plans == []
+    assert household.nisa_plans == []
+
+
+async def test_loans_edit_and_vehicle_referenced_delete_guard(client: AsyncClient) -> None:
+    """ローンの編集(上書き)と、乗り物から参照中のローンは削除されないガードを確認する."""
+    from fp_simulator.db.database import get_household
+
+    household_id = await _new_household(client)
+    member_id = await _add_member(client, household_id)
+    r = await client.post(
+        f"/households/{household_id}/loans",
+        data={
+            "member_id": member_id,
+            "name": "住宅ローン",
+            "principal": 30000000,
+            "annual_rate": 0.01,
+            "years": 35,
+            "repayment_type": "元利均等",
+            "start_year": 2026,
+            "start_month": 4,
+            "bonus_amount": 0,
+        },
+    )
+    assert r.status_code == 303
+    household = await get_household(household_id)
+    loan_id = household.loans[0].id
+
+    r = await client.get(f"/households/{household_id}/loans?edit_id={loan_id}")
+    assert r.status_code == 200
+    assert ">更新<" in r.text
+
+    r = await client.post(
+        f"/households/{household_id}/loans",
+        data={
+            "member_id": member_id,
+            "name": "住宅ローン(借換)",
+            "principal": 25000000,
+            "annual_rate": 0.008,
+            "years": 30,
+            "repayment_type": "元利均等",
+            "start_year": 2026,
+            "start_month": 4,
+            "bonus_amount": 0,
+            "edit_id": loan_id,
+        },
+    )
+    assert r.status_code == 303
+    household = await get_household(household_id)
+    assert len(household.loans) == 1
+    assert household.loans[0].name == "住宅ローン(借換)"
+    assert household.loans[0].principal == 25000000
+
+    # 乗り物からローンを参照させる
+    r = await client.post(
+        f"/households/{household_id}/vehicles",
+        data={
+            "name": "マイカー",
+            "vehicle_type": "新車",
+            "ownership_start_year": 2026,
+            "ownership_start_month": 1,
+            "ownership_end_year": 2035,
+            "ownership_end_month": 12,
+            "purchase_price": 3000000,
+            "loan_id": loan_id,
+        },
+    )
+    assert r.status_code == 303
+
+    # 参照中のローンは削除されず、理由が表示される
+    r = await client.post(f"/households/{household_id}/loans/{loan_id}/delete")
+    assert r.status_code == 200
+    assert "乗り物から参照中のため削除できません" in r.text
+    household = await get_household(household_id)
+    assert any(loan.id == loan_id for loan in household.loans)
+
+    # 参照している乗り物を削除すればローンも削除できる
+    vehicle_id = household.vehicles[0].id
+    r = await client.post(f"/households/{household_id}/vehicles/{vehicle_id}/delete")
+    assert r.status_code == 303
+    r = await client.post(f"/households/{household_id}/loans/{loan_id}/delete")
+    assert r.status_code == 303
+    household = await get_household(household_id)
+    assert household.loans == []
+
+
+async def test_education_edit_and_delete(client: AsyncClient) -> None:
+    """教育費プランの編集(上書き)と削除が機能する."""
+    from fp_simulator.db.database import get_household
+
+    household_id = await _new_household(client)
+    member_id = await _add_member(client, household_id)
+    r = await client.post(
+        f"/households/{household_id}/education",
+        data={"member_id": member_id, "path": "公立"},
+    )
+    assert r.status_code == 303
+    household = await get_household(household_id)
+    plan_id = household.education_plans[0].id
+
+    r = await client.get(f"/households/{household_id}/education?edit_id={plan_id}")
+    assert r.status_code == 200
+    assert ">更新<" in r.text
+
+    r = await client.post(
+        f"/households/{household_id}/education",
+        data={"member_id": member_id, "path": "私立", "include_lessons": "1", "edit_id": plan_id},
+    )
+    assert r.status_code == 303
+    household = await get_household(household_id)
+    assert len(household.education_plans) == 1
+    assert household.education_plans[0].path == "私立"
+    assert household.education_plans[0].include_lessons is True
+
+    r = await client.post(f"/households/{household_id}/education/{plan_id}/delete")
+    assert r.status_code == 303
+    household = await get_household(household_id)
+    assert household.education_plans == []
+
+
+async def test_vehicles_and_insurance_edit_flow(client: AsyncClient) -> None:
+    """乗り物・保険の編集リンクからのプレフィルと上書き更新を確認する."""
+    from fp_simulator.db.database import get_household
+
+    household_id = await _new_household(client)
+    member_id = await _add_member(client, household_id)
+
+    r = await client.post(
+        f"/households/{household_id}/vehicles",
+        data={
+            "name": "ファミリーカー",
+            "vehicle_type": "中古車",
+            "ownership_start_year": 2026,
+            "ownership_start_month": 1,
+            "ownership_end_year": 2030,
+            "ownership_end_month": 12,
+            "purchase_price": 2000000,
+        },
+    )
+    assert r.status_code == 303
+    household = await get_household(household_id)
+    vehicle_id = household.vehicles[0].id
+    r = await client.get(f"/households/{household_id}/vehicles?edit_id={vehicle_id}")
+    assert r.status_code == 200
+    assert 'value="ファミリーカー"' in r.text
+    assert ">更新<" in r.text
+    r = await client.post(
+        f"/households/{household_id}/vehicles",
+        data={
+            "name": "ファミリーカー(買替)",
+            "vehicle_type": "新車",
+            "ownership_start_year": 2026,
+            "ownership_start_month": 1,
+            "ownership_end_year": 2030,
+            "ownership_end_month": 12,
+            "purchase_price": 2500000,
+            "edit_id": vehicle_id,
+        },
+    )
+    assert r.status_code == 303
+    household = await get_household(household_id)
+    assert len(household.vehicles) == 1
+    assert household.vehicles[0].name == "ファミリーカー(買替)"
+
+    r = await client.post(
+        f"/households/{household_id}/insurance",
+        data={
+            "name": "定期生命保険",
+            "insurance_type": "死亡保障",
+            "insured_member_id": member_id,
+            "payer_member_id": member_id,
+            "monthly_premium": 10000,
+        },
+    )
+    assert r.status_code == 303
+    household = await get_household(household_id)
+    insurance_id = household.insurances[0].id
+    r = await client.get(f"/households/{household_id}/insurance?edit_id={insurance_id}")
+    assert r.status_code == 200
+    assert ">更新<" in r.text
+    r = await client.post(
+        f"/households/{household_id}/insurance",
+        data={
+            "name": "定期生命保険(増額)",
+            "insurance_type": "死亡保障",
+            "insured_member_id": member_id,
+            "payer_member_id": member_id,
+            "monthly_premium": 15000,
+            "edit_id": insurance_id,
+        },
+    )
+    assert r.status_code == 303
+    household = await get_household(household_id)
+    assert len(household.insurances) == 1
+    assert household.insurances[0].monthly_premium == 15000
