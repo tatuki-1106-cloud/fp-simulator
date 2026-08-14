@@ -682,17 +682,27 @@ def simulate(
                 raise_factor = (1 + expense.annual_raise_rate) ** years_elapsed
                 inflation_factor = (1 + assumptions.inflation_rate) ** years_elapsed
 
-                if expense.cycle == "monthly":
-                    amount = int(expense.monthly_amount * raise_factor * inflation_factor)
-                    cf.living_expense += amount
+                recurring_amount = int(expense.monthly_amount * raise_factor * inflation_factor)
+                once_amount = int(expense.monthly_amount * inflation_factor)
+                if scenario and death_date and current >= death_date and expense.disaster_amount is not None:
+                    recurring_amount = int(expense.disaster_amount * inflation_factor)
+                    once_amount = recurring_amount
+
+                if expense.cycle == "monthly" and expense.event_type == "生活費":
+                    cf.living_expense += recurring_amount
+                elif expense.cycle == "monthly":
+                    cf.event_expense += recurring_amount
                 elif expense.cycle == "yearly" and month == expense.yearly_month:
-                    amount = int(expense.monthly_amount * raise_factor * inflation_factor)
-                    cf.event_expense += amount
+                    cf.event_expense += recurring_amount
                 elif expense.cycle == "once":
                     # 開始年月の1回のみ
-                    if (year - assumptions.base_year == expense.start_age - age_at_year_end(householder.birth_date, assumptions.base_year)
-                            and month == expense.start_month):
-                        cf.event_expense += int(expense.monthly_amount * inflation_factor)
+                    event_year = (
+                        assumptions.base_year
+                        if expense.start_age == 0
+                        else householder.birth_date.year + expense.start_age
+                    )
+                    if year == event_year and month == expense.start_month:
+                        cf.event_expense += once_amount
 
         if (
             scenario

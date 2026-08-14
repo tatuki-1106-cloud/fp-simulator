@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% from "lifemap.html" import lifemap %}
+{% block content %}
+<h1>Q8. ライフイベント — {{ household.name }}</h1>
+{{ lifemap(household) }}
+
+<section>
+  <h2>登録済みのライフイベント</h2>
+  {% if event_expenses %}
+  <table>
+    <thead>
+      <tr><th>種類</th><th>内容</th><th>周期</th><th>金額</th><th>期間</th><th></th></tr>
+    </thead>
+    <tbody>
+    {% for e in event_expenses %}
+      <tr>
+        <td>{{ e.event_type }}</td>
+        <td>{{ e.name }}</td>
+        <td>{{ {"monthly": "毎月", "yearly": "毎年", "once": "1回"}[e.cycle] }}</td>
+        <td>{{ "{:,}".format(e.monthly_amount) }}円</td>
+        <td>{{ e.start_age }}才 {{ e.start_month }}月〜{{ e.end_age if e.end_age else "生涯" }}</td>
+        <td>
+          <form method="post" action="/households/{{ household.id }}/events/{{ e.id }}/delete">
+            <button type="submit">削除</button>
+          </form>
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p>登録済みのライフイベントはありません。</p>
+  {% endif %}
+</section>
+
+<h2>ライフイベントを追加</h2>
+<p>結婚援助・葬儀費などの一時支出や、期間を指定したイベントを登録できます。</p>
+<form method="post" action="/households/{{ household.id }}/events">
+  <p><label>種類:
+    <select name="event_type">
+      <option value="汎用">汎用イベント</option>
+      <option value="結婚援助">結婚援助</option>
+      <option value="葬儀費">葬儀費</option>
+    </select>
+  </label></p>
+  <p><label>内容: <input type="text" name="name" value="ライフイベント"></label></p>
+  <p><label>周期:
+    <select name="cycle">
+      <option value="once" selected>1回限り</option>
+      <option value="yearly">毎年</option>
+      <option value="monthly">毎月</option>
+    </select>
+  </label>
+  <label>支払月(毎年): <input type="number" name="yearly_month" value="1" min="1" max="12"></label></p>
+  <p><label>金額: <input type="number" name="monthly_amount" required min="0"></label>円</p>
+  <p><label>開始年齢: <input type="number" name="start_age" value="0" min="0" max="120"></label>
+     <label>月: <input type="number" name="start_month" value="1" min="1" max="12"></label></p>
+  <p><label>終了年齢(0=生涯): <input type="number" name="end_age" value="0" min="0" max="120"></label>
+     <label>月: <input type="number" name="end_month" value="12" min="1" max="12"></label></p>
+  <p><label>万が一時の金額(任意): <input type="number" name="disaster_amount" min="0"></label>円</p>
+  <p><button type="submit">追加</button></p>
+</form>
+{% endblock %}

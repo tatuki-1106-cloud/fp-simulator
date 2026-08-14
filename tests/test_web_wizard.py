@@ -155,6 +155,28 @@ async def test_create_household_and_full_flow(client: AsyncClient) -> None:
     assert r.status_code == 200
     assert "ファミリーカー" in r.text
 
+    # Q8ライフイベントを追加・表示・削除
+    event_response = await client.post(
+        f"/households/{household_id}/events",
+        data={
+            "event_type": "結婚援助",
+            "name": "子どもの結婚援助",
+            "monthly_amount": 1000000,
+            "cycle": "once",
+            "yearly_month": 1,
+            "start_age": 35,
+            "start_month": 4,
+            "end_age": 0,
+            "end_month": 12,
+            "disaster_amount": 300000,
+        },
+    )
+    assert event_response.status_code == 303
+    r = await client.get(f"/households/{household_id}/events")
+    assert r.status_code == 200
+    assert "子どもの結婚援助" in r.text
+    assert "結婚援助" in r.text
+
     for path, label in [
         ("housing", "Q6. 住まい"),
         ("vehicles", "Q7. 乗り物"),

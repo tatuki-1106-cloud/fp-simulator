@@ -418,6 +418,33 @@ class TestCashflowIntegration:
                 ownership_end_year=2029,
             )
 
+    def test_life_event_uses_event_expense_and_disaster_amount(
+        self, store, household: Household
+    ) -> None:
+        """Q8イベントの一時支出と万が一時金額を計上する."""
+        household.expenses.append(
+            Expense(
+                id="marriage-support",
+                name="結婚援助",
+                event_type="結婚援助",
+                monthly_amount=1_000_000,
+                cycle="once",
+                start_age=35,
+                start_month=4,
+                disaster_amount=300_000,
+            )
+        )
+        normal = simulate(store, household)
+        event_month = next(m for m in normal.monthly if m.date == datetime.date(2031, 4, 1))
+        assert event_month.event_expense == 1_000_000
+        assert event_month.living_expense == 200_000
+
+        disaster = simulate(store, household, DisasterScenario("husband", 35))
+        disaster_month = next(
+            m for m in disaster.monthly if m.date == datetime.date(2031, 4, 1)
+        )
+        assert disaster_month.event_expense == 300_000
+
     def test_traces_exist(self, store, household: Household) -> None:
         """トレーサビリティ情報が付与されている."""
         result = simulate(store, household)

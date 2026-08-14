@@ -85,6 +85,7 @@ class Expense(BaseModel):
 
     id: str
     name: str = "生活費"
+    event_type: Literal["生活費", "汎用", "結婚援助", "葬儀費"] = "生活費"
     member_id: str | None = None  # None=世帯全体
     start_age: int = 0
     start_month: int = 1
@@ -95,6 +96,7 @@ class Expense(BaseModel):
     cycle: Literal["monthly", "yearly", "once"] = "monthly"
     yearly_month: int = 1  # cycle=yearly の支払月
     annual_raise_rate: float = 0.0
+    disaster_amount: int | None = None  # 万が一時の1回/月/年あたり金額
 
 
 class Loan(BaseModel):

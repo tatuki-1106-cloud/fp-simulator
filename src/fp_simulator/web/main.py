@@ -846,24 +846,106 @@ async def vehicles_delete(request: Request, household_id: str, vehicle_id: str) 
 async def events_edit(request: Request, household_id: str) -> HTMLResponse:
     """Q8: ライフイベント設定."""
     household = await get_household(household_id)
-    event_expenses = (
-        [expense for expense in household.expenses if expense.cycle != "monthly"]
-        if household is not None
-        else []
-    )
-    return await _wizard_placeholder(
+    if household is None:
+        return RedirectResponse("/", status_code=303)
+    return templates.TemplateResponse(
         request,
-        household_id,
-        "Q8",
-        "ライフイベント",
-        "イベント支出は既存のExpenseモデルで計算され、Q4で入力できます。",
-        [
-            "周期支出・一回支出をイベントとして表示しています。",
-            "結婚援助・葬儀費などの専用フォームは今後追加します。",
-        ],
-        [{"path": f"/households/{household_id}/expenses", "label": "Q4 生活費でイベントを編集"}],
-        event_expenses=event_expenses,
+        "wizard/events.html",
+        {
+            "title": "Q8 ライフイベント",
+            "household": household,
+            "active_q": "Q8",
+            "event_expenses": [expense for expense in household.expenses if expense.event_type != "生活費"],
+        },
     )
+
+
+@app.post("/households/{household_id}/events")
+async def events_add(
+    request: Request,
+    household_id: str,
+    event_type: str = Form("汎用"),
+    name: str = Form("ライフイベント"),
+    monthly_amount: int = Form(...),
+    cycle: str = Form("once"),
+    yearly_month: int = Form(1),
+    start_age: int = Form(0),
+    start_month: int = Form(1),
+    end_age: int = Form(0),
+    end_month: int = Form(12),
+    disaster_amount_raw: str = Form(""),
+) -> Response:
+    """Q8のライフイベントを追加."""
+    household = await get_household(household_id)
+    if household is None:
+        return RedirectResponse("/", status_code=303)
+    if event_type not in {"汎用", "結婚援助", "葬儀費"}:
+        return Response("event_type is invalid", status_code=400)
+    if cycle not in {"monthly", "yearly", "once"}:
+        return Response("cycle is invalid", status_code=400)
+    try:
+        disaster_amount = int(disaster_amount_raw) if disaster_amount_raw.strip() else None
+    except ValueError:
+        return Response("disaster_amount is invalid", status_code=400)
+    if monthly_amount < 0 or (disaster_amount is not None and disaster_amount < 0):
+        return Response("event amounts must not be negative", status_code=400)
+    if not 0 <= start_age <= 120 or not 0 <= end_age <= 120:
+        return Response("event age is invalid", status_code=400)
+    if end_age and end_age < start_age:
+        return Response("end_age must not precede start_age", status_code=400)
+    if not 1 <= start_month <= 12 or not 1 <= end_month <= 12 or not 1 <= yearly_month <= 12:
+        return Response("event month is invalid", status_code=400)
+    household.expenses.append(
+        Expense(
+            id=str(uuid.uuid4()),
+            name=name.strip() or "ライフイベント",
+            event_type=event_type,
+            monthly_amount=monthly_amount,
+            cycle=cycle,
+            yearly_month=yearly_month,
+            start_age=start_age,
+            start_month=start_month,
+            end_age=end_age if end_age > 0 else None,
+            end_month=end_month,
+            disaster_amount=disaster_amount,
+        )
+    )
+    await save_household(household)
+    await add_audit_log(
+        household_id,
+        getattr(request.state, "authenticated_email", None) or "web-user",
+        "web",
+        "household.event.add",
+        details={"event_type": event_type, "name": name, "cycle": cycle},
+    )
+    return RedirectResponse(f"/households/{household_id}/events", status_code=303)
+
+
+@app.post("/households/{household_id}/events/{expense_id}/delete")
+async def events_delete(request: Request, household_id: str, expense_id: str) -> RedirectResponse:
+    """Q8のライフイベントを削除."""
+    household = await get_household(household_id)
+    if household is None:
+        return RedirectResponse("/", status_code=303)
+    removed = next(
+        (expense for expense in household.expenses if expense.id == expense_id),
+        None,
+    )
+    household.expenses = [
+        expense
+        for expense in household.expenses
+        if expense.id != expense_id or expense.event_type == "生活費"
+    ]
+    await save_household(household)
+    await add_audit_log(
+        household_id,
+        getattr(request.state, "authenticated_email", None) or "web-user",
+        "web",
+        "household.event.delete",
+        expense_id,
+        {"name": removed.name} if removed else {},
+    )
+    return RedirectResponse(f"/households/{household_id}/events", status_code=303)
 
 
 @app.get("/households/{household_id}/insurance", response_class=HTMLResponse)
