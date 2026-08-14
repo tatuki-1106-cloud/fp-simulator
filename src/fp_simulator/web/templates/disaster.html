@@ -16,6 +16,26 @@
     </label>
   </p>
   <p>
+    <label>遺族年金（月額・世帯合計）:
+      <input type="number" name="survivor_pension_monthly" min="0" step="1000"
+             value="{{ survivor_pension_monthly }}">
+    </label>
+  </p>
+  <p>
+    <label>児童手当（月額・世帯合計）:
+      <input type="number" name="child_allowance_monthly" min="0" step="1000"
+             value="{{ child_allowance_monthly }}">
+    </label>
+    <small>18歳未満の子がいる月に計上します。</small>
+  </p>
+  <p>
+    <label>万が一時の生活費削減率:
+      <input type="number" name="living_expense_reduction_rate" min="0" max="1"
+             step="0.01" value="{{ living_expense_reduction_rate }}">
+    </label>
+    <small>例: 0.2 = 20%。世帯全体の生活費に適用します。</small>
+  </p>
+  <p>
     <label>万が一年齢:
       <input type="number" name="death_age" min="0" max="120" value="{{ death_age or '' }}" required>
     </label>
@@ -41,23 +61,32 @@
       <td>{{ "{:,}".format(baseline.final_balance) }}円</td>
       <td>{{ "{:,}".format(scenario.final_balance) }}円</td>
     </tr>
+    <tr>
+      <th>万が一後の追加収入</th>
+      <td>-</td>
+      <td>{{ "{:,}".format(scenario.yearly | sum(attribute="survivor_pension")) }}円（遺族年金）<br>
+        {{ "{:,}".format(scenario.yearly | sum(attribute="child_allowance")) }}円（児童手当）</td>
+    </tr>
   </tbody>
 </table>
 
 <h2>年次比較</h2>
 <table>
   <thead>
-    <tr><th>年</th><th>生きる道収支</th><th>生きる道年末残高</th><th>万が一収支</th><th>万が一年末残高</th></tr>
+    <tr><th>年</th><th>生きる道収支</th><th>生きる道年末残高</th><th>万が一収支</th><th>万が一年末残高</th><th>遺族年金</th><th>児童手当</th><th>生活費削減</th></tr>
   </thead>
   <tbody>
     {% for base_year in baseline.yearly %}
-    {% set disaster_year = scenario.yearly[loop.index0] %}
+    {% set disaster_year = scenario.yearly_by_year.get(base_year.year) %}
     <tr {% if disaster_year.balance_end < 0 %}style="color:#c00;background:#fff5f5;"{% endif %}>
       <td>{{ base_year.year }}</td>
       <td>{{ "{:,}".format(base_year.net) }}</td>
       <td>{{ "{:,}".format(base_year.balance_end) }}</td>
       <td>{{ "{:,}".format(disaster_year.net) }}</td>
       <td>{{ "{:,}".format(disaster_year.balance_end) }}</td>
+      <td>{{ "{:,}".format(disaster_year.survivor_pension) }}</td>
+      <td>{{ "{:,}".format(disaster_year.child_allowance) }}</td>
+      <td>{{ "{:,}".format(disaster_year.living_expense_reduction) }}</td>
     </tr>
     {% endfor %}
   </tbody>
@@ -70,6 +99,7 @@
 <ul>
   <li>死亡月以降、対象者の給与・年金・個人向け支出を停止します。</li>
   <li>対象者が被保険者の生命保険は死亡月に死亡保険金を計上します。</li>
-  <li>遺族年金、児童手当、生活費の「万が一時金額」は次の拡張で対応します。</li>
+  <li>遺族年金・児童手当は入力した世帯合計月額を、死亡月以降に計上します。</li>
+  <li>生活費削減率は、世帯全体の生活費に死亡月以降適用します。</li>
 </ul>
 {% endblock %}

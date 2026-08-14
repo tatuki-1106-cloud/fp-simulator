@@ -887,7 +887,10 @@ def _yearly_summary(monthly) -> list[dict]:
                 "year": month.date.year,
                 "age": month.age,
                 "income": 0,
+                "survivor_pension": 0,
+                "child_allowance": 0,
                 "expense": 0,
+                "living_expense_reduction": 0,
                 "tax_si": 0,
                 "net": 0,
                 "balance_end": 0,
@@ -897,7 +900,17 @@ def _yearly_summary(monthly) -> list[dict]:
             },
         )
         summary["income"] += month.total_income
+        summary["survivor_pension"] += month.survivor_pension
+        summary["child_allowance"] += month.child_allowance
         summary["expense"] += month.total_expense
+        summary["living_expense_reduction"] += next(
+            (
+                trace.amount
+                for trace in month.traces
+                if trace.item == "万が一時の生活費削減"
+            ),
+            0,
+        )
         summary["tax_si"] += month.total_tax_si
         summary["net"] += month.net
         summary["balance_end"] = month.balance
@@ -1133,6 +1146,9 @@ async def disaster_scenarios(
     household_id: str,
     deceased_member_id: str | None = None,
     death_age: int | None = None,
+    survivor_pension_monthly: int = 0,
+    child_allowance_monthly: int = 0,
+    living_expense_reduction_rate: float = 0.0,
 ) -> HTMLResponse:
     """生きる道と指定メンバー死亡シナリオを比較."""
     household = await get_household(household_id)
@@ -1148,26 +1164,41 @@ async def disaster_scenarios(
     scenario_result = None
     baseline_result = None
     if selected_member and death_age is not None:
-        if death_age < 0 or death_age > 120:
-            return HTMLResponse("死亡年齢は0〜120歳で指定してください", status_code=400)
+        if (
+            death_age < 0
+            or death_age > 120
+            or survivor_pension_monthly < 0
+            or child_allowance_monthly < 0
+            or not 0 <= living_expense_reduction_rate <= 1
+        ):
+            return HTMLResponse("万が一シナリオの入力値が不正です", status_code=400)
         baseline_result = simulate(get_store(), household)
         scenario_result = simulate(
             get_store(),
             household,
-            DisasterScenario(selected_member.id, death_age, f"{selected_member.name}万が一"),
+            DisasterScenario(
+                selected_member.id,
+                death_age,
+                f"{selected_member.name}万が一",
+                survivor_pension_monthly=survivor_pension_monthly,
+                child_allowance_monthly=child_allowance_monthly,
+                living_expense_reduction_rate=living_expense_reduction_rate,
+            ),
         )
 
     def metrics(result) -> dict | None:
         if result is None:
             return None
         balances = [month.balance for month in result.monthly]
+        yearly = _yearly_summary(result.monthly)
         return {
             "min_balance": min(balances) if balances else 0,
             "final_balance": balances[-1] if balances else 0,
             "min_balance_month": (
                 result.monthly[balances.index(min(balances))].date if balances else None
             ),
-            "yearly": _yearly_summary(result.monthly),
+            "yearly": yearly,
+            "yearly_by_year": {item["year"]: item for item in yearly},
         }
 
     return templates.TemplateResponse(
@@ -1179,6 +1210,9 @@ async def disaster_scenarios(
             "members": household.members,
             "selected_member_id": deceased_member_id,
             "death_age": death_age,
+            "survivor_pension_monthly": survivor_pension_monthly,
+            "child_allowance_monthly": child_allowance_monthly,
+            "living_expense_reduction_rate": living_expense_reduction_rate,
             "baseline": metrics(baseline_result),
             "scenario": metrics(scenario_result),
             "active_q": "disaster",

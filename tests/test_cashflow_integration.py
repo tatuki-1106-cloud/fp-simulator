@@ -193,6 +193,38 @@ class TestCashflowIntegration:
         assert death_month.salary_income == 0
         assert death_month.pension_income == 0
 
+    def test_disaster_supports_survivor_benefits_and_expense_reduction(
+        self, store, household: Household
+    ) -> None:
+        """万が一後の追加収入と生活費調整を死亡月から反映する."""
+        result = simulate(
+            store,
+            household,
+            DisasterScenario(
+                "husband",
+                40,
+                survivor_pension_monthly=50_000,
+                child_allowance_monthly=15_000,
+                living_expense_reduction_rate=0.1,
+            ),
+        )
+        death_month = next(m for m in result.monthly if m.date == datetime.date(2036, 4, 1))
+        after = next(m for m in result.monthly if m.date == datetime.date(2036, 5, 1))
+        assert death_month.survivor_pension == 50_000
+        assert death_month.child_allowance == 15_000
+        assert death_month.living_expense == 180_000
+        assert after.survivor_pension == 50_000
+        assert after.child_allowance == 15_000
+        assert after.living_expense == 180_000
+        before_allowance_end = next(
+            m for m in result.monthly if m.date == datetime.date(2043, 12, 1)
+        )
+        allowance_end = next(
+            m for m in result.monthly if m.date == datetime.date(2044, 1, 1)
+        )
+        assert before_allowance_end.child_allowance == 15_000
+        assert allowance_end.child_allowance == 0
+
     def test_investment_balances_are_tracked_separately(
         self, store, household: Household
     ) -> None:

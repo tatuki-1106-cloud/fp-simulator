@@ -55,6 +55,8 @@ class MonthlyCashflow:
     retirement_income: int = 0
     other_income: int = 0
     death_benefit: int = 0
+    survivor_pension: int = 0
+    child_allowance: int = 0
     # 控除・税
     social_insurance: int = 0
     income_tax: int = 0
@@ -79,6 +81,8 @@ class MonthlyCashflow:
             + self.retirement_income
             + self.other_income
             + self.death_benefit
+            + self.survivor_pension
+            + self.child_allowance
         )
 
     @property
@@ -122,11 +126,19 @@ class SimulationResult:
 
 @dataclass(frozen=True)
 class DisasterScenario:
-    """万が一シナリオ。指定メンバーが指定年齢で死亡した前提."""
+    """万が一シナリオ。指定メンバーが指定年齢で死亡した前提.
+
+    遺族年金・児童手当は制度の詳細条件を入力データだけで確定できないため、
+    現段階では利用者が設定する世帯合計の月額として扱う。
+    """
 
     deceased_member_id: str
     death_age: int
     name: str = "万が一"
+    survivor_pension_monthly: int = 0
+    child_allowance_monthly: int = 0
+    child_allowance_end_age: int = 18
+    living_expense_reduction_rate: float = 0.0
 
 
 def _add_months(date: datetime.date, months: int) -> datetime.date:
@@ -141,6 +153,18 @@ def simulate(
     scenario: DisasterScenario | None = None,
 ) -> SimulationResult:
     """世帯の生涯キャッシュフローをシミュレーションする."""
+    if scenario is not None:
+        if scenario.death_age < 0 or scenario.death_age > 120:
+            raise ValueError("death_age must be between 0 and 120")
+        if scenario.survivor_pension_monthly < 0:
+            raise ValueError("survivor_pension_monthly must not be negative")
+        if scenario.child_allowance_monthly < 0:
+            raise ValueError("child_allowance_monthly must not be negative")
+        if scenario.child_allowance_end_age < 0:
+            raise ValueError("child_allowance_end_age must not be negative")
+        if not 0 <= scenario.living_expense_reduction_rate <= 1:
+            raise ValueError("living_expense_reduction_rate must be between 0 and 1")
+
     assumptions = household.assumptions
     householder = household.householder()
 
@@ -286,6 +310,38 @@ def simulate(
                         "member": member.name,
                         "年額": annual,
                     })
+                )
+
+        # --- 万が一時の追加収入 ---
+        if scenario and death_date and current >= death_date:
+            if scenario.survivor_pension_monthly > 0:
+                cf.survivor_pension = scenario.survivor_pension_monthly
+                cf.traces.append(
+                    TraceEntry(
+                        "遺族年金",
+                        cf.survivor_pension,
+                        {"月額": scenario.survivor_pension_monthly, "scenario": scenario.name},
+                    )
+                )
+
+            eligible_child = any(
+                member.relationship == Relationship.CHILD
+                and member_alive(member, current)
+                and age_at(member.birth_date, current) < scenario.child_allowance_end_age
+                for member in household.members
+            )
+            if eligible_child and scenario.child_allowance_monthly > 0:
+                cf.child_allowance = scenario.child_allowance_monthly
+                cf.traces.append(
+                    TraceEntry(
+                        "児童手当",
+                        cf.child_allowance,
+                        {
+                            "月額": scenario.child_allowance_monthly,
+                            "対象年齢未満": scenario.child_allowance_end_age,
+                            "scenario": scenario.name,
+                        },
+                    )
                 )
 
         # --- 所得税(月次源泉徴収+年末調整) ---
@@ -481,6 +537,26 @@ def simulate(
                     if (year - assumptions.base_year == expense.start_age - age_at_year_end(householder.birth_date, assumptions.base_year)
                             and month == expense.start_month):
                         cf.event_expense += int(expense.monthly_amount * inflation_factor)
+
+        if (
+            scenario
+            and death_date
+            and current >= death_date
+            and scenario.living_expense_reduction_rate > 0
+        ):
+            reduction = int(cf.living_expense * scenario.living_expense_reduction_rate)
+            cf.living_expense -= reduction
+            if reduction > 0:
+                cf.traces.append(
+                    TraceEntry(
+                        "万が一時の生活費削減",
+                        reduction,
+                        {
+                            "削減率": scenario.living_expense_reduction_rate,
+                            "scenario": scenario.name,
+                        },
+                    )
+                )
 
         # --- 教育費 ---
         for edu in household.education_plans:
