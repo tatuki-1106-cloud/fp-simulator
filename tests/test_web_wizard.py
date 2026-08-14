@@ -116,3 +116,15 @@ async def test_create_household_and_full_flow(client: AsyncClient) -> None:
     assert "2026年 月次キャッシュフロー" in r.text
     assert "月末残高" in r.text
     assert "2026/01" in r.text
+
+    # 現行プランと前提変更プランを比較
+    r = await client.get(
+        f"/households/{household_id}/compare"
+        "?alternative_name=積極運用&alternative_inflation_rate=0.02"
+        "&alternative_investment_return_rate=0.03"
+    )
+    assert r.status_code == 200
+    assert "プラン比較" in r.text
+    assert "積極運用" in r.text
+    assert "最低貯蓄残高" in r.text
+    assert "年次比較" in r.text

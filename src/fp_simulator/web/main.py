@@ -540,6 +540,31 @@ async def household_delete(household_id: str) -> RedirectResponse:
 
 # --- シミュレーション結果 ---
 
+def _yearly_summary(monthly) -> list[dict]:
+    """月次結果を年次比較用のサマリーへ集計."""
+    yearly: dict[int, dict] = {}
+    for month in monthly:
+        summary = yearly.setdefault(
+            month.date.year,
+            {
+                "year": month.date.year,
+                "age": month.age,
+                "income": 0,
+                "expense": 0,
+                "tax_si": 0,
+                "net": 0,
+                "balance_end": 0,
+            },
+        )
+        summary["income"] += month.total_income
+        summary["expense"] += month.total_expense
+        summary["tax_si"] += month.total_tax_si
+        summary["net"] += month.net
+        summary["balance_end"] = month.balance
+        summary["age"] = month.age
+    return sorted(yearly.values(), key=lambda item: item["year"])
+
+
 @app.get("/households/{household_id}/simulate", response_class=HTMLResponse)
 async def simulate_result(request: Request, household_id: str) -> HTMLResponse:
     """シミュレーション実行・結果表示."""
@@ -552,24 +577,7 @@ async def simulate_result(request: Request, household_id: str) -> HTMLResponse:
 
     result = simulate(store, household)
 
-    # 年次サマリに集計
-    yearly: dict[int, dict] = {}
-    for m in result.monthly:
-        y = m.date.year
-        if y not in yearly:
-            yearly[y] = {
-                "year": y, "age": m.age,
-                "income": 0, "expense": 0, "tax_si": 0, "net": 0,
-                "balance_end": 0,
-            }
-        yearly[y]["income"] += m.total_income
-        yearly[y]["expense"] += m.total_expense
-        yearly[y]["tax_si"] += m.total_tax_si
-        yearly[y]["net"] += m.net
-        yearly[y]["balance_end"] = m.balance
-        yearly[y]["age"] = m.age  # 年末時点の年齢
-
-    yearly_list = sorted(yearly.values(), key=lambda x: x["year"])
+    yearly_list = _yearly_summary(result.monthly)
 
     # グラフ用データ
     labels = [f"{m.date.year}/{m.date.month}" for m in result.monthly]
@@ -593,6 +601,76 @@ async def simulate_result(request: Request, household_id: str) -> HTMLResponse:
             "min_balance_month": min_balance_month,
             "final_balance": final_balance,
             "active_q": "sim",
+        },
+    )
+
+
+@app.get("/households/{household_id}/compare", response_class=HTMLResponse)
+async def compare_plans(
+    request: Request,
+    household_id: str,
+    alternative_name: str = "変更プラン",
+    alternative_inflation_rate: float = 0.0,
+    alternative_investment_return_rate: float = 0.0,
+) -> HTMLResponse:
+    """現行プランと前提を変更したプランを並べて比較."""
+    household = await get_household(household_id)
+    if household is None:
+        return RedirectResponse("/", status_code=303)
+
+    from fp_simulator.engine.cashflow import simulate
+
+    baseline_result = simulate(get_store(), household)
+    alternative = household.model_copy(deep=True)
+    alternative.name = alternative_name.strip() or "変更プラン"
+    alternative.assumptions.inflation_rate = alternative_inflation_rate
+    alternative.assumptions.investment_return_rate = alternative_investment_return_rate
+    alternative_result = simulate(get_store(), alternative)
+
+    def metrics(result) -> dict:
+        balances = [month.balance for month in result.monthly]
+        return {
+            "min_balance": min(balances) if balances else 0,
+            "final_balance": balances[-1] if balances else 0,
+            "min_balance_month": (
+                result.monthly[balances.index(min(balances))].date if balances else None
+            ),
+            "yearly": _yearly_summary(result.monthly),
+        }
+
+    baseline_metrics = metrics(baseline_result)
+    alternative_metrics = metrics(alternative_result)
+    years = [
+        {
+            "year": baseline["year"],
+            "baseline": baseline,
+            "alternative": alternative,
+        }
+        for baseline, alternative in zip(
+            baseline_metrics["yearly"], alternative_metrics["yearly"], strict=True
+        )
+    ]
+
+    return templates.TemplateResponse(
+        request,
+        "compare.html",
+        {
+            "title": "プラン比較",
+            "household": household,
+            "baseline": {
+                "name": "現行プラン",
+                "inflation_rate": household.assumptions.inflation_rate,
+                "investment_return_rate": household.assumptions.investment_return_rate,
+                **baseline_metrics,
+            },
+            "alternative": {
+                "name": alternative.name,
+                "inflation_rate": alternative_inflation_rate,
+                "investment_return_rate": alternative_investment_return_rate,
+                **alternative_metrics,
+            },
+            "years": years,
+            "active_q": "compare",
         },
     )
 

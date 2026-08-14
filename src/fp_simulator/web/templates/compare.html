@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% from "lifemap.html" import lifemap %}
+{% block content %}
+<h1>プラン比較 — {{ household.name }}</h1>
+{{ lifemap(household) }}
+
+<form method="get" class="form-card">
+  <h2>比較条件</h2>
+  <p>
+    <label>変更プラン名:
+      <input type="text" name="alternative_name" value="{{ alternative.name }}" maxlength="80">
+    </label>
+  </p>
+  <p>
+    <label>物価上昇率（小数）:
+      <input type="number" name="alternative_inflation_rate" value="{{ alternative.inflation_rate }}" step="0.001">
+    </label>
+    <small>例: 2% は 0.02</small>
+  </p>
+  <p>
+    <label>運用利回り（小数）:
+      <input type="number" name="alternative_investment_return_rate" value="{{ alternative.investment_return_rate }}" step="0.001">
+    </label>
+    <small>例: 3% は 0.03</small>
+  </p>
+  <button type="submit">再計算</button>
+</form>
+
+<h2>サマリー比較</h2>
+<table>
+  <thead>
+    <tr><th>指標</th><th>{{ baseline.name }}</th><th>{{ alternative.name }}</th></tr>
+  </thead>
+  <tbody>
+    <tr><th>物価上昇率</th><td>{{ baseline.inflation_rate }}</td><td>{{ alternative.inflation_rate }}</td></tr>
+    <tr><th>運用利回り</th><td>{{ baseline.investment_return_rate }}</td><td>{{ alternative.investment_return_rate }}</td></tr>
+    <tr><th>最低貯蓄残高</th><td>{{ "{:,}".format(baseline.min_balance) }}円</td><td>{{ "{:,}".format(alternative.min_balance) }}円</td></tr>
+    <tr><th>最終貯蓄残高</th><td>{{ "{:,}".format(baseline.final_balance) }}円</td><td>{{ "{:,}".format(alternative.final_balance) }}円</td></tr>
+  </tbody>
+</table>
+
+<h2>年次比較</h2>
+<table>
+  <thead>
+    <tr><th>年</th><th>現行プラン収支</th><th>現行プラン年末残高</th><th>{{ alternative.name }}収支</th><th>{{ alternative.name }}年末残高</th></tr>
+  </thead>
+  <tbody>
+  {% for item in years %}
+    <tr>
+      <td>{{ item.year }}</td>
+      <td>{{ "{:,}".format(item.baseline.net) }}</td>
+      <td>{{ "{:,}".format(item.baseline.balance_end) }}</td>
+      <td>{{ "{:,}".format(item.alternative.net) }}</td>
+      <td>{{ "{:,}".format(item.alternative.balance_end) }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}
