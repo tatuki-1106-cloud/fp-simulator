@@ -128,3 +128,15 @@ async def test_create_household_and_full_flow(client: AsyncClient) -> None:
     assert "積極運用" in r.text
     assert "最低貯蓄残高" in r.text
     assert "年次比較" in r.text
+
+    # 万が一シナリオ
+    r = await client.get(f"/households/{household_id}/disaster")
+    assert r.status_code == 200
+    assert "万が一シナリオ" in r.text
+    r = await client.get(
+        f"/households/{household_id}/disaster"
+        f"?deceased_member_id={husband_id}&death_age=40"
+    )
+    assert r.status_code == 200
+    assert "生きる道" in r.text
+    assert "万が一年末残高" in r.text

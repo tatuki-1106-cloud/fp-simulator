@@ -675,6 +675,65 @@ async def compare_plans(
     )
 
 
+@app.get("/households/{household_id}/disaster", response_class=HTMLResponse)
+async def disaster_scenarios(
+    request: Request,
+    household_id: str,
+    deceased_member_id: str | None = None,
+    death_age: int | None = None,
+) -> HTMLResponse:
+    """生きる道と指定メンバー死亡シナリオを比較."""
+    household = await get_household(household_id)
+    if household is None:
+        return RedirectResponse("/", status_code=303)
+
+    from fp_simulator.engine.cashflow import DisasterScenario, simulate
+
+    selected_member = next(
+        (member for member in household.members if member.id == deceased_member_id),
+        None,
+    )
+    scenario_result = None
+    baseline_result = None
+    if selected_member and death_age is not None:
+        if death_age < 0 or death_age > 120:
+            return HTMLResponse("死亡年齢は0〜120歳で指定してください", status_code=400)
+        baseline_result = simulate(get_store(), household)
+        scenario_result = simulate(
+            get_store(),
+            household,
+            DisasterScenario(selected_member.id, death_age, f"{selected_member.name}万が一"),
+        )
+
+    def metrics(result) -> dict | None:
+        if result is None:
+            return None
+        balances = [month.balance for month in result.monthly]
+        return {
+            "min_balance": min(balances) if balances else 0,
+            "final_balance": balances[-1] if balances else 0,
+            "min_balance_month": (
+                result.monthly[balances.index(min(balances))].date if balances else None
+            ),
+            "yearly": _yearly_summary(result.monthly),
+        }
+
+    return templates.TemplateResponse(
+        request,
+        "disaster.html",
+        {
+            "title": "万が一シナリオ",
+            "household": household,
+            "members": household.members,
+            "selected_member_id": deceased_member_id,
+            "death_age": death_age,
+            "baseline": metrics(baseline_result),
+            "scenario": metrics(scenario_result),
+            "active_q": "disaster",
+        },
+    )
+
+
 @app.get("/households/{household_id}/simulate/monthly", response_class=HTMLResponse)
 async def monthly_simulation_result(
     request: Request, household_id: str, year: int

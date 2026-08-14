@@ -3,7 +3,11 @@
 {% block content %}
 <h1>シミュレーション結果 — {{ household.name }}</h1>
 {{ lifemap(household) }}
-<p><a href="/households/{{ household.id }}/compare">プラン比較を開く</a></p>
+<p>
+  <a href="/households/{{ household.id }}/compare">プラン比較を開く</a>
+  |
+  <a href="/households/{{ household.id }}/disaster">万が一シナリオを開く</a>
+</p>
 
 <h2>サマリー</h2>
 <table>

@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>万が一シナリオ — {{ household.name }}</h1>
+<p>指定した家族がその年齢で亡くなった場合と、生きる道を比較します。</p>
+
+<form method="get" action="/households/{{ household.id }}/disaster">
+  <p>
+    <label>対象者:
+      <select name="deceased_member_id" required>
+        {% for member in members %}
+        <option value="{{ member.id }}" {% if member.id == selected_member_id %}selected{% endif %}>
+          {{ member.name }}（{{ member.relationship.value }}）
+        </option>
+        {% endfor %}
+      </select>
+    </label>
+  </p>
+  <p>
+    <label>万が一年齢:
+      <input type="number" name="death_age" min="0" max="120" value="{{ death_age or '' }}" required>
+    </label>
+    <small>FP-UNIVと同じく対象者ごとの固定年齢で指定します。</small>
+  </p>
+  <button type="submit">シナリオを計算</button>
+</form>
+
+{% if baseline and scenario %}
+<h2>サマリー比較</h2>
+<table>
+  <thead>
+    <tr><th>指標</th><th>生きる道</th><th>万が一</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <th>最低貯蓄残高</th>
+      <td>{{ "{:,}".format(baseline.min_balance) }}円 ({{ baseline.min_balance_month }})</td>
+      <td>{{ "{:,}".format(scenario.min_balance) }}円 ({{ scenario.min_balance_month }})</td>
+    </tr>
+    <tr>
+      <th>最終貯蓄残高</th>
+      <td>{{ "{:,}".format(baseline.final_balance) }}円</td>
+      <td>{{ "{:,}".format(scenario.final_balance) }}円</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2>年次比較</h2>
+<table>
+  <thead>
+    <tr><th>年</th><th>生きる道収支</th><th>生きる道年末残高</th><th>万が一収支</th><th>万が一年末残高</th></tr>
+  </thead>
+  <tbody>
+    {% for base_year in baseline.yearly %}
+    {% set disaster_year = scenario.yearly[loop.index0] %}
+    <tr {% if disaster_year.balance_end < 0 %}style="color:#c00;background:#fff5f5;"{% endif %}>
+      <td>{{ base_year.year }}</td>
+      <td>{{ "{:,}".format(base_year.net) }}</td>
+      <td>{{ "{:,}".format(base_year.balance_end) }}</td>
+      <td>{{ "{:,}".format(disaster_year.net) }}</td>
+      <td>{{ "{:,}".format(disaster_year.balance_end) }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p>対象者と万が一年齢を指定して「シナリオを計算」を押してください。</p>
+{% endif %}
+
+<h2>計算上の注意</h2>
+<ul>
+  <li>死亡月以降、対象者の給与・年金・個人向け支出を停止します。</li>
+  <li>対象者が被保険者の生命保険は死亡月に死亡保険金を計上します。</li>
+  <li>遺族年金、児童手当、生活費の「万が一時金額」は次の拡張で対応します。</li>
+</ul>
+{% endblock %}

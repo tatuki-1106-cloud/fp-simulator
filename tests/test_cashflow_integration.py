@@ -22,7 +22,7 @@ from fp_simulator.engine.models import (
     Relationship,
     SocialInsuranceType,
 )
-from fp_simulator.engine.cashflow import simulate
+from fp_simulator.engine.cashflow import DisasterScenario, simulate
 
 
 @pytest.fixture(scope="module")
@@ -179,6 +179,17 @@ class TestCashflowIntegration:
         result = simulate(store, household)
         min_balance = min(m.balance for m in result.monthly)
         assert min_balance > 0
+
+    def test_disaster_scenario_stops_deceased_member_income(
+        self, store, household: Household
+    ) -> None:
+        """指定年齢の死亡後は対象者の給与と年金を計上しない."""
+        result = simulate(store, household, DisasterScenario("husband", 40))
+        before = next(m for m in result.monthly if m.date == datetime.date(2036, 3, 1))
+        death_month = next(m for m in result.monthly if m.date == datetime.date(2036, 4, 1))
+        assert before.salary_income == 300_000
+        assert death_month.salary_income == 0
+        assert death_month.pension_income == 0
 
     def test_traces_exist(self, store, household: Household) -> None:
         """トレーサビリティ情報が付与されている."""

@@ -53,6 +53,7 @@ class MonthlyCashflow:
     pension_income: int = 0
     retirement_income: int = 0
     other_income: int = 0
+    death_benefit: int = 0
     # 控除・税
     social_insurance: int = 0
     income_tax: int = 0
@@ -69,7 +70,13 @@ class MonthlyCashflow:
     # 収支
     @property
     def total_income(self) -> int:
-        return self.salary_income + self.pension_income + self.retirement_income + self.other_income
+        return (
+            self.salary_income
+            + self.pension_income
+            + self.retirement_income
+            + self.other_income
+            + self.death_benefit
+        )
 
     @property
     def total_expense(self) -> int:
@@ -105,13 +112,26 @@ class SimulationResult:
     parameter_snapshot: dict[str, Any]  # 計算時のパラメータ版(再現性)
 
 
+@dataclass(frozen=True)
+class DisasterScenario:
+    """万が一シナリオ。指定メンバーが指定年齢で死亡した前提."""
+
+    deceased_member_id: str
+    death_age: int
+    name: str = "万が一"
+
+
 def _add_months(date: datetime.date, months: int) -> datetime.date:
     """date に months ヶ月を加算(日は1日固定)."""
     total = date.year * 12 + date.month - 1 + months
     return datetime.date(total // 12, total % 12 + 1, 1)
 
 
-def simulate(store: ParameterStore, household: Household) -> SimulationResult:
+def simulate(
+    store: ParameterStore,
+    household: Household,
+    scenario: DisasterScenario | None = None,
+) -> SimulationResult:
     """世帯の生涯キャッシュフローをシミュレーションする."""
     assumptions = household.assumptions
     householder = household.householder()
@@ -131,6 +151,19 @@ def simulate(store: ParameterStore, household: Household) -> SimulationResult:
     resident_tax_cache: dict[int, dict[datetime.date, int]] = {}
 
     current = start
+    deceased = next(
+        (member for member in household.members if scenario and member.id == scenario.deceased_member_id),
+        None,
+    )
+    death_date = (
+        datetime.date(deceased.birth_date.year + scenario.death_age, deceased.birth_date.month, 1)
+        if deceased and scenario
+        else None
+    )
+
+    def member_alive(member: Member, date: datetime.date) -> bool:
+        return not deceased or member.id != deceased.id or date < death_date
+
     while current <= end:
         year = current.year
         month = current.month
@@ -143,6 +176,8 @@ def simulate(store: ParameterStore, household: Household) -> SimulationResult:
         for income in household.incomes:
             member = next((m for m in household.members if m.id == income.member_id), None)
             if member is None:
+                continue
+            if not member_alive(member, current):
                 continue
             member_age = age_at(member.birth_date, current)
 
@@ -214,6 +249,8 @@ def simulate(store: ParameterStore, household: Household) -> SimulationResult:
             member = next((m for m in household.members if m.id == pr.member_id), None)
             if member is None:
                 continue
+            if not member_alive(member, current):
+                continue
             member_age = age_at(member.birth_date, current)
 
             pension_start_age = pr.start_age - (pr.months_early // 12) + (pr.months_deferred // 12)
@@ -245,6 +282,8 @@ def simulate(store: ParameterStore, household: Household) -> SimulationResult:
             for income in household.incomes:
                 member = next((m for m in household.members if m.id == income.member_id), None)
                 if member is None:
+                    continue
+                if not member_alive(member, current):
                     continue
                 member_age = age_at_year_end(member.birth_date, year)
                 if current.month < member.birth_date.month:
@@ -299,6 +338,8 @@ def simulate(store: ParameterStore, household: Household) -> SimulationResult:
             for income in household.incomes:
                 member = next((m for m in household.members if m.id == income.member_id), None)
                 if member is None:
+                    continue
+                if not member_alive(member, datetime.date(prev_year, 12, 31)):
                     continue
                 member_age = age_at_year_end(member.birth_date, prev_year)
                 if member_age < income.start_age or (
@@ -394,6 +435,8 @@ def simulate(store: ParameterStore, household: Household) -> SimulationResult:
                     member = next((m for m in household.members if m.id == expense.member_id), None)
                     if member is None:
                         continue
+                    if not member_alive(member, current):
+                        continue
                     member_age = age_at(member.birth_date, current)
                     if member_age < expense.start_age:
                         continue
@@ -428,6 +471,8 @@ def simulate(store: ParameterStore, household: Household) -> SimulationResult:
             member = next((m for m in household.members if m.id == edu.member_id), None)
             if member is None:
                 continue
+            if not member_alive(member, current):
+                continue
             child_age = age_at(member.birth_date, current)
             from fp_simulator.engine.education import monthly_education_costs
 
@@ -458,15 +503,36 @@ def simulate(store: ParameterStore, household: Household) -> SimulationResult:
                 death_benefit=ins.death_benefit,
                 surrender_value_rate=ins.surrender_value_rate,
             )
-            premium = monthly_premium_in_period(policy, current)
+            payer = next((m for m in household.members if m.id == ins.payer_member_id), None)
+            premium = (
+                monthly_premium_in_period(policy, current)
+                if payer is None or member_alive(payer, current)
+                else 0
+            )
             cf.insurance_premium += premium
             if premium > 0:
                 cf.traces.append(TraceEntry("保険料", premium, {"name": ins.name}))
+
+            insured = next((m for m in household.members if m.id == ins.insured_member_id), None)
+            if (
+                death_date
+                and insured
+                and insured.id == deceased.id
+                and current == death_date
+            ):
+                benefit = int(ins.death_benefit)
+                cf.death_benefit += benefit
+                if benefit > 0:
+                    cf.traces.append(
+                        TraceEntry("死亡保険金", benefit, {"name": ins.name, "scenario": scenario.name})
+                    )
 
         # --- iDeCo ---
         for ideco in household.ideco_plans:
             member = next((m for m in household.members if m.id == ideco.member_id), None)
             if member is None:
+                continue
+            if not member_alive(member, current):
                 continue
             member_age = age_at(member.birth_date, current)
             if ideco.start_age <= member_age < ideco.end_age:
@@ -486,6 +552,8 @@ def simulate(store: ParameterStore, household: Household) -> SimulationResult:
         for nisa in household.nisa_plans:
             member = next((m for m in household.members if m.id == nisa.member_id), None)
             if member is None:
+                continue
+            if not member_alive(member, current):
                 continue
             member_age = age_at(member.birth_date, current)
             if member_age >= nisa.start_age and (nisa.end_age is None or member_age <= nisa.end_age):
