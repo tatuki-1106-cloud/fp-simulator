@@ -1722,7 +1722,7 @@ async def disaster_scenarios(
     deceased_member_id: str | None = None,
     death_age: int | None = None,
     survivor_pension_monthly: int = 0,
-    child_allowance_monthly: int = 0,
+    child_allowance_monthly: int | None = None,
     living_expense_reduction_rate: float = 0.0,
 ) -> HTMLResponse:
     """生きる道と指定メンバー死亡シナリオを比較."""
@@ -1743,7 +1743,10 @@ async def disaster_scenarios(
             death_age < 0
             or death_age > 120
             or survivor_pension_monthly < 0
-            or child_allowance_monthly < 0
+            or (
+                child_allowance_monthly is not None
+                and child_allowance_monthly < 0
+            )
             or not 0 <= living_expense_reduction_rate <= 1
         ):
             return HTMLResponse("万が一シナリオの入力値が不正です", status_code=400)

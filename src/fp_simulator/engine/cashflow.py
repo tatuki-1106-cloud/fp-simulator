@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import calendar
 import datetime
 from collections import defaultdict
 from collections.abc import Callable
@@ -201,15 +202,16 @@ class FinancingContext:
 class DisasterScenario:
     """万が一シナリオ。指定メンバーが指定年齢で死亡した前提.
 
-    遺族年金・児童手当は制度の詳細条件を入力データだけで確定できないため、
-    現段階では利用者が設定する世帯合計の月額として扱う。
+    遺族年金は利用者が設定する世帯合計の月額として扱う。
+    児童手当は原則として世帯の子ども情報から自動計算し、
+    ``child_allowance_monthly`` を指定した場合だけ従来の手入力額を上書きする。
     """
 
     deceased_member_id: str
     death_age: int
     name: str = "万が一"
     survivor_pension_monthly: int = 0
-    child_allowance_monthly: int = 0
+    child_allowance_monthly: int | None = None
     child_allowance_end_age: int = 18
     living_expense_reduction_rate: float = 0.0
 
@@ -218,6 +220,75 @@ def _add_months(date: datetime.date, months: int) -> datetime.date:
     """date に months ヶ月を加算(日は1日固定)."""
     total = date.year * 12 + date.month - 1 + months
     return datetime.date(total // 12, total % 12 + 1, 1)
+
+
+def _fiscal_year_end_after_age(birth_date: datetime.date, age: int) -> datetime.date:
+    """指定年齢に達した後の最初の3月31日を返す."""
+    birthday_year = birth_date.year + age
+    birthday_day = min(
+        birth_date.day, calendar.monthrange(birthday_year, birth_date.month)[1]
+    )
+    birthday = datetime.date(birthday_year, birth_date.month, birthday_day)
+    end_year = birthday.year if birthday.month <= 3 else birthday.year + 1
+    return datetime.date(end_year, 3, 31)
+
+
+def _automatic_child_allowance(
+    store: ParameterStore,
+    household: Household,
+    current: datetime.date,
+    member_alive: MemberAlive,
+) -> tuple[int, dict[str, TraceValue]]:
+    """児童手当を2024年10月改正後の簡易モデルで計算する."""
+    eligible_age = int(store.get("児童手当.支給対象.年齢上限", current))
+    countable_age = int(store.get("児童手当.第3子算定.年齢上限", current))
+    children = [
+        member
+        for member in household.members
+        if (
+            member.relationship == Relationship.CHILD
+            and member_alive(member, current)
+            and current <= _fiscal_year_end_after_age(member.birth_date, countable_age)
+        )
+    ]
+    children.sort(key=lambda member: (member.birth_date, member.id))
+    ranks = {member.id: index + 1 for index, member in enumerate(children)}
+    eligible_children = [
+        member
+        for member in children
+        if current <= _fiscal_year_end_after_age(member.birth_date, eligible_age)
+    ]
+
+    total = 0
+    breakdown: dict[str, int] = {}
+    eligible_names: list[str] = []
+    for member in eligible_children:
+        rank = ranks[member.id]
+        age = age_at(member.birth_date, current)
+        if rank >= 3:
+            amount = int(store.get("児童手当.第3子以降.月額", current))
+        elif age < 3:
+            amount = int(store.get("児童手当.第1子第2子.3歳未満月額", current))
+        else:
+            amount = int(store.get("児童手当.第1子第2子.3歳以上月額", current))
+        total += amount
+        breakdown[member.name] = amount
+        eligible_names.append(f"{member.name}（{age}歳・第{rank}子）")
+
+    return total, {
+        "自動計算": True,
+        "対象児童": eligible_names,
+        "対象児童数": len(eligible_children),
+        "第3子算定対象数": len(children),
+        "内訳": breakdown,
+        "パラメータ": [
+            "児童手当.支給対象.年齢上限",
+            "児童手当.第3子算定.年齢上限",
+            "児童手当.第1子第2子.3歳未満月額",
+            "児童手当.第1子第2子.3歳以上月額",
+            "児童手当.第3子以降.月額",
+        ],
+    }
 
 
 def _loan_balance_at(
@@ -537,9 +608,8 @@ def _apply_pension_and_disaster_income(
             )
         )
 
-    if scenario is None or death_date is None or current < death_date:
-        return
-    if scenario.survivor_pension_monthly > 0:
+    disaster_active = scenario is not None and death_date is not None and current >= death_date
+    if disaster_active and scenario.survivor_pension_monthly > 0:
         cf.survivor_pension = scenario.survivor_pension_monthly
         cf.traces.append(
             TraceEntry(
@@ -552,25 +622,37 @@ def _apply_pension_and_disaster_income(
             )
         )
 
-    eligible_child = any(
-        member.relationship == Relationship.CHILD
-        and member_alive(member, current)
-        and age_at(member.birth_date, current) < scenario.child_allowance_end_age
-        for member in household.members
-    )
-    if eligible_child and scenario.child_allowance_monthly > 0:
-        cf.child_allowance = scenario.child_allowance_monthly
-        cf.traces.append(
-            TraceEntry(
-                "児童手当",
-                cf.child_allowance,
-                {
-                    "月額": scenario.child_allowance_monthly,
-                    "対象年齢未満": scenario.child_allowance_end_age,
-                    "scenario": scenario.name,
-                },
-            )
+    if (
+        disaster_active
+        and scenario is not None
+        and scenario.child_allowance_monthly is not None
+    ):
+        eligible_child = any(
+            member.relationship == Relationship.CHILD
+            and member_alive(member, current)
+            and age_at(member.birth_date, current) < scenario.child_allowance_end_age
+            for member in household.members
         )
+        if eligible_child and scenario.child_allowance_monthly > 0:
+            cf.child_allowance = scenario.child_allowance_monthly
+            cf.traces.append(
+                TraceEntry(
+                    "児童手当",
+                    cf.child_allowance,
+                    {
+                        "自動計算": False,
+                        "月額": scenario.child_allowance_monthly,
+                        "対象年齢未満": scenario.child_allowance_end_age,
+                        "scenario": scenario.name,
+                    },
+                )
+            )
+        return
+
+    allowance, basis = _automatic_child_allowance(store, household, current, member_alive)
+    if allowance > 0:
+        cf.child_allowance = allowance
+        cf.traces.append(TraceEntry("児童手当", allowance, basis))
 
 
 def _apply_income_tax(
@@ -1288,7 +1370,10 @@ def simulate(
             raise ValueError("death_age must be between 0 and 120")
         if scenario.survivor_pension_monthly < 0:
             raise ValueError("survivor_pension_monthly must not be negative")
-        if scenario.child_allowance_monthly < 0:
+        if (
+            scenario.child_allowance_monthly is not None
+            and scenario.child_allowance_monthly < 0
+        ):
             raise ValueError("child_allowance_monthly must not be negative")
         if scenario.child_allowance_end_age < 0:
             raise ValueError("child_allowance_end_age must not be negative")

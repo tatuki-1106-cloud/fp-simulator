@@ -8,17 +8,18 @@ from __future__ import annotations
 import datetime
 import pathlib
 
-from pydantic import ValidationError
 import pytest
+from pydantic import ValidationError
 
-from fp_simulator.parameters.loader import get_store, reset_store
+from fp_simulator.engine.cashflow import DisasterScenario, simulate
 from fp_simulator.engine.models import (
     Account,
     Expense,
     Household,
-    Income,
     IdecoPlan,
+    Income,
     Insurance,
+    Loan,
     Member,
     NisaPlan,
     OwnedHousingPlan,
@@ -27,9 +28,8 @@ from fp_simulator.engine.models import (
     Relationship,
     SocialInsuranceType,
     Vehicle,
-    Loan,
 )
-from fp_simulator.engine.cashflow import DisasterScenario, simulate
+from fp_simulator.parameters.loader import get_store, reset_store
 
 
 @pytest.fixture(scope="module")
@@ -141,6 +141,8 @@ class TestCashflowIntegration:
         assert m1.age == 29 or m1.age == 30  # 誕生月による
         # 給与30万
         assert m1.salary_income == 300_000
+        # 2024年10月改正後の児童手当(0歳・第1子)
+        assert m1.child_allowance == 15_000
         # 社保(東京・30歳): 厚生年金27,450 + 健保14,865 + 雇用保険1,650 = 43,965
         assert m1.social_insurance == 43_965
         # 生活費20万

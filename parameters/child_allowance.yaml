@@ -1,0 +1,34 @@
+- path: 児童手当.支給対象.年齢上限
+  description: 児童手当の支給対象となる子の年齢上限(18歳年度末)
+  values:
+    - from: 2024-10-01
+      value: 18
+      source: https://www.cfa.go.jp/policies/kokoseido/jidouteate/
+
+- path: 児童手当.第3子算定.年齢上限
+  description: 第3子以降の算定対象に含める年齢上限(22歳年度末)
+  values:
+    - from: 2024-10-01
+      value: 22
+      source: https://www.cfa.go.jp/policies/kokoseido/jidouteate/
+
+- path: 児童手当.第1子第2子.3歳未満月額
+  description: 第1子・第2子の3歳未満の月額
+  values:
+    - from: 2024-10-01
+      value: 15000
+      source: https://www.cfa.go.jp/policies/kokoseido/jidouteate/
+
+- path: 児童手当.第1子第2子.3歳以上月額
+  description: 第1子・第2子の3歳以上高校生年代までの月額
+  values:
+    - from: 2024-10-01
+      value: 10000
+      source: https://www.cfa.go.jp/policies/kokoseido/jidouteate/
+
+- path: 児童手当.第3子以降.月額
+  description: 第3子以降の月額
+  values:
+    - from: 2024-10-01
+      value: 30000
+      source: https://www.cfa.go.jp/policies/kokoseido/jidouteate/

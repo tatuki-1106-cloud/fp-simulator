@@ -13,6 +13,7 @@ from fp_simulator.engine.cashflow import (
     _apply_income_tax,
     _apply_pension_and_disaster_income,
     _apply_work_income,
+    _automatic_child_allowance,
 )
 from fp_simulator.engine.models import (
     Household,
@@ -128,6 +129,71 @@ def test_apply_pension_and_disaster_income_applies_survivor_support(store):
     assert cf.survivor_pension == 50_000
     assert cf.child_allowance == 10_000
     assert {trace.item for trace in cf.traces} == {"遺族年金", "児童手当"}
+
+
+def test_automatic_child_allowance_uses_age_and_birth_order(store):
+    household = Household(
+        id="helper-child-allowance",
+        name="児童手当テスト",
+        members=[
+            _householder(datetime.date(1990, 1, 1)),
+            Member(
+                id="child1",
+                name="上の子",
+                relationship=Relationship.CHILD,
+                birth_date=datetime.date(2018, 1, 1),
+            ),
+            Member(
+                id="child2",
+                name="真ん中の子",
+                relationship=Relationship.CHILD,
+                birth_date=datetime.date(2020, 4, 1),
+            ),
+            Member(
+                id="child3",
+                name="下の子",
+                relationship=Relationship.CHILD,
+                birth_date=datetime.date(2024, 4, 1),
+            ),
+        ],
+        assumptions=PlanAssumptions(base_year=2026, base_month=1),
+    )
+
+    allowance, basis = _automatic_child_allowance(
+        store, household, datetime.date(2026, 1, 1), lambda _member, _date: True
+    )
+
+    assert allowance == 50_000
+    assert basis["対象児童数"] == 3
+    assert basis["第3子算定対象数"] == 3
+    assert basis["内訳"] == {"上の子": 10_000, "真ん中の子": 10_000, "下の子": 30_000}
+
+
+def test_automatic_child_allowance_uses_fiscal_year_end(store):
+    household = Household(
+        id="helper-child-allowance-end",
+        name="児童手当終了テスト",
+        members=[
+            _householder(datetime.date(1990, 1, 1)),
+            Member(
+                id="child",
+                name="子",
+                relationship=Relationship.CHILD,
+                birth_date=datetime.date(2006, 4, 1),
+            ),
+        ],
+        assumptions=PlanAssumptions(base_year=2026, base_month=1),
+    )
+
+    march_allowance, _ = _automatic_child_allowance(
+        store, household, datetime.date(2025, 3, 1), lambda _member, _date: True
+    )
+    april_allowance, _ = _automatic_child_allowance(
+        store, household, datetime.date(2025, 4, 1), lambda _member, _date: True
+    )
+
+    assert march_allowance == 10_000
+    assert april_allowance == 0
 
 
 def test_apply_income_tax_records_monthly_withholding(store):
