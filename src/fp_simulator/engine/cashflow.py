@@ -16,35 +16,38 @@ from __future__ import annotations
 
 import datetime
 from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from fp_simulator.parameters.loader import ParameterStore
-from fp_simulator.engine.models import (
-    Expense,
-    Household,
-    Member,
-    Relationship,
-    SocialInsuranceType,
+from fp_simulator.engine.dependency import (
+    age_at,
+    age_at_year_end,
+    calc_deductions_for_household,
 )
 from fp_simulator.engine.income import salary_income_after_deduction
-from fp_simulator.engine.income_tax import (
-    Deductions,
-    calc_annual_income_tax,
-    monthly_income_tax_schedule,
-)
-from fp_simulator.engine.resident_tax import monthly_resident_tax_schedule
-from fp_simulator.engine.social_insurance import monthly_social_insurance
-from fp_simulator.engine.pension import PensionRecord, total_pension
-from fp_simulator.engine.retirement import net_retirement_allowance
-from fp_simulator.engine.dependency import calc_deductions_for_household, age_at_year_end, age_at
-from fp_simulator.engine.investment import IdecoAccount, NisaAccount, withdrawal_amount
-from fp_simulator.engine.loan import LoanTerms, MonthlyRepayment, loan_schedule
+from fp_simulator.engine.income_tax import Deductions, calc_annual_income_tax
 from fp_simulator.engine.insurance import (
     InsurancePolicy,
     death_benefit_if_died,
     monthly_premium_in_period,
 )
+from fp_simulator.engine.investment import IdecoAccount, NisaAccount, withdrawal_amount
+from fp_simulator.engine.loan import LoanTerms, MonthlyRepayment, loan_schedule
+from fp_simulator.engine.models import (
+    Expense,
+    Household,
+    Member,
+    OwnedHousingPlan,
+    PlanAssumptions,
+    Relationship,
+    SocialInsuranceType,
+)
+from fp_simulator.engine.pension import PensionRecord, total_pension
+from fp_simulator.engine.resident_tax import monthly_resident_tax_schedule
+from fp_simulator.engine.retirement import net_retirement_allowance
+from fp_simulator.engine.social_insurance import monthly_social_insurance
+from fp_simulator.parameters.loader import ParameterStore
 
 
 @dataclass
@@ -163,6 +166,21 @@ class SimulationResult:
     parameter_snapshot: dict[str, Any]  # 計算時のパラメータ版(再現性)
 
 
+@dataclass
+class FinancingContext:
+    """ローン・車両買替の事前計算結果."""
+
+    loan_repayments_by_date: defaultdict[
+        datetime.date, list[tuple[str, MonthlyRepayment]]
+    ]
+    vehicle_loan_settlements_by_date: defaultdict[
+        datetime.date, list[tuple[str, int]]
+    ]
+    vehicle_loan_fees_by_date: defaultdict[datetime.date, list[tuple[str, int]]]
+    vehicle_replacement_principal: dict[tuple[str, datetime.date], int]
+    vehicle_replacement_dates: dict[str, list[datetime.date]]
+
+
 @dataclass(frozen=True)
 class DisasterScenario:
     """万が一シナリオ。指定メンバーが指定年齢で死亡した前提.
@@ -198,51 +216,19 @@ def _loan_balance_at(
     return balance
 
 
-def simulate(
-    store: ParameterStore,
-    household: Household,
-    scenario: DisasterScenario | None = None,
-) -> SimulationResult:
-    """世帯の生涯キャッシュフローをシミュレーションする."""
-    if scenario is not None:
-        if scenario.death_age < 0 or scenario.death_age > 120:
-            raise ValueError("death_age must be between 0 and 120")
-        if scenario.survivor_pension_monthly < 0:
-            raise ValueError("survivor_pension_monthly must not be negative")
-        if scenario.child_allowance_monthly < 0:
-            raise ValueError("child_allowance_monthly must not be negative")
-        if scenario.child_allowance_end_age < 0:
-            raise ValueError("child_allowance_end_age must not be negative")
-        if not 0 <= scenario.living_expense_reduction_rate <= 1:
-            raise ValueError("living_expense_reduction_rate must be between 0 and 1")
-
-    assumptions = household.assumptions
-    householder = household.householder()
-
-    # シミュレーション期間: 基準年月〜世帯主の想定寿命の誕生月
-    start = datetime.date(assumptions.base_year, assumptions.base_month, 1)
-    end_year = householder.birth_date.year + householder.life_expectancy_age
-    end = datetime.date(end_year, householder.birth_date.month, 1)
-
-    # 口座残高の初期値(基準月の月初残高)
-    balances: dict[str, int] = {acc.id: acc.balance for acc in household.accounts}
-    total_balance = sum(balances.values())
-    ideco_accounts = {
-        plan.id: IdecoAccount(balance=plan.initial_balance)
-        for plan in household.ideco_plans
-    }
-    nisa_accounts = {
-        plan.id: NisaAccount(balance=plan.initial_balance)
-        for plan in household.nisa_plans
-    }
-
+def _prepare_financing(
+    household: Household, start: datetime.date, end: datetime.date
+) -> FinancingContext:
+    """ローン返済・車両買替ローンのスケジュールを事前計算する."""
     loan_repayments_by_date: defaultdict[
         datetime.date, list[tuple[str, MonthlyRepayment]]
     ] = defaultdict(list)
     vehicle_loan_settlements_by_date: defaultdict[
         datetime.date, list[tuple[str, int]]
     ] = defaultdict(list)
-    vehicle_loan_fees_by_date: defaultdict[datetime.date, list[tuple[str, int]]] = defaultdict(list)
+    vehicle_loan_fees_by_date: defaultdict[
+        datetime.date, list[tuple[str, int]]
+    ] = defaultdict(list)
     vehicle_replacement_principal: dict[tuple[str, datetime.date], int] = {}
     vehicle_replacement_dates: dict[str, list[datetime.date]] = {}
     loan_stop_dates: dict[str, datetime.date] = {}
@@ -252,7 +238,9 @@ def simulate(
         start_date = datetime.date(
             vehicle.ownership_start_year, vehicle.ownership_start_month, 1
         )
-        end_date = datetime.date(vehicle.ownership_end_year, vehicle.ownership_end_month, 1)
+        end_date = datetime.date(
+            vehicle.ownership_end_year, vehicle.ownership_end_month, 1
+        )
         replacement_dates: list[datetime.date] = []
         if vehicle.replacement_cycle_years > 0:
             next_replacement = _add_months(
@@ -304,12 +292,16 @@ def simulate(
                 for loan in household.loans
                 if loan.id == vehicle.loan_id
             )
-            if vehicle.loan_id and any(loan.id == vehicle.loan_id for loan in household.loans)
+            if vehicle.loan_id
+            and any(loan.id == vehicle.loan_id for loan in household.loans)
             else 0
         )
-        settlement_dates = [*replacement_dates, datetime.date(
-            vehicle.ownership_end_year, vehicle.ownership_end_month, 1
-        )]
+        settlement_dates = [
+            *replacement_dates,
+            datetime.date(
+                vehicle.ownership_end_year, vehicle.ownership_end_month, 1
+            ),
+        ]
         for index, settlement_date in enumerate(settlement_dates):
             if financing_schedule is not None and financing_principal > 0:
                 balance = _loan_balance_at(
@@ -324,7 +316,9 @@ def simulate(
 
             replacement_date = replacement_dates[index]
             replacement_principal = vehicle.replacement_loan_principal
-            vehicle_replacement_principal[(vehicle.id, replacement_date)] = replacement_principal
+            vehicle_replacement_principal[
+                (vehicle.id, replacement_date)
+            ] = replacement_principal
             if vehicle.replacement_loan_fee > 0:
                 vehicle_loan_fees_by_date[replacement_date].append(
                     (vehicle.name, vehicle.replacement_loan_fee)
@@ -350,6 +344,431 @@ def simulate(
                 loan_repayments_by_date[repayment.date].append(
                     (f"{vehicle.name}買替ローン", repayment)
                 )
+
+    return FinancingContext(
+        loan_repayments_by_date=loan_repayments_by_date,
+        vehicle_loan_settlements_by_date=vehicle_loan_settlements_by_date,
+        vehicle_loan_fees_by_date=vehicle_loan_fees_by_date,
+        vehicle_replacement_principal=vehicle_replacement_principal,
+        vehicle_replacement_dates=vehicle_replacement_dates,
+    )
+
+
+def _record_event_expense(
+    cf: MonthlyCashflow, amount: int, expense: Expense
+) -> None:
+    """イベント支出と計算根拠を月次CFへ記録する."""
+    cf.event_expense += amount
+    if amount > 0:
+        cf.traces.append(
+            TraceEntry(
+                "ライフイベント",
+                amount,
+                {
+                    "name": expense.name,
+                    "type": expense.event_type,
+                    "周期": expense.cycle,
+                },
+            )
+        )
+
+
+def _apply_expenses(
+    household: Household,
+    current: datetime.date,
+    year: int,
+    month: int,
+    age: int,
+    assumptions: PlanAssumptions,
+    householder: Member,
+    scenario: DisasterScenario | None,
+    death_date: datetime.date | None,
+    cf: MonthlyCashflow,
+    member_alive: Callable[[Member, datetime.date], bool],
+) -> None:
+    """生活費・ライフイベントを月次CFへ反映する."""
+    for expense in household.expenses:
+        target_member = None
+        if expense.member_id is not None:
+            target_member = next(
+                (m for m in household.members if m.id == expense.member_id), None
+            )
+            if target_member is None:
+                continue
+            if not member_alive(target_member, current):
+                continue
+            if expense.start_date is None:
+                member_age = age_at(target_member.birth_date, current)
+                if member_age < expense.start_age:
+                    continue
+                if expense.end_age is not None and member_age > expense.end_age:
+                    continue
+        else:
+            # 世帯全体の支出: 世帯主年齢で判定。
+            if expense.start_date is None:
+                # start_age=0 は「基準年開始」を意味するため、年齢0以上は常に対象
+                if expense.start_age > 0 and age < expense.start_age:
+                    continue
+                if (
+                    expense.end_age is not None
+                    and expense.end_age > 0
+                    and age > expense.end_age
+                ):
+                    continue
+        if expense.start_date and current < expense.start_date:
+            continue
+        if expense.end_date and current > expense.end_date:
+            continue
+
+        years_elapsed = year - assumptions.base_year
+        raise_start_year = (
+            expense.start_date.year
+            if expense.start_date
+            else assumptions.base_year
+        )
+        raise_factor = (1 + expense.annual_raise_rate) ** max(
+            0, year - raise_start_year
+        )
+        inflation_factor = (1 + assumptions.inflation_rate) ** years_elapsed
+
+        recurring_amount = int(
+            expense.monthly_amount * raise_factor * inflation_factor
+        )
+        once_amount = int(expense.monthly_amount * inflation_factor)
+        if (
+            scenario
+            and death_date
+            and current >= death_date
+            and expense.disaster_amount is not None
+        ):
+            recurring_amount = int(expense.disaster_amount * inflation_factor)
+            once_amount = recurring_amount
+
+        if expense.cycle == "monthly" and expense.event_type == "生活費":
+            cf.living_expense += recurring_amount
+        elif expense.cycle == "monthly" or (
+            expense.cycle == "yearly" and month == expense.yearly_month
+        ):
+            _record_event_expense(cf, recurring_amount, expense)
+        elif expense.cycle == "once":
+            # 開始年月の1回のみ。対象者指定時は対象者の年齢を基準にする
+            anchor = target_member if target_member is not None else householder
+            event_date = expense.start_date or datetime.date(
+                assumptions.base_year
+                if expense.start_age == 0
+                else anchor.birth_date.year + expense.start_age,
+                expense.start_month,
+                1,
+            )
+            if current == event_date:
+                _record_event_expense(cf, once_amount, expense)
+
+
+def _apply_insurance(
+    household: Household,
+    current: datetime.date,
+    cf: MonthlyCashflow,
+    scenario: DisasterScenario | None,
+    death_date: datetime.date | None,
+    deceased: Member | None,
+    member_alive: Callable[[Member, datetime.date], bool],
+) -> None:
+    """保険料と万が一時の死亡保険金を月次CFへ反映する."""
+    for ins in household.insurances:
+        policy = InsurancePolicy(
+            name=ins.name,
+            insured_member_id=ins.insured_member_id,
+            payer_member_id=ins.payer_member_id,
+            monthly_premium=ins.monthly_premium,
+            start_date=datetime.date(ins.start_year, ins.start_month, 1),
+            end_date=datetime.date(ins.end_year, ins.end_month, 1),
+            death_benefit=ins.death_benefit,
+            surrender_value_rate=ins.surrender_value_rate,
+            insurance_type=ins.insurance_type,
+        )
+        payer = next(
+            (m for m in household.members if m.id == ins.payer_member_id), None
+        )
+        insured = next(
+            (m for m in household.members if m.id == ins.insured_member_id), None
+        )
+        # 被保険者の死亡で契約は消滅するため、以後の保険料は計上しない
+        insured_alive = insured is None or member_alive(insured, current)
+        payer_alive = payer is None or member_alive(payer, current)
+        premium = (
+            monthly_premium_in_period(policy, current)
+            if insured_alive and payer_alive
+            else 0
+        )
+        cf.insurance_premium += premium
+        if premium > 0:
+            cf.traces.append(
+                TraceEntry(
+                    "保険料",
+                    premium,
+                    {"name": ins.name, "type": ins.insurance_type},
+                )
+            )
+
+        if (
+            death_date
+            and insured
+            and deceased
+            and insured.id == deceased.id
+            and current == death_date
+        ):
+            # 保障期間内の死亡のみ保険金を支払う
+            benefit = death_benefit_if_died(policy, death_date)
+            cf.death_benefit += benefit
+            if benefit > 0 and scenario is not None:
+                cf.traces.append(
+                    TraceEntry(
+                        "死亡保険金",
+                        benefit,
+                        {"name": ins.name, "scenario": scenario.name},
+                    )
+                )
+
+
+def _apply_housing(
+    housing: OwnedHousingPlan | None,
+    current: datetime.date,
+    month: int,
+    cf: MonthlyCashflow,
+) -> None:
+    """所有住宅の頭金・固定資産税・修繕費を月次CFへ反映する."""
+    if housing is None:
+        return
+
+    purchase_date = datetime.date(
+        housing.purchase_year, housing.purchase_month, 1
+    )
+    if current < purchase_date:
+        return
+    if current == purchase_date and housing.down_payment > 0:
+        cf.housing_down_payment = housing.down_payment
+        cf.traces.append(
+            TraceEntry(
+                "住宅購入頭金",
+                housing.down_payment,
+                {
+                    "物件価格": housing.property_price,
+                    "購入年月": purchase_date.isoformat(),
+                },
+            )
+        )
+    if month != housing.purchase_month:
+        return
+    if housing.annual_property_tax > 0:
+        cf.property_tax = housing.annual_property_tax
+        cf.traces.append(
+            TraceEntry(
+                "固定資産税",
+                housing.annual_property_tax,
+                {"年額": housing.annual_property_tax},
+            )
+        )
+    if housing.annual_repair_cost > 0:
+        cf.repair_expense = housing.annual_repair_cost
+        cf.traces.append(
+            TraceEntry(
+                "住宅修繕費",
+                housing.annual_repair_cost,
+                {"年額": housing.annual_repair_cost},
+            )
+        )
+
+
+def _apply_vehicle_expenses(
+    household: Household,
+    current: datetime.date,
+    year: int,
+    month: int,
+    assumptions: PlanAssumptions,
+    cf: MonthlyCashflow,
+    vehicle_replacement_dates: dict[str, list[datetime.date]],
+    vehicle_replacement_principal: dict[tuple[str, datetime.date], int],
+) -> None:
+    """車両の購入・維持・税修繕・車検・売却を月次CFへ反映する."""
+    for vehicle in household.vehicles:
+        start_date = datetime.date(
+            vehicle.ownership_start_year, vehicle.ownership_start_month, 1
+        )
+        end_date = datetime.date(
+            vehicle.ownership_end_year, vehicle.ownership_end_month, 1
+        )
+        if not start_date <= current <= end_date:
+            continue
+
+        months_owned = (year - vehicle.ownership_start_year) * 12 + (
+            month - vehicle.ownership_start_month
+        )
+        replacement_months = (
+            vehicle.replacement_cycle_years * 12
+            if vehicle.replacement_cycle_years > 0
+            else 0
+        )
+        is_replacement = current in vehicle_replacement_dates[vehicle.id]
+        months_since_purchase = (
+            months_owned % replacement_months
+            if replacement_months > 0
+            else months_owned
+        )
+        is_end_sale = current == end_date and not is_replacement
+        inflation_factor = (1 + assumptions.inflation_rate) ** (
+            year - assumptions.base_year
+        )
+
+        if current == start_date or is_replacement:
+            purchase_amount = int(vehicle.purchase_price * inflation_factor)
+            if current == start_date and vehicle.loan_id:
+                linked_loan = next(
+                    (
+                        loan
+                        for loan in household.loans
+                        if loan.id == vehicle.loan_id
+                    ),
+                    None,
+                )
+                if linked_loan is not None:
+                    purchase_amount = max(
+                        0, purchase_amount - linked_loan.principal
+                    )
+            elif is_replacement:
+                purchase_amount = max(
+                    0,
+                    purchase_amount
+                    - vehicle_replacement_principal.get(
+                        (vehicle.id, current), 0
+                    ),
+                )
+            cf.vehicle_purchase_expense += purchase_amount
+            cf.traces.append(
+                TraceEntry(
+                    "乗り物取得価格",
+                    purchase_amount,
+                    {
+                        "乗り物": vehicle.name,
+                        "買替": is_replacement,
+                        "取得価格": int(
+                            vehicle.purchase_price * inflation_factor
+                        ),
+                        "初回ローン控除": current == start_date
+                        and bool(vehicle.loan_id),
+                        "買替ローン控除": (
+                            vehicle_replacement_principal.get(
+                                (vehicle.id, current), 0
+                            )
+                            if is_replacement
+                            else 0
+                        ),
+                    },
+                )
+            )
+            if is_replacement and vehicle.sale_price > 0:
+                sale_amount = int(vehicle.sale_price * inflation_factor)
+                cf.vehicle_sale_income += sale_amount
+                cf.traces.append(
+                    TraceEntry(
+                        "乗り物売却収入",
+                        sale_amount,
+                        {"乗り物": vehicle.name, "買替": True},
+                    )
+                )
+        elif is_end_sale and vehicle.sale_price > 0:
+            sale_amount = int(vehicle.sale_price * inflation_factor)
+            cf.vehicle_sale_income += sale_amount
+            cf.traces.append(
+                TraceEntry(
+                    "乗り物売却収入",
+                    sale_amount,
+                    {"乗り物": vehicle.name, "所有終了": True},
+                )
+            )
+
+        if vehicle.monthly_maintenance > 0:
+            amount = int(vehicle.monthly_maintenance * inflation_factor)
+            cf.vehicle_maintenance += amount
+            cf.traces.append(
+                TraceEntry(
+                    "乗り物維持費",
+                    amount,
+                    {"乗り物": vehicle.name, "月額": vehicle.monthly_maintenance},
+                )
+            )
+        if month == vehicle.ownership_start_month and vehicle.annual_tax_repair > 0:
+            amount = int(vehicle.annual_tax_repair * inflation_factor)
+            cf.vehicle_tax_repair += amount
+            cf.traces.append(
+                TraceEntry(
+                    "乗り物税金・修繕費",
+                    amount,
+                    {"乗り物": vehicle.name, "年額": vehicle.annual_tax_repair},
+                )
+            )
+        inspection_start_month = 36 if vehicle.vehicle_type == "新車" else 0
+        if vehicle.inspection_cost > 0 and months_since_purchase >= inspection_start_month:
+            inspection_cycle_months = vehicle.inspection_cycle_years * 12
+            if (
+                months_since_purchase - inspection_start_month
+            ) % inspection_cycle_months == 0:
+                cf.vehicle_inspection_expense += vehicle.inspection_cost
+                cf.traces.append(
+                    TraceEntry(
+                        "車検費用",
+                        vehicle.inspection_cost,
+                        {
+                            "乗り物": vehicle.name,
+                            "周期年数": vehicle.inspection_cycle_years,
+                        },
+                    )
+                )
+
+
+def simulate(
+    store: ParameterStore,
+    household: Household,
+    scenario: DisasterScenario | None = None,
+) -> SimulationResult:
+    """世帯の生涯キャッシュフローをシミュレーションする."""
+    if scenario is not None:
+        if scenario.death_age < 0 or scenario.death_age > 120:
+            raise ValueError("death_age must be between 0 and 120")
+        if scenario.survivor_pension_monthly < 0:
+            raise ValueError("survivor_pension_monthly must not be negative")
+        if scenario.child_allowance_monthly < 0:
+            raise ValueError("child_allowance_monthly must not be negative")
+        if scenario.child_allowance_end_age < 0:
+            raise ValueError("child_allowance_end_age must not be negative")
+        if not 0 <= scenario.living_expense_reduction_rate <= 1:
+            raise ValueError("living_expense_reduction_rate must be between 0 and 1")
+
+    assumptions = household.assumptions
+    householder = household.householder()
+
+    # シミュレーション期間: 基準年月〜世帯主の想定寿命の誕生月
+    start = datetime.date(assumptions.base_year, assumptions.base_month, 1)
+    end_year = householder.birth_date.year + householder.life_expectancy_age
+    end = datetime.date(end_year, householder.birth_date.month, 1)
+
+    # 口座残高の初期値(基準月の月初残高)
+    balances: dict[str, int] = {acc.id: acc.balance for acc in household.accounts}
+    total_balance = sum(balances.values())
+    ideco_accounts = {
+        plan.id: IdecoAccount(balance=plan.initial_balance)
+        for plan in household.ideco_plans
+    }
+    nisa_accounts = {
+        plan.id: NisaAccount(balance=plan.initial_balance)
+        for plan in household.nisa_plans
+    }
+
+    financing = _prepare_financing(household, start, end)
+    loan_repayments_by_date = financing.loan_repayments_by_date
+    vehicle_loan_settlements_by_date = financing.vehicle_loan_settlements_by_date
+    vehicle_loan_fees_by_date = financing.vehicle_loan_fees_by_date
+    vehicle_replacement_principal = financing.vehicle_replacement_principal
+    vehicle_replacement_dates = financing.vehicle_replacement_dates
 
     results: list[MonthlyCashflow] = []
 
@@ -434,20 +853,20 @@ def simulate(
                 income.retirement_age is not None
                 and member_age == income.retirement_age
                 and month == member.birth_date.month
+                and income.retirement_allowance > 0
             ):
-                if income.retirement_allowance > 0:
-                    years_of_service = income.retirement_age - income.start_age
-                    net = net_retirement_allowance(
-                        store, current, income.retirement_allowance, years_of_service
-                    )
-                    cf.retirement_income += net
-                    cf.traces.append(
-                        TraceEntry("退職金(手取り)", net, {
-                            "member": member.name,
-                            "額面": income.retirement_allowance,
-                            "勤続年数": years_of_service,
-                        })
-                    )
+                years_of_service = income.retirement_age - income.start_age
+                net = net_retirement_allowance(
+                    store, current, income.retirement_allowance, years_of_service
+                )
+                cf.retirement_income += net
+                cf.traces.append(
+                    TraceEntry("退職金(手取り)", net, {
+                        "member": member.name,
+                        "額面": income.retirement_allowance,
+                        "勤続年数": years_of_service,
+                    })
+                )
         cf.salary_income = monthly_salary_total
 
         # --- 年金 ---
@@ -669,222 +1088,31 @@ def simulate(
             )
 
         # --- 支出 ---
-        # Q6所有住宅: 頭金は購入月、固定資産税・修繕費は購入後の購入月に年1回計上。
-        housing = household.owned_housing
-        if housing is not None:
-            purchase_date = datetime.date(housing.purchase_year, housing.purchase_month, 1)
-            if current >= purchase_date:
-                if current == purchase_date and housing.down_payment > 0:
-                    cf.housing_down_payment = housing.down_payment
-                    cf.traces.append(
-                        TraceEntry(
-                            "住宅購入頭金",
-                            housing.down_payment,
-                            {
-                                "物件価格": housing.property_price,
-                                "購入年月": purchase_date.isoformat(),
-                            },
-                        )
-                    )
-                if month == housing.purchase_month:
-                    if housing.annual_property_tax > 0:
-                        cf.property_tax = housing.annual_property_tax
-                        cf.traces.append(
-                            TraceEntry(
-                                "固定資産税",
-                                housing.annual_property_tax,
-                                {"年額": housing.annual_property_tax},
-                            )
-                        )
-                    if housing.annual_repair_cost > 0:
-                        cf.repair_expense = housing.annual_repair_cost
-                        cf.traces.append(
-                            TraceEntry(
-                                "住宅修繕費",
-                                housing.annual_repair_cost,
-                                {"年額": housing.annual_repair_cost},
-                            )
-                        )
+        _apply_housing(household.owned_housing, current, month, cf)
+        _apply_vehicle_expenses(
+            household=household,
+            current=current,
+            year=year,
+            month=month,
+            assumptions=assumptions,
+            cf=cf,
+            vehicle_replacement_dates=vehicle_replacement_dates,
+            vehicle_replacement_principal=vehicle_replacement_principal,
+        )
 
-        # Q7乗り物: FP-UNIV方式で初回購入/買替/維持費/税修繕/車検/売却を計上。
-        for vehicle in household.vehicles:
-            start_date = datetime.date(
-                vehicle.ownership_start_year, vehicle.ownership_start_month, 1
-            )
-            end_date = datetime.date(
-                vehicle.ownership_end_year, vehicle.ownership_end_month, 1
-            )
-            if not start_date <= current <= end_date:
-                continue
-
-            months_owned = (year - vehicle.ownership_start_year) * 12 + (
-                month - vehicle.ownership_start_month
-            )
-            replacement_months = (
-                vehicle.replacement_cycle_years * 12
-                if vehicle.replacement_cycle_years > 0
-                else 0
-            )
-            is_replacement = current in vehicle_replacement_dates[vehicle.id]
-            months_since_purchase = (
-                months_owned % replacement_months if replacement_months > 0 else months_owned
-            )
-            is_end_sale = current == end_date and not is_replacement
-            inflation_factor = (1 + assumptions.inflation_rate) ** (year - assumptions.base_year)
-
-            if current == start_date or is_replacement:
-                purchase_amount = int(vehicle.purchase_price * inflation_factor)
-                if current == start_date and vehicle.loan_id:
-                    linked_loan = next(
-                        (loan for loan in household.loans if loan.id == vehicle.loan_id), None
-                    )
-                    if linked_loan is not None:
-                        purchase_amount = max(0, purchase_amount - linked_loan.principal)
-                elif is_replacement:
-                    purchase_amount = max(
-                        0,
-                        purchase_amount
-                        - vehicle_replacement_principal.get((vehicle.id, current), 0),
-                    )
-                cf.vehicle_purchase_expense += purchase_amount
-                cf.traces.append(
-                    TraceEntry(
-                        "乗り物取得価格",
-                        purchase_amount,
-                        {
-                            "乗り物": vehicle.name,
-                            "買替": is_replacement,
-                            "取得価格": int(vehicle.purchase_price * inflation_factor),
-                            "初回ローン控除": current == start_date and bool(vehicle.loan_id),
-                            "買替ローン控除": (
-                                vehicle_replacement_principal.get((vehicle.id, current), 0)
-                                if is_replacement
-                                else 0
-                            ),
-                        },
-                    )
-                )
-                if is_replacement and vehicle.sale_price > 0:
-                    sale_amount = int(vehicle.sale_price * inflation_factor)
-                    cf.vehicle_sale_income += sale_amount
-                    cf.traces.append(
-                        TraceEntry(
-                            "乗り物売却収入",
-                            sale_amount,
-                            {"乗り物": vehicle.name, "買替": True},
-                        )
-                    )
-            elif is_end_sale and vehicle.sale_price > 0:
-                sale_amount = int(vehicle.sale_price * inflation_factor)
-                cf.vehicle_sale_income += sale_amount
-                cf.traces.append(
-                    TraceEntry(
-                        "乗り物売却収入",
-                        sale_amount,
-                        {"乗り物": vehicle.name, "所有終了": True},
-                    )
-                )
-
-            if vehicle.monthly_maintenance > 0:
-                amount = int(vehicle.monthly_maintenance * inflation_factor)
-                cf.vehicle_maintenance += amount
-                cf.traces.append(
-                    TraceEntry("乗り物維持費", amount, {"乗り物": vehicle.name, "月額": vehicle.monthly_maintenance})
-                )
-            if month == vehicle.ownership_start_month and vehicle.annual_tax_repair > 0:
-                amount = int(vehicle.annual_tax_repair * inflation_factor)
-                cf.vehicle_tax_repair += amount
-                cf.traces.append(
-                    TraceEntry("乗り物税金・修繕費", amount, {"乗り物": vehicle.name, "年額": vehicle.annual_tax_repair})
-                )
-            inspection_start_month = 36 if vehicle.vehicle_type == "新車" else 0
-            if vehicle.inspection_cost > 0 and months_since_purchase >= inspection_start_month:
-                inspection_cycle_months = vehicle.inspection_cycle_years * 12
-                if (months_since_purchase - inspection_start_month) % inspection_cycle_months == 0:
-                    cf.vehicle_inspection_expense += vehicle.inspection_cost
-                    cf.traces.append(
-                        TraceEntry(
-                            "車検費用",
-                            vehicle.inspection_cost,
-                            {"乗り物": vehicle.name, "周期年数": vehicle.inspection_cycle_years},
-                        )
-                    )
-
-        for expense in household.expenses:
-                target_member = None
-                if expense.member_id is not None:
-                    target_member = next(
-                        (m for m in household.members if m.id == expense.member_id), None
-                    )
-                    if target_member is None:
-                        continue
-                    if not member_alive(target_member, current):
-                        continue
-                    if expense.start_date is None:
-                        member_age = age_at(target_member.birth_date, current)
-                        if member_age < expense.start_age:
-                            continue
-                        if expense.end_age is not None and member_age > expense.end_age:
-                            continue
-                else:
-                    # 世帯全体の支出: 世帯主年齢で判定。
-                    if expense.start_date is None:
-                        # start_age=0 は「基準年開始」を意味するため、年齢0以上は常に対象
-                        if expense.start_age > 0 and age < expense.start_age:
-                            continue
-                        if expense.end_age is not None and expense.end_age > 0 and age > expense.end_age:
-                            continue
-                if expense.start_date and current < expense.start_date:
-                    continue
-                if expense.end_date and current > expense.end_date:
-                    continue
-
-                years_elapsed = year - assumptions.base_year
-                raise_start_year = (
-                    expense.start_date.year
-                    if expense.start_date
-                    else assumptions.base_year
-                )
-                raise_factor = (1 + expense.annual_raise_rate) ** max(
-                    0, year - raise_start_year
-                )
-                inflation_factor = (1 + assumptions.inflation_rate) ** years_elapsed
-
-                recurring_amount = int(expense.monthly_amount * raise_factor * inflation_factor)
-                once_amount = int(expense.monthly_amount * inflation_factor)
-                if scenario and death_date and current >= death_date and expense.disaster_amount is not None:
-                    recurring_amount = int(expense.disaster_amount * inflation_factor)
-                    once_amount = recurring_amount
-
-                def add_event_expense(amount: int, expense: Expense = expense) -> None:
-                    cf.event_expense += amount
-                    if amount > 0:
-                        cf.traces.append(
-                            TraceEntry(
-                                "ライフイベント",
-                                amount,
-                                {"name": expense.name, "type": expense.event_type, "周期": expense.cycle},
-                            )
-                        )
-
-                if expense.cycle == "monthly" and expense.event_type == "生活費":
-                    cf.living_expense += recurring_amount
-                elif expense.cycle == "monthly":
-                    add_event_expense(recurring_amount)
-                elif expense.cycle == "yearly" and month == expense.yearly_month:
-                    add_event_expense(recurring_amount)
-                elif expense.cycle == "once":
-                    # 開始年月の1回のみ。対象者指定時は対象者の年齢を基準にする
-                    anchor = target_member if target_member is not None else householder
-                    event_date = expense.start_date or datetime.date(
-                        assumptions.base_year
-                        if expense.start_age == 0
-                        else anchor.birth_date.year + expense.start_age,
-                        expense.start_month,
-                        1,
-                    )
-                    if current == event_date:
-                        add_event_expense(once_amount)
+        _apply_expenses(
+            household=household,
+            current=current,
+            year=year,
+            month=month,
+            age=age,
+            assumptions=assumptions,
+            householder=householder,
+            scenario=scenario,
+            death_date=death_date,
+            cf=cf,
+            member_alive=member_alive,
+        )
 
         if (
             scenario
@@ -928,47 +1156,15 @@ def simulate(
                 )
 
         # --- 保険 ---
-        for ins in household.insurances:
-            policy = InsurancePolicy(
-                name=ins.name,
-                insured_member_id=ins.insured_member_id,
-                payer_member_id=ins.payer_member_id,
-                monthly_premium=ins.monthly_premium,
-                start_date=datetime.date(ins.start_year, ins.start_month, 1),
-                end_date=datetime.date(ins.end_year, ins.end_month, 1),
-                death_benefit=ins.death_benefit,
-                surrender_value_rate=ins.surrender_value_rate,
-                insurance_type=ins.insurance_type,
-            )
-            payer = next((m for m in household.members if m.id == ins.payer_member_id), None)
-            insured = next((m for m in household.members if m.id == ins.insured_member_id), None)
-            # 被保険者の死亡で契約は消滅するため、以後の保険料は計上しない
-            insured_alive = insured is None or member_alive(insured, current)
-            payer_alive = payer is None or member_alive(payer, current)
-            premium = (
-                monthly_premium_in_period(policy, current)
-                if insured_alive and payer_alive
-                else 0
-            )
-            cf.insurance_premium += premium
-            if premium > 0:
-                cf.traces.append(
-                    TraceEntry("保険料", premium, {"name": ins.name, "type": ins.insurance_type})
-                )
-
-            if (
-                death_date
-                and insured
-                and insured.id == deceased.id
-                and current == death_date
-            ):
-                # 保障期間内の死亡のみ保険金を支払う
-                benefit = death_benefit_if_died(policy, death_date)
-                cf.death_benefit += benefit
-                if benefit > 0:
-                    cf.traces.append(
-                        TraceEntry("死亡保険金", benefit, {"name": ins.name, "scenario": scenario.name})
-                    )
+        _apply_insurance(
+            household=household,
+            current=current,
+            cf=cf,
+            scenario=scenario,
+            death_date=death_date,
+            deceased=deceased,
+            member_alive=member_alive,
+        )
 
         # --- iDeCo ---
         for ideco in household.ideco_plans:
