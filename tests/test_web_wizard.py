@@ -130,6 +130,21 @@ async def test_create_household_and_full_flow(client: AsyncClient) -> None:
     assert "最低貯蓄残高" in r.text
     assert "年次比較" in r.text
 
+    # 保存済みプラン同士を比較
+    from fp_simulator.db.database import get_household, save_plan_snapshot
+
+    current = await get_household(household_id)
+    plan_a = await save_plan_snapshot(household_id, current, "保存基準")
+    plan_b = await save_plan_snapshot(household_id, current, "保存変更")
+    r = await client.get(
+        f"/households/{household_id}/compare"
+        f"?plan_a_id={plan_a['id']}&plan_b_id={plan_b['id']}"
+    )
+    assert r.status_code == 200
+    assert "保存基準" in r.text
+    assert "保存変更" in r.text
+    assert "保存済みプランを比較" in r.text
+
     # 万が一シナリオ
     r = await client.get(f"/households/{household_id}/disaster")
     assert r.status_code == 200

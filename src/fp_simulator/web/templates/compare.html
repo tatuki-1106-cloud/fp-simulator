@@ -5,6 +5,32 @@
 {{ lifemap(household) }}
 
 <form method="get" class="form-card">
+  <h2>保存済みプランを比較</h2>
+  <p>
+    <label>比較元:
+      <select name="plan_a_id" required>
+        <option value="">選択してください</option>
+        {% for plan in saved_plans %}
+        <option value="{{ plan.id }}" {% if plan_a_id == plan.id %}selected{% endif %}>{{ plan.name }}</option>
+        {% endfor %}
+      </select>
+    </label>
+  </p>
+  <p>
+    <label>比較先:
+      <select name="plan_b_id" required>
+        <option value="">選択してください</option>
+        {% for plan in saved_plans %}
+        <option value="{{ plan.id }}" {% if plan_b_id == plan.id %}selected{% endif %}>{{ plan.name }}</option>
+        {% endfor %}
+      </select>
+    </label>
+  </p>
+  <button type="submit">保存プランを比較</button>
+</form>
+
+{% if not plan_a_id and not plan_b_id %}
+<form method="get" class="form-card">
   <h2>比較条件</h2>
   <p>
     <label>変更プラン名:
@@ -25,6 +51,7 @@
   </p>
   <button type="submit">再計算</button>
 </form>
+{% endif %}
 
 <h2>サマリー比較</h2>
 <table>

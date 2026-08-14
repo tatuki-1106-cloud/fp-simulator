@@ -700,22 +700,34 @@ async def simulate_result(
 async def compare_plans(
     request: Request,
     household_id: str,
+    plan_a_id: str | None = None,
+    plan_b_id: str | None = None,
     alternative_name: str = "変更プラン",
     alternative_inflation_rate: float = 0.0,
     alternative_investment_return_rate: float = 0.0,
 ) -> HTMLResponse:
-    """現行プランと前提を変更したプランを並べて比較."""
+    """保存済みプラン、または現行プランと変更条件を並べて比較."""
     household = await get_household(household_id)
     if household is None:
         return RedirectResponse("/", status_code=303)
 
     from fp_simulator.engine.cashflow import simulate
 
-    baseline_result = simulate(get_store(), household)
-    alternative = household.model_copy(deep=True)
-    alternative.name = alternative_name.strip() or "変更プラン"
-    alternative.assumptions.inflation_rate = alternative_inflation_rate
-    alternative.assumptions.investment_return_rate = alternative_investment_return_rate
+    saved_plans = await list_plans(household_id)
+    selected_a = await get_plan(household_id, plan_a_id) if plan_a_id else None
+    selected_b = await get_plan(household_id, plan_b_id) if plan_b_id else None
+    if (plan_a_id and selected_a is None) or (plan_b_id and selected_b is None):
+        return RedirectResponse(f"/households/{household_id}/compare", status_code=303)
+
+    baseline = selected_a or household
+    alternative = selected_b
+    if alternative is None:
+        alternative = household.model_copy(deep=True)
+        alternative.name = alternative_name.strip() or "変更プラン"
+        alternative.assumptions.inflation_rate = alternative_inflation_rate
+        alternative.assumptions.investment_return_rate = alternative_investment_return_rate
+
+    baseline_result = simulate(get_store(), baseline)
     alternative_result = simulate(get_store(), alternative)
 
     def metrics(result) -> dict:
@@ -748,16 +760,19 @@ async def compare_plans(
         {
             "title": "プラン比較",
             "household": household,
+            "saved_plans": saved_plans,
+            "plan_a_id": plan_a_id or "",
+            "plan_b_id": plan_b_id or "",
             "baseline": {
-                "name": "現行プラン",
-                "inflation_rate": household.assumptions.inflation_rate,
-                "investment_return_rate": household.assumptions.investment_return_rate,
+                "name": baseline.name,
+                "inflation_rate": baseline.assumptions.inflation_rate,
+                "investment_return_rate": baseline.assumptions.investment_return_rate,
                 **baseline_metrics,
             },
             "alternative": {
                 "name": alternative.name,
-                "inflation_rate": alternative_inflation_rate,
-                "investment_return_rate": alternative_investment_return_rate,
+                "inflation_rate": alternative.assumptions.inflation_rate,
+                "investment_return_rate": alternative.assumptions.investment_return_rate,
                 **alternative_metrics,
             },
             "years": years,

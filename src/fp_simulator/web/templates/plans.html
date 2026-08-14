@@ -17,6 +17,9 @@
 
 <section class="card">
   <h2>保存履歴</h2>
+  {% if plans|length >= 2 %}
+  <p><a href="/households/{{ household.id }}/compare">保存済みプラン同士を比較する</a></p>
+  {% endif %}
   {% if plans %}
   <div class="table-wrap">
     <table>
