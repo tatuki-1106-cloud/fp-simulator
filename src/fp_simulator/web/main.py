@@ -760,6 +760,11 @@ async def vehicles_add(
     inspection_cost: int = Form(0),
     inspection_cycle_years: int = Form(2),
     loan_id: str = Form(""),
+    replacement_loan_principal: int = Form(0),
+    replacement_loan_annual_rate: float = Form(0.0),
+    replacement_loan_years: int = Form(0),
+    replacement_loan_fee: int = Form(0),
+    replacement_loan_repayment_type: str = Form("元利均等"),
 ) -> Response:
     """乗り物を追加."""
     household = await get_household(household_id)
@@ -778,9 +783,18 @@ async def vehicles_add(
             replacement_cycle_years,
             sale_price,
             inspection_cost,
+            replacement_loan_principal,
+            replacement_loan_years,
+            replacement_loan_fee,
         )
     ):
         return Response("vehicle amounts must not be negative", status_code=400)
+    if replacement_loan_annual_rate < 0:
+        return Response("replacement_loan_annual_rate must not be negative", status_code=400)
+    if replacement_loan_repayment_type not in {"元利均等", "元金均等"}:
+        return Response("replacement_loan_repayment_type is invalid", status_code=400)
+    if replacement_loan_principal > 0 and replacement_loan_years <= 0:
+        return Response("replacement_loan_years is required when replacement loan is used", status_code=400)
     if not 1900 <= ownership_start_year <= 2200 or not 1900 <= ownership_end_year <= 2200:
         return Response("ownership year is invalid", status_code=400)
     if not 1 <= ownership_start_month <= 12 or not 1 <= ownership_end_month <= 12:
@@ -809,6 +823,11 @@ async def vehicles_add(
             inspection_cost=inspection_cost,
             inspection_cycle_years=inspection_cycle_years,
             loan_id=loan_id or None,
+            replacement_loan_principal=replacement_loan_principal,
+            replacement_loan_annual_rate=replacement_loan_annual_rate,
+            replacement_loan_years=replacement_loan_years,
+            replacement_loan_fee=replacement_loan_fee,
+            replacement_loan_repayment_type=replacement_loan_repayment_type,
         )
     )
     await save_household(household)

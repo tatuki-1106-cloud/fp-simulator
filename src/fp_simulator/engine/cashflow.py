@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import datetime
+from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -32,6 +33,7 @@ from fp_simulator.engine.pension import PensionRecord, total_pension
 from fp_simulator.engine.retirement import net_retirement_allowance
 from fp_simulator.engine.dependency import calc_deductions_for_household, age_at_year_end, age_at
 from fp_simulator.engine.investment import IdecoAccount, NisaAccount, withdrawal_amount
+from fp_simulator.engine.loan import LoanTerms, MonthlyRepayment, loan_schedule
 
 
 @dataclass
@@ -173,6 +175,18 @@ def _add_months(date: datetime.date, months: int) -> datetime.date:
     return datetime.date(total // 12, total % 12 + 1, 1)
 
 
+def _loan_balance_at(
+    schedule: list[MonthlyRepayment], principal: int, target: datetime.date
+) -> int:
+    """指定月の返済後残高を返す."""
+    balance = principal
+    for repayment in schedule:
+        if repayment.date > target:
+            break
+        balance = repayment.balance
+    return balance
+
+
 def simulate(
     store: ParameterStore,
     household: Household,
@@ -210,6 +224,121 @@ def simulate(
         plan.id: NisaAccount(balance=plan.initial_balance)
         for plan in household.nisa_plans
     }
+
+    loan_repayments_by_date: defaultdict[
+        datetime.date, list[tuple[str, MonthlyRepayment]]
+    ] = defaultdict(list)
+    vehicle_loan_settlements_by_date: defaultdict[
+        datetime.date, list[tuple[str, int]]
+    ] = defaultdict(list)
+    vehicle_loan_fees_by_date: defaultdict[datetime.date, list[tuple[str, int]]] = defaultdict(list)
+    vehicle_replacement_principal: dict[tuple[str, datetime.date], int] = {}
+    vehicle_replacement_dates: dict[str, list[datetime.date]] = {}
+    loan_stop_dates: dict[str, datetime.date] = {}
+    loan_schedules: dict[str, list[MonthlyRepayment]] = {}
+
+    for vehicle in household.vehicles:
+        start_date = datetime.date(
+            vehicle.ownership_start_year, vehicle.ownership_start_month, 1
+        )
+        end_date = datetime.date(vehicle.ownership_end_year, vehicle.ownership_end_month, 1)
+        replacement_dates: list[datetime.date] = []
+        if vehicle.replacement_cycle_years > 0:
+            next_replacement = _add_months(
+                start_date, vehicle.replacement_cycle_years * 12
+            )
+            while next_replacement < end_date:
+                replacement_dates.append(next_replacement)
+                next_replacement = _add_months(
+                    next_replacement, vehicle.replacement_cycle_years * 12
+                )
+        vehicle_replacement_dates[vehicle.id] = replacement_dates
+        if vehicle.loan_id:
+            loan_stop_dates[vehicle.loan_id] = min(
+                loan_stop_dates.get(vehicle.loan_id, end_date),
+                replacement_dates[0] if replacement_dates else end_date,
+            )
+
+    for loan in household.loans:
+        terms = LoanTerms(
+            principal=loan.principal,
+            annual_rate=loan.annual_rate,
+            years=loan.years,
+            repayment_type=loan.repayment_type,
+            is_variable_rate=loan.is_variable_rate,
+            bonus_amount=loan.bonus_amount,
+            bonus_months=loan.bonus_months,
+            deferment_months=loan.deferment_months,
+            start_date=datetime.date(loan.start_year, loan.start_month, 1),
+        )
+        early = [
+            (datetime.date(y, m, 1), amount, repayment_type)
+            for y, m, amount, repayment_type in loan.early_repayments
+        ]
+        schedule = loan_schedule(terms, early)
+        loan_schedules[loan.id] = schedule
+        stop_date = loan_stop_dates.get(loan.id, end)
+        for repayment in schedule:
+            if start <= repayment.date <= end and repayment.date <= stop_date:
+                loan_repayments_by_date[repayment.date].append((loan.name, repayment))
+
+    for vehicle in household.vehicles:
+        replacement_dates = vehicle_replacement_dates[vehicle.id]
+        financing_schedule = (
+            loan_schedules.get(vehicle.loan_id) if vehicle.loan_id else None
+        )
+        financing_principal = (
+            next(
+                loan.principal
+                for loan in household.loans
+                if loan.id == vehicle.loan_id
+            )
+            if vehicle.loan_id and any(loan.id == vehicle.loan_id for loan in household.loans)
+            else 0
+        )
+        settlement_dates = [*replacement_dates, datetime.date(
+            vehicle.ownership_end_year, vehicle.ownership_end_month, 1
+        )]
+        for index, settlement_date in enumerate(settlement_dates):
+            if financing_schedule is not None and financing_principal > 0:
+                balance = _loan_balance_at(
+                    financing_schedule, financing_principal, settlement_date
+                )
+                if balance > 0:
+                    vehicle_loan_settlements_by_date[settlement_date].append(
+                        (vehicle.name, balance)
+                    )
+            if index >= len(replacement_dates):
+                break
+
+            replacement_date = replacement_dates[index]
+            replacement_principal = vehicle.replacement_loan_principal
+            vehicle_replacement_principal[(vehicle.id, replacement_date)] = replacement_principal
+            if vehicle.replacement_loan_fee > 0:
+                vehicle_loan_fees_by_date[replacement_date].append(
+                    (vehicle.name, vehicle.replacement_loan_fee)
+                )
+            if replacement_principal <= 0 or vehicle.replacement_loan_years <= 0:
+                financing_schedule = None
+                financing_principal = 0
+                continue
+
+            replacement_terms = LoanTerms(
+                principal=replacement_principal,
+                annual_rate=vehicle.replacement_loan_annual_rate,
+                years=vehicle.replacement_loan_years,
+                repayment_type=vehicle.replacement_loan_repayment_type,
+                start_date=replacement_date,
+            )
+            financing_schedule = loan_schedule(replacement_terms)
+            financing_principal = replacement_principal
+            next_settlement = settlement_dates[index + 1]
+            for repayment in financing_schedule:
+                if repayment.date > next_settlement:
+                    break
+                loan_repayments_by_date[repayment.date].append(
+                    (f"{vehicle.name}買替ローン", repayment)
+                )
 
     results: list[MonthlyCashflow] = []
 
@@ -494,38 +623,39 @@ def simulate(
             cf.traces.append(TraceEntry("住民税", cf.resident_tax, {"前年所得課税": True}))
 
         # --- ローン返済 ---
-        for loan in household.loans:
-                from fp_simulator.engine.loan import LoanTerms, loan_schedule
-
-                terms = LoanTerms(
-                    principal=loan.principal,
-                    annual_rate=loan.annual_rate,
-                    years=loan.years,
-                    repayment_type=loan.repayment_type,
-                    is_variable_rate=loan.is_variable_rate,
-                    bonus_amount=loan.bonus_amount,
-                    bonus_months=loan.bonus_months,
-                    deferment_months=loan.deferment_months,
-                    start_date=datetime.date(loan.start_year, loan.start_month, 1),
+        for loan_name, repayment in loan_repayments_by_date.get(current, []):
+            cf.loan_payment += repayment.payment
+            cf.loan_interest += repayment.interest_part
+            cf.traces.append(
+                TraceEntry(
+                    "ローン返済",
+                    repayment.payment,
+                    {
+                        "loan": loan_name,
+                        "元金": repayment.principal_part,
+                        "利息": repayment.interest_part,
+                        "残高": repayment.balance,
+                    },
                 )
-                early = [
-                    (datetime.date(y, m, 1), amt, typ) for y, m, amt, typ in loan.early_repayments
-                ]
-                schedule = loan_schedule(terms, early)
-                schedule_map = {r.date: r for r in schedule}
-
-                if current in schedule_map:
-                    repayment = schedule_map[current]
-                    cf.loan_payment += repayment.payment
-                    cf.loan_interest += repayment.interest_part
-                    cf.traces.append(
-                        TraceEntry("ローン返済", repayment.payment, {
-                            "loan": loan.name,
-                            "元金": repayment.principal_part,
-                            "利息": repayment.interest_part,
-                            "残高": repayment.balance,
-                        })
-                    )
+            )
+        for vehicle_name, settlement in vehicle_loan_settlements_by_date.get(current, []):
+            cf.loan_payment += settlement
+            cf.traces.append(
+                TraceEntry(
+                    "車両ローン残債精算",
+                    settlement,
+                    {"乗り物": vehicle_name, "買替・売却時": True},
+                )
+            )
+        for vehicle_name, fee in vehicle_loan_fees_by_date.get(current, []):
+            cf.loan_payment += fee
+            cf.traces.append(
+                TraceEntry(
+                    "車両ローン手数料",
+                    fee,
+                    {"乗り物": vehicle_name, "買替時": True},
+                )
+            )
 
         # --- 支出 ---
         # Q6所有住宅: 頭金は購入月、固定資産税・修繕費は購入後の購入月に年1回計上。
@@ -584,7 +714,7 @@ def simulate(
                 if vehicle.replacement_cycle_years > 0
                 else 0
             )
-            is_replacement = replacement_months > 0 and months_owned > 0 and months_owned % replacement_months == 0
+            is_replacement = current in vehicle_replacement_dates[vehicle.id]
             months_since_purchase = (
                 months_owned % replacement_months if replacement_months > 0 else months_owned
             )
@@ -599,6 +729,12 @@ def simulate(
                     )
                     if linked_loan is not None:
                         purchase_amount = max(0, purchase_amount - linked_loan.principal)
+                elif is_replacement:
+                    purchase_amount = max(
+                        0,
+                        purchase_amount
+                        - vehicle_replacement_principal.get((vehicle.id, current), 0),
+                    )
                 cf.vehicle_purchase_expense += purchase_amount
                 cf.traces.append(
                     TraceEntry(
@@ -609,6 +745,11 @@ def simulate(
                             "買替": is_replacement,
                             "取得価格": int(vehicle.purchase_price * inflation_factor),
                             "初回ローン控除": current == start_date and bool(vehicle.loan_id),
+                            "買替ローン控除": (
+                                vehicle_replacement_principal.get((vehicle.id, current), 0)
+                                if is_replacement
+                                else 0
+                            ),
                         },
                     )
                 )

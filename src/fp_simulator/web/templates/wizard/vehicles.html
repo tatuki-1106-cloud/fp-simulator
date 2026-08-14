@@ -9,7 +9,7 @@
   <p>FP-UNIV準拠で、所有期間中の購入・維持費・税金/修繕費・車検・買替を計算します。買替時は売却額を収入、次の取得価格を支出に計上します。</p>
   {% if household.vehicles %}
   <table>
-    <thead><tr><th>名称</th><th>所有期間</th><th>取得価格</th><th>維持費/月</th><th>買替周期</th><th>売却額</th><th></th></tr></thead>
+    <thead><tr><th>名称</th><th>所有期間</th><th>取得価格</th><th>維持費/月</th><th>買替周期</th><th>売却額</th><th>買替ローン</th><th></th></tr></thead>
     <tbody>
     {% for vehicle in household.vehicles %}
     <tr>
@@ -19,6 +19,7 @@
       <td>{{ "{:,}".format(vehicle.monthly_maintenance) }}円</td>
       <td>{{ vehicle.replacement_cycle_years or "なし" }}{% if vehicle.replacement_cycle_years %}年{% endif %}</td>
       <td>{{ "{:,}".format(vehicle.sale_price) }}円</td>
+      <td>{{ "{:,}".format(vehicle.replacement_loan_principal) }}円{% if vehicle.replacement_loan_years %} / {{ vehicle.replacement_loan_years }}年{% endif %}</td>
       <td><form method="post" action="/households/{{ household.id }}/vehicles/{{ vehicle.id }}/delete"><button type="submit">削除</button></form></td>
     </tr>
     {% endfor %}
@@ -53,6 +54,17 @@
     </select>
   </label></p>
   <p><small>初回購入のみ、取得価格から選択したQ9ローンの借入額を差し引きます。ローン返済はQ9で計上されます。</small></p>
+  <p><label>買替時の借入額: <input type="number" name="replacement_loan_principal" min="0" value="0"></label>円</p>
+  <p><label>買替ローン年利: <input type="number" name="replacement_loan_annual_rate" min="0" step="0.001" value="0"></label>
+     <label>返済期間: <input type="number" name="replacement_loan_years" min="0" value="0"></label>年</p>
+  <p><label>買替ローン手数料: <input type="number" name="replacement_loan_fee" min="0" value="0"></label>円
+     <label>返済方式:
+       <select name="replacement_loan_repayment_type">
+         <option value="元利均等">元利均等</option>
+         <option value="元金均等">元金均等</option>
+       </select>
+     </label></p>
+  <p><small>買替時に同じ条件のローンを自動作成します。既存ローンは買替月に残債を精算し、以後の返済を停止します。</small></p>
   <p><button type="submit">追加</button></p>
 </form>
 {% endblock %}

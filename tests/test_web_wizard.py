@@ -148,12 +148,18 @@ async def test_create_household_and_full_flow(client: AsyncClient) -> None:
             "sale_price": 500000,
             "inspection_cost": 100000,
             "inspection_cycle_years": 2,
+            "replacement_loan_principal": 1000000,
+            "replacement_loan_annual_rate": 0.01,
+            "replacement_loan_years": 2,
+            "replacement_loan_fee": 20000,
+            "replacement_loan_repayment_type": "元利均等",
         },
     )
     assert vehicle_response.status_code == 303
     r = await client.get(f"/households/{household_id}/vehicles")
     assert r.status_code == 200
     assert "ファミリーカー" in r.text
+    assert "1,000,000円" in r.text
 
     # Q8ライフイベントを追加・表示・削除
     event_response = await client.post(

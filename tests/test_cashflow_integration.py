@@ -418,6 +418,50 @@ class TestCashflowIntegration:
                 ownership_end_year=2029,
             )
 
+    def test_vehicle_replacement_financing_settles_old_loan(
+        self, store, household: Household
+    ) -> None:
+        """買替月に旧ローン残債を精算し、買替ローンを開始する."""
+        household.loans.append(
+            Loan(
+                id="long-car-loan",
+                member_id="husband",
+                principal=500_000,
+                annual_rate=0.01,
+                years=5,
+                start_year=2026,
+                start_month=1,
+            )
+        )
+        household.vehicles.append(
+            Vehicle(
+                id="financed-car",
+                name="買替カー",
+                ownership_start_year=2026,
+                ownership_end_year=2032,
+                purchase_price=2_000_000,
+                replacement_cycle_years=3,
+                sale_price=500_000,
+                loan_id="long-car-loan",
+                replacement_loan_principal=1_000_000,
+                replacement_loan_years=2,
+                replacement_loan_fee=20_000,
+            )
+        )
+        result = simulate(store, household)
+        replacement = next(m for m in result.monthly if m.date == datetime.date(2029, 1, 1))
+
+        assert replacement.vehicle_purchase_expense == 1_000_000
+        assert replacement.vehicle_sale_income == 500_000
+        assert replacement.loan_payment > 20_000
+        assert any(trace.item == "車両ローン残債精算" for trace in replacement.traces)
+        assert any(trace.item == "車両ローン手数料" for trace in replacement.traces)
+        assert any(
+            trace.basis.get("loan") == "買替カー買替ローン"
+            for trace in replacement.traces
+            if trace.item == "ローン返済"
+        )
+
     def test_life_event_uses_event_expense_and_disaster_amount(
         self, store, household: Household
     ) -> None:

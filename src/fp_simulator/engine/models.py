@@ -154,6 +154,11 @@ class Vehicle(BaseModel):
     inspection_cost: int = Field(default=0, ge=0)  # 車検費用
     inspection_cycle_years: int = Field(default=2, ge=1, le=10)
     loan_id: str | None = None  # 初回購入に紐づくQ9ローン
+    replacement_loan_principal: int = Field(default=0, ge=0)  # 買替時の借入額
+    replacement_loan_annual_rate: float = Field(default=0.0, ge=0)  # 買替ローン年利
+    replacement_loan_years: int = Field(default=0, ge=0)  # 0=買替ローンなし
+    replacement_loan_fee: int = Field(default=0, ge=0)  # 買替ローン手数料
+    replacement_loan_repayment_type: Literal["元利均等", "元金均等"] = "元利均等"
 
     @model_validator(mode="after")
     def validate_period(self) -> Vehicle:
@@ -161,6 +166,8 @@ class Vehicle(BaseModel):
         end = (self.ownership_end_year, self.ownership_end_month)
         if end < start:
             raise ValueError("ownership_end must not precede ownership_start")
+        if self.replacement_loan_principal > 0 and self.replacement_loan_years <= 0:
+            raise ValueError("replacement_loan_years is required when replacement loan is used")
         return self
 
 
