@@ -39,12 +39,26 @@ CREATE TABLE IF NOT EXISTS plans (
 );
 """
 
+CREATE_AUDIT_LOGS_TABLE = """
+CREATE TABLE IF NOT EXISTS audit_logs (
+    id TEXT PRIMARY KEY,
+    household_id TEXT NOT NULL,
+    actor TEXT NOT NULL,
+    source TEXT NOT NULL,
+    operation TEXT NOT NULL,
+    target_id TEXT,
+    details TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+"""
+
 
 async def init_db() -> None:
     """テーブルを初期化."""
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(CREATE_TABLE)
         await db.execute(CREATE_PLANS_TABLE)
+        await db.execute(CREATE_AUDIT_LOGS_TABLE)
         await db.commit()
 
 
@@ -125,6 +139,7 @@ async def delete_household(household_id: str) -> None:
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("DELETE FROM households WHERE id = ?", (household_id,))
         await db.execute("DELETE FROM plans WHERE household_id = ?", (household_id,))
+        await db.execute("DELETE FROM audit_logs WHERE household_id = ?", (household_id,))
         await db.commit()
 
 
@@ -210,3 +225,59 @@ async def delete_plan(household_id: str, plan_id: str) -> None:
             (plan_id, household_id),
         )
         await db.commit()
+
+
+async def add_audit_log(
+    household_id: str,
+    actor: str,
+    source: str,
+    operation: str,
+    target_id: str | None = None,
+    details: dict | None = None,
+) -> None:
+    """世帯に対する変更操作を監査ログへ記録."""
+    now = datetime.datetime.now(datetime.UTC).isoformat()
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            """
+            INSERT INTO audit_logs
+                (id, household_id, actor, source, operation, target_id, details, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                str(uuid.uuid4()),
+                household_id,
+                actor.strip() or "unknown",
+                source,
+                operation,
+                target_id,
+                json.dumps(details or {}, ensure_ascii=False),
+                now,
+            ),
+        )
+        await db.commit()
+
+
+async def list_audit_logs(household_id: str) -> list[dict]:
+    """世帯の監査ログを新しい順で返す."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            """
+            SELECT id, actor, source, operation, target_id, details, created_at
+            FROM audit_logs WHERE household_id = ? ORDER BY created_at DESC
+            """,
+            (household_id,),
+        ) as cursor:
+            rows = await cursor.fetchall()
+    return [
+        {
+            "id": log_id,
+            "actor": actor,
+            "source": source,
+            "operation": operation,
+            "target_id": target_id or "",
+            "details": json.loads(details),
+            "created_at": created_at,
+        }
+        for log_id, actor, source, operation, target_id, details, created_at in rows
+    ]

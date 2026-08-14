@@ -11,6 +11,7 @@ from fp_simulator.db.database import (
     get_household,
     get_plan,
     init_db,
+    list_audit_logs,
     list_plans,
     save_household,
 )
@@ -109,6 +110,8 @@ async def test_plan_save_copy_restore_and_delete(client: AsyncClient) -> None:
         plans = await list_plans("plan-household")
         assert len(plans) == 1
         plan_id = plans[0]["id"]
+        logs = await list_audit_logs("plan-household")
+        assert logs[0]["operation"] == "plan.save"
 
         copied = await client.post(
             f"/households/plan-household/plans/{plan_id}/copy",
@@ -117,6 +120,7 @@ async def test_plan_save_copy_restore_and_delete(client: AsyncClient) -> None:
         )
         assert copied.status_code == 303
         assert len(await list_plans("plan-household")) == 2
+        assert any(log["operation"] == "plan.copy" for log in await list_audit_logs("plan-household"))
 
         restored = await client.post(
             f"/households/plan-household/plans/{plan_id}/restore",
@@ -127,6 +131,10 @@ async def test_plan_save_copy_restore_and_delete(client: AsyncClient) -> None:
         assert restored_household is not None
         assert restored_household.name == "基準プラン"
         assert await get_plan("plan-household", plan_id) is not None
+        assert any(
+            log["operation"] == "plan.restore"
+            for log in await list_audit_logs("plan-household")
+        )
 
         deleted = await client.post(
             f"/households/plan-household/plans/{plan_id}/delete",
@@ -134,5 +142,12 @@ async def test_plan_save_copy_restore_and_delete(client: AsyncClient) -> None:
         )
         assert deleted.status_code == 303
         assert len(await list_plans("plan-household")) == 1
+        assert any(
+            log["operation"] == "plan.delete"
+            for log in await list_audit_logs("plan-household")
+        )
+        audit_page = await client.get("/households/plan-household/audit")
+        assert audit_page.status_code == 200
+        assert "変更履歴" in audit_page.text
     finally:
         await delete_household("plan-household")

@@ -17,12 +17,14 @@ from fastapi.templating import Jinja2Templates
 from fp_simulator.db.database import (
     delete_household,
     delete_plan,
+    add_audit_log,
     assign_owner_to_unowned,
     get_household,
     get_plan,
     init_db,
     list_plans,
     list_households,
+    list_audit_logs,
     save_household,
     save_plan_snapshot,
 )
@@ -562,6 +564,7 @@ async def plans_list(request: Request, household_id: str) -> HTMLResponse:
 
 @app.post("/households/{household_id}/plans")
 async def plan_save(
+    request: Request,
     household_id: str,
     name: str = Form("保存プラン"),
 ) -> RedirectResponse:
@@ -569,12 +572,21 @@ async def plan_save(
     household = await get_household(household_id)
     if household is None:
         return RedirectResponse("/", status_code=303)
-    await save_plan_snapshot(household_id, household, name)
+    plan = await save_plan_snapshot(household_id, household, name)
+    await add_audit_log(
+        household_id,
+        getattr(request.state, "authenticated_email", None) or "web-user",
+        "web",
+        "plan.save",
+        plan["id"],
+        {"name": plan["name"]},
+    )
     return RedirectResponse(f"/households/{household_id}/plans", status_code=303)
 
 
 @app.post("/households/{household_id}/plans/{plan_id}/copy")
 async def plan_copy(
+    request: Request,
     household_id: str,
     plan_id: str,
     name: str = Form("コピー"),
@@ -584,12 +596,22 @@ async def plan_copy(
     source = await get_plan(household_id, plan_id)
     if household is None or source is None:
         return RedirectResponse(f"/households/{household_id}/plans", status_code=303)
-    await save_plan_snapshot(household_id, source, name, parent_plan_id=plan_id)
+    plan = await save_plan_snapshot(household_id, source, name, parent_plan_id=plan_id)
+    await add_audit_log(
+        household_id,
+        getattr(request.state, "authenticated_email", None) or "web-user",
+        "web",
+        "plan.copy",
+        plan["id"],
+        {"source_plan_id": plan_id, "name": plan["name"]},
+    )
     return RedirectResponse(f"/households/{household_id}/plans", status_code=303)
 
 
 @app.post("/households/{household_id}/plans/{plan_id}/restore")
-async def plan_restore(household_id: str, plan_id: str) -> RedirectResponse:
+async def plan_restore(
+    request: Request, household_id: str, plan_id: str
+) -> RedirectResponse:
     """保存プランを現在の世帯へ復元."""
     current = await get_household(household_id)
     snapshot = await get_plan(household_id, plan_id)
@@ -598,14 +620,47 @@ async def plan_restore(household_id: str, plan_id: str) -> RedirectResponse:
     snapshot.id = current.id
     snapshot.owner_email = current.owner_email
     await save_household(snapshot)
+    await add_audit_log(
+        household_id,
+        getattr(request.state, "authenticated_email", None) or "web-user",
+        "web",
+        "plan.restore",
+        plan_id,
+        {"name": snapshot.name},
+    )
     return RedirectResponse(f"/households/{household_id}/plans", status_code=303)
 
 
 @app.post("/households/{household_id}/plans/{plan_id}/delete")
-async def plan_delete(household_id: str, plan_id: str) -> RedirectResponse:
+async def plan_delete(request: Request, household_id: str, plan_id: str) -> RedirectResponse:
     """保存済みプランを削除."""
     await delete_plan(household_id, plan_id)
+    await add_audit_log(
+        household_id,
+        getattr(request.state, "authenticated_email", None) or "web-user",
+        "web",
+        "plan.delete",
+        plan_id,
+    )
     return RedirectResponse(f"/households/{household_id}/plans", status_code=303)
+
+
+@app.get("/households/{household_id}/audit", response_class=HTMLResponse)
+async def audit_history(request: Request, household_id: str) -> HTMLResponse:
+    """世帯の変更監査ログ."""
+    household = await get_household(household_id)
+    if household is None:
+        return RedirectResponse("/", status_code=303)
+    return templates.TemplateResponse(
+        request,
+        "audit.html",
+        {
+            "title": "変更履歴",
+            "household": household,
+            "logs": await list_audit_logs(household_id),
+            "active_q": "audit",
+        },
+    )
 
 
 # --- シミュレーション結果 ---

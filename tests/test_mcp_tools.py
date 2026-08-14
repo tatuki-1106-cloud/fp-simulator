@@ -14,7 +14,7 @@ import pytest
 
 os.environ["FP_DB_PATH"] = tempfile.mktemp(suffix=".db")
 
-from fp_simulator.db.database import init_db
+from fp_simulator.db.database import init_db, list_audit_logs
 from fp_simulator.mcp_server.server import mcp
 
 
@@ -81,6 +81,9 @@ async def test_full_flow(setup_db) -> None:
     result = await mcp.call_tool("update_household", {"household_id": "test-mcp", "household_json": household_json})
     content = result[1][0].text if isinstance(result, tuple) else result.content[0].text
     assert json.loads(content)["status"] == "updated"
+    logs = await list_audit_logs("test-mcp")
+    assert logs[0]["operation"] == "household.update"
+    assert logs[0]["source"] == "mcp"
 
     # シミュレーション
     result = await mcp.call_tool("run_simulation", {"household_id": "test-mcp"})

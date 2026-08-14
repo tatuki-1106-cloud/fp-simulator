@@ -13,6 +13,7 @@ from mcp.server.mcpserver import MCPServer
 
 from fp_simulator.db.database import (
     get_household as db_get_household,
+    add_audit_log as db_add_audit_log,
     list_households as db_list_households,
     save_household as db_save_household,
 )
@@ -229,4 +230,12 @@ async def update_household(household_id: str, household_json: str) -> str:
         updated.owner_email = None
     updated.id = household_id
     await db_save_household(updated)
+    await db_add_audit_log(
+        household_id,
+        "mcp",
+        "mcp",
+        "household.update",
+        household_id,
+        {"name": updated.name},
+    )
     return json.dumps({"status": "updated", "id": household_id, "name": updated.name}, ensure_ascii=False)
