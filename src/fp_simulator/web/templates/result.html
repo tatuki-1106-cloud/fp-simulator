@@ -54,7 +54,7 @@
 <h2>年次キャッシュフロー</h2>
 <table>
   <thead>
-    <tr><th>年</th><th>年齢</th><th>収入</th><th>支出</th><th>税・社保</th><th>収支</th><th>現金・預金</th><th>iDeCo</th><th>NISA</th><th>iDeCo受取</th><th>NISA取崩</th><th>金融資産合計</th></tr>
+    <tr><th>年</th><th>年齢</th><th>収入</th><th>支出</th><th>住宅頭金</th><th>固定資産税</th><th>修繕費</th><th>税・社保</th><th>収支</th><th>現金・預金</th><th>iDeCo</th><th>NISA</th><th>iDeCo受取</th><th>NISA取崩</th><th>金融資産合計</th></tr>
   </thead>
   <tbody>
   {% for y in yearly %}
@@ -63,6 +63,9 @@
       <td>{{ y.age }}</td>
       <td>{{ "{:,}".format(y.income) }}</td>
       <td>{{ "{:,}".format(y.expense) }}</td>
+      <td>{{ "{:,}".format(y.housing_down_payment) }}</td>
+      <td>{{ "{:,}".format(y.property_tax) }}</td>
+      <td>{{ "{:,}".format(y.repair_expense) }}</td>
       <td>{{ "{:,}".format(y.tax_si) }}</td>
       <td>{{ "{:,}".format(y.net) }}</td>
       <td>{{ "{:,}".format(y.balance_end) }}</td>

@@ -43,6 +43,7 @@ from fp_simulator.engine.models import (
     Loan,
     Member,
     NisaPlan,
+    OwnedHousingPlan,
     PensionRecordInput,
     PlanAssumptions,
     Relationship,
@@ -82,12 +83,13 @@ def _export_rows(result, granularity: str) -> list[list[object]]:
     if granularity == "yearly":
         yearly = _yearly_summary(result.monthly)
         rows: list[list[object]] = [[
-            "年", "年齢", "収入", "支出", "税・社保", "収支",
+            "年", "年齢", "収入", "支出", "住宅頭金", "固定資産税", "修繕費", "税・社保", "収支",
             "現金・預金", "iDeCo", "NISA", "iDeCo受取", "NISA取崩", "金融資産合計",
         ]]
         rows.extend([
             [
                 item["year"], item["age"], item["income"], item["expense"],
+                item["housing_down_payment"], item["property_tax"], item["repair_expense"],
                 item["tax_si"], item["net"], item["balance_end"],
                 item["ideco_balance_end"], item["nisa_balance_end"],
                 item["ideco_withdrawal"], item["nisa_withdrawal"],
@@ -101,7 +103,7 @@ def _export_rows(result, granularity: str) -> list[list[object]]:
         "年月", "年齢", "給与収入", "年金収入", "退職金", "その他収入",
         "死亡保険金", "iDeCo受取", "NISA取崩", "社会保険", "所得税", "住民税",
         "iDeCo受取時税", "生活費", "イベント支出",
-        "ローン返済", "教育費", "保険料", "iDeCo掛金", "NISA投資",
+        "住宅頭金", "固定資産税", "修繕費", "ローン返済", "教育費", "保険料", "iDeCo掛金", "NISA投資",
         "収支", "現金・預金", "iDeCo残高", "NISA残高", "金融資産合計",
     ]]
     rows.extend([
@@ -111,6 +113,7 @@ def _export_rows(result, granularity: str) -> list[list[object]]:
             month.death_benefit, month.ideco_withdrawal, month.nisa_withdrawal,
             month.social_insurance, month.income_tax, month.resident_tax,
             month.ideco_withdrawal_tax, month.living_expense, month.event_expense,
+            month.housing_down_payment, month.property_tax, month.repair_expense,
             month.loan_payment, month.education_expense, month.insurance_premium,
             month.ideco_contribution, month.nisa_investment, month.net,
             month.balance, month.ideco_balance, month.nisa_balance,
@@ -663,21 +666,60 @@ async def _wizard_placeholder(
 @app.get("/households/{household_id}/housing", response_class=HTMLResponse)
 async def housing_edit(request: Request, household_id: str) -> HTMLResponse:
     """Q6: 住まい設定."""
-    return await _wizard_placeholder(
+    household = await get_household(household_id)
+    if household is None:
+        return RedirectResponse("/", status_code=303)
+    return templates.TemplateResponse(
         request,
-        household_id,
-        "Q6",
-        "住まい",
-        "FP-UNIVの住まい入力に対応するタブです。現在は計算モデルへ未統合です。",
-        [
-            "賃貸の家賃・初期費用はQ4「生活費」で入力してください。",
-            "住宅ローンはQ9「ローン」で入力してください。",
-        ],
-        [
-            {"path": f"/households/{household_id}/expenses", "label": "Q4 生活費へ"},
-            {"path": f"/households/{household_id}/loans", "label": "Q9 ローンへ"},
-        ],
+        "wizard/housing.html",
+        {"title": "Q6 住まい", "household": household, "active_q": "Q6"},
     )
+
+
+@app.post("/households/{household_id}/housing")
+async def housing_save(
+    request: Request,
+    household_id: str,
+    property_price: int = Form(...),
+    down_payment: int = Form(0),
+    purchase_year: int = Form(2026),
+    purchase_month: int = Form(1),
+    annual_property_tax: int = Form(0),
+    annual_repair_cost: int = Form(0),
+) -> Response:
+    """所有住宅の設定を保存."""
+    household = await get_household(household_id)
+    if household is None:
+        return RedirectResponse("/", status_code=303)
+    if property_price < 0 or down_payment < 0:
+        return Response("property_price and down_payment must not be negative", status_code=400)
+    if down_payment > property_price:
+        return Response("down_payment must not exceed property_price", status_code=400)
+    if annual_property_tax < 0 or annual_repair_cost < 0:
+        return Response("housing costs must not be negative", status_code=400)
+    if not 1900 <= purchase_year <= 2200 or not 1 <= purchase_month <= 12:
+        return Response("purchase date is invalid", status_code=400)
+    household.owned_housing = OwnedHousingPlan(
+        property_price=property_price,
+        down_payment=down_payment,
+        purchase_year=purchase_year,
+        purchase_month=purchase_month,
+        annual_property_tax=annual_property_tax,
+        annual_repair_cost=annual_repair_cost,
+    )
+    await save_household(household)
+    await add_audit_log(
+        household_id,
+        getattr(request.state, "authenticated_email", None) or "web-user",
+        "web",
+        "household.owned_housing.save",
+        details={
+            "property_price": property_price,
+            "down_payment": down_payment,
+            "purchase_year": purchase_year,
+        },
+    )
+    return RedirectResponse(f"/households/{household_id}/housing", status_code=303)
 
 
 @app.get("/households/{household_id}/vehicles", response_class=HTMLResponse)
@@ -1013,6 +1055,9 @@ def _yearly_summary(monthly) -> list[dict]:
                 "survivor_pension": 0,
                 "child_allowance": 0,
                 "expense": 0,
+                "housing_down_payment": 0,
+                "property_tax": 0,
+                "repair_expense": 0,
                 "living_expense_reduction": 0,
                 "tax_si": 0,
                 "net": 0,
@@ -1028,6 +1073,9 @@ def _yearly_summary(monthly) -> list[dict]:
         summary["survivor_pension"] += month.survivor_pension
         summary["child_allowance"] += month.child_allowance
         summary["expense"] += month.total_expense
+        summary["housing_down_payment"] += month.housing_down_payment
+        summary["property_tax"] += month.property_tax
+        summary["repair_expense"] += month.repair_expense
         summary["living_expense_reduction"] += next(
             (
                 trace.amount

@@ -67,6 +67,9 @@ class MonthlyCashflow:
     # 支出
     living_expense: int = 0
     event_expense: int = 0
+    housing_down_payment: int = 0
+    property_tax: int = 0
+    repair_expense: int = 0
     loan_payment: int = 0  # ローン返済
     loan_interest: int = 0  # うち利息
     education_expense: int = 0  # 教育費
@@ -95,6 +98,9 @@ class MonthlyCashflow:
         return (
             self.living_expense
             + self.event_expense
+            + self.housing_down_payment
+            + self.property_tax
+            + self.repair_expense
             + self.loan_payment
             + self.education_expense
             + self.insurance_premium
@@ -512,6 +518,43 @@ def simulate(
                     )
 
         # --- 支出 ---
+        # Q6所有住宅: 頭金は購入月、固定資産税・修繕費は購入後の購入月に年1回計上。
+        housing = household.owned_housing
+        if housing is not None:
+            purchase_date = datetime.date(housing.purchase_year, housing.purchase_month, 1)
+            if current >= purchase_date:
+                if current == purchase_date and housing.down_payment > 0:
+                    cf.housing_down_payment = housing.down_payment
+                    cf.traces.append(
+                        TraceEntry(
+                            "住宅購入頭金",
+                            housing.down_payment,
+                            {
+                                "物件価格": housing.property_price,
+                                "購入年月": purchase_date.isoformat(),
+                            },
+                        )
+                    )
+                if month == housing.purchase_month:
+                    if housing.annual_property_tax > 0:
+                        cf.property_tax = housing.annual_property_tax
+                        cf.traces.append(
+                            TraceEntry(
+                                "固定資産税",
+                                housing.annual_property_tax,
+                                {"年額": housing.annual_property_tax},
+                            )
+                        )
+                    if housing.annual_repair_cost > 0:
+                        cf.repair_expense = housing.annual_repair_cost
+                        cf.traces.append(
+                            TraceEntry(
+                                "住宅修繕費",
+                                housing.annual_repair_cost,
+                                {"年額": housing.annual_repair_cost},
+                            )
+                        )
+
         for expense in household.expenses:
                 if expense.member_id is not None:
                     member = next((m for m in household.members if m.id == expense.member_id), None)

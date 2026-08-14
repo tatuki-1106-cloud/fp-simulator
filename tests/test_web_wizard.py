@@ -101,6 +101,36 @@ async def test_create_household_and_full_flow(client: AsyncClient) -> None:
     )
     assert r.status_code == 303
 
+    # 6. Q6所有住宅を保存
+    r = await client.post(
+        f"/households/{household_id}/housing",
+        data={
+            "property_price": 40000000,
+            "down_payment": 5000000,
+            "purchase_year": 2026,
+            "purchase_month": 4,
+            "annual_property_tax": 120000,
+            "annual_repair_cost": 60000,
+        },
+    )
+    assert r.status_code == 303
+    r = await client.get(f"/households/{household_id}/housing")
+    assert r.status_code == 200
+    assert "所有住宅（MVP）" in r.text
+    assert "40,000,000円" in r.text
+    invalid_housing = await client.post(
+        f"/households/{household_id}/housing",
+        data={
+            "property_price": 10000000,
+            "down_payment": 10000001,
+            "purchase_year": 2026,
+            "purchase_month": 4,
+            "annual_property_tax": 0,
+            "annual_repair_cost": 0,
+        },
+    )
+    assert invalid_housing.status_code == 400
+
     for path, label in [
         ("housing", "Q6. 住まい"),
         ("vehicles", "Q7. 乗り物"),
@@ -119,6 +149,8 @@ async def test_create_household_and_full_flow(client: AsyncClient) -> None:
     # 残高が表示されている
     assert "最低貯蓄残高" in r.text
     assert "金融資産合計" in r.text
+    assert "固定資産税" in r.text
+    assert "修繕費" in r.text
     assert "表示範囲" in r.text
 
     r = await client.get(f"/households/{household_id}/simulate?display_range=1")
@@ -135,6 +167,7 @@ async def test_create_household_and_full_flow(client: AsyncClient) -> None:
     assert csv_response.headers["content-type"].startswith("text/csv")
     assert csv_response.content.startswith(b"\xef\xbb\xbf")
     assert "年" in csv_response.content.decode("utf-8-sig")
+    assert "固定資産税" in csv_response.content.decode("utf-8-sig")
     xlsx_response = await client.get(
         f"/households/{household_id}/export.xlsx?granularity=monthly"
     )

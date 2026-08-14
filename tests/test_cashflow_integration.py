@@ -8,6 +8,7 @@ from __future__ import annotations
 import datetime
 import pathlib
 
+from pydantic import ValidationError
 import pytest
 
 from fp_simulator.parameters.loader import get_store, reset_store
@@ -19,6 +20,7 @@ from fp_simulator.engine.models import (
     IdecoPlan,
     Member,
     NisaPlan,
+    OwnedHousingPlan,
     PensionRecordInput,
     PlanAssumptions,
     Relationship,
@@ -313,6 +315,44 @@ class TestCashflowIntegration:
                 member_id="husband",
                 initial_balance=0,
                 monthly_investment=-1000,
+            )
+
+    def test_owned_housing_costs_are_recorded_from_purchase_month(
+        self, store, household: Household
+    ) -> None:
+        """所有住宅の頭金・固定資産税・修繕費を購入月から計上する."""
+        household.owned_housing = OwnedHousingPlan(
+            property_price=40_000_000,
+            down_payment=5_000_000,
+            purchase_year=2026,
+            purchase_month=4,
+            annual_property_tax=120_000,
+            annual_repair_cost=60_000,
+        )
+        result = simulate(store, household)
+        purchase = next(m for m in result.monthly if m.date == datetime.date(2026, 4, 1))
+        next_year = next(m for m in result.monthly if m.date == datetime.date(2027, 4, 1))
+        other_month = next(m for m in result.monthly if m.date == datetime.date(2026, 5, 1))
+
+        assert purchase.housing_down_payment == 5_000_000
+        assert purchase.property_tax == 120_000
+        assert purchase.repair_expense == 60_000
+        assert next_year.property_tax == 120_000
+        assert next_year.repair_expense == 60_000
+        assert other_month.housing_down_payment == 0
+        assert other_month.property_tax == 0
+        assert other_month.repair_expense == 0
+        assert purchase.total_expense >= 5_180_000
+
+    def test_owned_housing_rejects_down_payment_above_price(
+        self, store, household: Household
+    ) -> None:
+        """頭金が物件価格を超える所有住宅設定を拒否する."""
+        with pytest.raises(ValidationError):
+            OwnedHousingPlan(
+                property_price=10_000_000,
+                down_payment=10_000_001,
+                purchase_year=2026,
             )
 
     def test_traces_exist(self, store, household: Household) -> None:

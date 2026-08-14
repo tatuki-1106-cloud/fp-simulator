@@ -10,7 +10,7 @@ import datetime
 from enum import Enum
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class Relationship(str, Enum):
@@ -117,6 +117,23 @@ class Loan(BaseModel):
     early_repayments: list[tuple[int, int, int, str]] = Field(default_factory=list)
 
 
+class OwnedHousingPlan(BaseModel):
+    """所有住宅の取得・保有コスト(Q6)."""
+
+    property_price: int = Field(ge=0)  # 物件価格(円)
+    down_payment: int = Field(ge=0)  # 頭金(円)
+    purchase_year: int = Field(ge=1900, le=2200)
+    purchase_month: int = Field(default=1, ge=1, le=12)
+    annual_property_tax: int = Field(default=0, ge=0)  # 固定資産税(年額)
+    annual_repair_cost: int = Field(default=0, ge=0)  # 修繕費(年額)
+
+    @model_validator(mode="after")
+    def validate_down_payment(self) -> OwnedHousingPlan:
+        if self.down_payment > self.property_price:
+            raise ValueError("down_payment must not exceed property_price")
+        return self
+
+
 class EducationPlan(BaseModel):
     """教育費プラン(子ごと)."""
 
@@ -217,6 +234,7 @@ class Household(BaseModel):
     expenses: list[Expense] = Field(default_factory=list)
     accounts: list[Account] = Field(default_factory=list)
     loans: list[Loan] = Field(default_factory=list)
+    owned_housing: OwnedHousingPlan | None = None
     education_plans: list[EducationPlan] = Field(default_factory=list)
     ideco_plans: list[IdecoPlan] = Field(default_factory=list)
     nisa_plans: list[NisaPlan] = Field(default_factory=list)
