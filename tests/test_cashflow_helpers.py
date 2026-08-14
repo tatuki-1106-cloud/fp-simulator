@@ -162,3 +162,59 @@ def test_apply_income_tax_records_monthly_withholding(store):
 
     assert cf.income_tax >= 0
     assert any(trace.item == "所得税(源泉徴収)" for trace in cf.traces)
+
+
+def test_apply_income_tax_excludes_income_not_started_in_birth_month(store):
+    """誕生月の途中(日が2日以降)で開始年齢に達する収入は、その月の推定年収に含めない.
+
+    勤労収入(_apply_work_income)は月次判定を月の1日時点の満年齢で行うため、
+    誕生月(誕生日が2日以降)にはまだ給与を支払わない。所得税の推定年収も
+    同じ基準で判定し、支払われない収入を課税しないことを確認する。
+    """
+    member = _householder(datetime.date(1996, 6, 15))
+    household = Household(
+        id="helper-tax-birthday",
+        name="誕生月税テスト",
+        members=[member],
+        incomes=[
+            Income(
+                id="salary",
+                member_id=member.id,
+                start_age=30,
+                monthly_amount=300_000,
+                social_insurance_type=SocialInsuranceType.KYOSAI_KOKUMIN,
+            )
+        ],
+        assumptions=PlanAssumptions(base_year=2026, base_month=1),
+    )
+    # 2026年6月: 世帯主は1996-06-15生まれで30歳に達するが、月1日時点では29歳。
+    cf = MonthlyCashflow(date=datetime.date(2026, 6, 1), age=29)
+
+    _apply_income_tax(
+        store,
+        household,
+        cf.date,
+        2026,
+        household.assumptions,
+        300_000,  # 他の収入が存在し月次課税ブロックが動作している状況を再現
+        cf,
+        lambda _member, _date: True,
+    )
+
+    # 誕生月はまだ支給されていないため、推定年収0として非課税になる
+    assert cf.income_tax == 0
+    assert any(trace.item == "所得税(源泉徴収)" for trace in cf.traces)
+
+    # 翌月(2026年7月)は月1日時点で30歳のため、推定年収に含まれ課税される
+    cf_next = MonthlyCashflow(date=datetime.date(2026, 7, 1), age=30)
+    _apply_income_tax(
+        store,
+        household,
+        cf_next.date,
+        2026,
+        household.assumptions,
+        300_000,
+        cf_next,
+        lambda _member, _date: True,
+    )
+    assert cf_next.income_tax > 0
