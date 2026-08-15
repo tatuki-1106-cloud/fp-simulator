@@ -27,7 +27,13 @@
     }
 
     html {
-      scroll-behavior: smooth;
+      overflow-x: hidden;
+    }
+
+    @media (prefers-reduced-motion: no-preference) {
+      html {
+        scroll-behavior: smooth;
+      }
     }
 
     body {
@@ -540,6 +546,14 @@
     }
 
     @media (max-width: 650px) {
+      html,
+      body,
+      .layout,
+      .content,
+      section {
+        overflow-x: hidden;
+      }
+
       .hero {
         padding-top: 3rem;
       }
@@ -548,7 +562,7 @@
       .grid-2,
       .grid-3,
       .grid-4 {
-        grid-template-columns: 1fr;
+        grid-template-columns: minmax(0, 1fr);
       }
 
       .toc ol {
@@ -557,6 +571,22 @@
 
       section {
         padding: 1.1rem;
+      }
+
+      .table-wrap,
+      .diagram {
+        scrollbar-color: var(--primary) #edf1fa;
+        scrollbar-width: thin;
+      }
+
+      .table-wrap::before,
+      .diagram::before {
+        display: block;
+        margin-bottom: 0.35rem;
+        color: var(--muted);
+        content: "左右にスワイプして全体を確認できます";
+        font-size: 0.78rem;
+        text-align: right;
       }
     }
 
