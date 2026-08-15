@@ -9,6 +9,16 @@ Q2の各収入に産前産後休業・産後パパ育休・育児休業を登録
 ## ドキュメント
 
 - [docs/要件定義書.md](docs/要件定義書.md) — 機能要件・非機能要件・アーキテクチャ
+- [docs/index.html](docs/index.html) — 初心者向け学習ロードマップ（リポジトリの読み方・機能追加・不具合修正）
+
+### GitHub Pages
+
+学習ロードマップはGitHub Pagesでも閲覧できます。
+
+- 公開URL: <https://tatuki-1106-cloud.github.io/fp-simulator/>
+- `.github/workflows/pages.yml` が `master` ブランチの `docs/` を自動デプロイします。
+- 初回のみ、GitHubリポジトリの **Settings → Pages → Build and deployment → Source** で
+  **GitHub Actions** を選択してください。
 
 ## セットアップ
 
