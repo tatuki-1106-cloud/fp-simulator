@@ -632,30 +632,30 @@
 <body>
   <header class="hero">
     <div class="hero-inner">
-      <p class="eyebrow">BEGINNER LEARNING PATH · 2026-08-15</p>
+      <p class="eyebrow">BEGINNER LEARNING PATH · 2026-08-16</p>
       <h1>FPシミュレーターを読める、直せる、作れるようになる</h1>
       <p class="hero-lead">
-        この資料は、あなたへのインタビュー結果をもとに、
+        この資料は、FPシミュレーターを題材に、
         Python・Web・データベース・テスト・MCPを基礎から学び、
-        最終的に機能改善、不具合修正、新規プロジェクトの設計へ進むためのロードマップです。
+        機能改善、不具合修正、新規プロジェクトの設計へ進むための公開教材です。
       </p>
       <div class="hero-meta">
-        <span class="tag">対象: Pythonほぼ未経験</span>
-        <span class="tag">説明: 基礎から丁寧に</span>
-        <span class="tag">ゴール: 新しいWebアプリを自作</span>
+        <span class="tag">対象: Pythonの基礎を学ぶ人</span>
+        <span class="tag">題材: 実際のWebアプリ構成</span>
+        <span class="tag">ゴール: 小さな変更を自力で進める</span>
       </div>
       <div class="hero-grid">
         <div class="hero-card">
-          <strong>今できていること</strong>
-          <span>目的、役割分担、保守性、テストの目的を自分の言葉で説明できる。</span>
+          <strong>学ぶ対象</strong>
+          <span>Python、HTTP、データモデル、SQLite、テスト、MCPの役割をつなげて理解する。</span>
         </div>
         <div class="hero-card">
-          <strong>次に伸ばすこと</strong>
-          <span>コードのデータの流れ、Pythonのモデル、HTTP、DB、テスト実装をつなげる。</span>
+          <strong>進め方</strong>
+          <span>全体像をつかみ、1本のデータの流れを追い、コードとテストで確かめる。</span>
         </div>
         <div class="hero-card">
           <strong>到達イメージ</strong>
-          <span>小さな変更をテスト付きで実装し、設計理由を説明できる。</span>
+          <span>小さな変更をテスト付きで実装し、設計理由と確認方法を説明できる。</span>
         </div>
       </div>
     </div>
@@ -666,7 +666,7 @@
       <h2>このページの地図</h2>
       <ol>
         <li><a href="#how-to-use">使い方</a></li>
-        <li><a href="#assessment">理解度診断</a></li>
+        <li><a href="#assessment">セルフチェック</a></li>
         <li><a href="#big-picture">全体像</a></li>
         <li><a href="#foundations">基礎用語</a></li>
         <li><a href="#repo-tour">リポジトリ探検</a></li>
@@ -711,86 +711,89 @@
             大切なのは、目的を小さく分け、変更前後をテストで確認する習慣です。
           </p>
         </div>
+        <div class="callout warn">
+          <strong>教材の鮮度を確認する：</strong>
+          <p>
+            このページは実装と一緒に更新する学習資料です。最終照合日は
+            <strong>2026-08-16</strong>です。コードを変更したら、リンク先の実装・テスト・READMEと
+            このページの説明が一致しているかも確認してください。
+          </p>
+        </div>
       </section>
 
       <section id="assessment">
-        <h2>1. インタビューから見えた現在地</h2>
+        <h2>1. 学習前のセルフチェック</h2>
         <p class="lead">
-          これは合否ではなく、次に何を学ぶと効率がよいかを決めるための地図です。
+          合否を決めるためではなく、どこから読み始めるかを決めるための確認表です。
+          すべてに答えられなくても問題ありません。答えられない項目を、次に読む節の目印にしてください。
         </p>
         <div class="table-wrap">
           <table>
             <thead>
               <tr>
                 <th>テーマ</th>
-                <th>インタビューで確認できたこと</th>
-                <th>判定</th>
+                <th>セルフチェックの質問</th>
+                <th>到達の目安</th>
                 <th>次の練習</th>
               </tr>
             </thead>
             <tbody>
               <tr>
                 <td>システムの目的</td>
-                <td>お金のデータを入力し、ライフプランを計算・提供するシステムと説明できた。</td>
-                <td><span class="status ready">土台あり</span></td>
-                <td>入力、計算、保存、表示の具体例を結びつける。</td>
-              </tr>
-              <tr>
-                <td>月次計算</td>
-                <td>月単位の仕組みがあると理解しているが、税・ローン・教育費などの具体例はこれから。</td>
-                <td><span class="status next">要補強</span></td>
-                <td><code>MonthlyCashflow</code> の項目を1つずつ読む。</td>
-              </tr>
-              <tr>
-                <td>構成の分離</td>
-                <td><code>engine</code>、<code>web</code>、<code>db</code>、<code>mcp_server</code>の役割を正しく予想できた。</td>
-                <td><span class="status ready">強み</span></td>
-                <td>実際に1つのリクエストが各層を通る様子を追う。</td>
-              </tr>
-              <tr>
-                <td>保守性・テスト</td>
-                <td>分離は可読性・保守性を高め、テストはデグレ確認に役立つと説明できた。</td>
-                <td><span class="status ready">土台あり</span></td>
-                <td>テストを「仕様の例」として読んでみる。</td>
-              </tr>
-              <tr>
-                <td>パラメータ設計</td>
-                <td>税率をYAMLに分離する理由（制度変更への対応）は理解できた。</td>
-                <td><span class="status ready">土台あり</span></td>
-                <td>日付による値の切り替えと出典を確認する。</td>
+                <td>このアプリは誰の、どのような課題を解決するものか説明できるか？</td>
+                <td><span class="status goal">一文で説明</span></td>
+                <td>READMEと「全体像」を読み、入力・計算・保存・表示を結びつける。</td>
               </tr>
               <tr>
                 <td>Pythonモデル</td>
-                <td>入力データの形を定義するモデルの役割は、これから学ぶ段階。</td>
-                <td><span class="status next">最優先</span></td>
-                <td>変数、関数、クラス、型、バリデーションを小さな例で練習する。</td>
+                <td>変数、関数、クラス、型の違いを、簡単な例で説明できるか？</td>
+                <td><span class="status goal">例を書ける</span></td>
+                <td>「基礎用語」と<code>engine/models.py</code>の抜粋を読む。</td>
               </tr>
               <tr>
                 <td>Webの流れ</td>
-                <td>HTML/CSS/JavaScriptの役割はだいたい分かるが、HTTPからFastAPIへの流れはこれから。</td>
-                <td><span class="status next">最優先</span></td>
-                <td>フォーム送信からテンプレート表示までを図で追う。</td>
+                <td>フォームの入力がHTTP、FastAPI、モデル、DB、HTMLを通る順番を追えるか？</td>
+                <td><span class="status goal">順番を説明</span></td>
+                <td>「Webの流れ」の図で、GETとPOSTの違いを確認する。</td>
               </tr>
               <tr>
-                <td>調査・デバッグ</td>
-                <td>入力から出力まで処理の流れを追う意識がある。ログ・中間値の確認も選べた。</td>
-                <td><span class="status ready">考え方あり</span></td>
-                <td>再現テストを先に作る習慣を追加する。</td>
+                <td>月次計算</td>
+                <td>収入、税、支出、残高が月ごとに更新される理由を説明できるか？</td>
+                <td><span class="status goal">項目を追える</span></td>
+                <td><code>MonthlyCashflow</code>の項目と<code>cashflow.py</code>のループを読む。</td>
               </tr>
               <tr>
-                <td>目標</td>
-                <td>この構成を参考に、新しいWebアプリを最初から作りたい。</td>
-                <td><span class="status goal">明確</span></td>
-                <td>最後の「新規プロジェクト設計テンプレート」を使う。</td>
+                <td>構成の分離</td>
+                <td><code>engine</code>、<code>web</code>、<code>db</code>、<code>mcp_server</code>の役割を予想できるか？</td>
+                <td><span class="status goal">役割を説明</span></td>
+                <td>リポジトリ探検表と1本のリクエストの流れを照らし合わせる。</td>
+              </tr>
+              <tr>
+                <td>パラメータ設計</td>
+                <td>制度の数値をコードから分離する理由と、適用日・出典の意味を説明できるか？</td>
+                <td><span class="status goal">理由を説明</span></td>
+                <td>YAMLと<code>ParameterStore</code>の節で日付による値の切り替えを確認する。</td>
+              </tr>
+              <tr>
+                <td>テスト・デバッグ</td>
+                <td>不具合を再現し、期待値を決め、修正後に再発しないことを確認できるか？</td>
+                <td><span class="status goal">手順を実行</span></td>
+                <td>テストの基本形と「不具合修正の手順」を小さな例で試す。</td>
+              </tr>
+              <tr>
+                <td>新規プロジェクト</td>
+                <td>誰の課題を解くか、MVPで何を作らないかを決められるか？</td>
+                <td><span class="status goal">範囲を定義</span></td>
+                <td>「新規プロジェクト」の設計質問を使って1ページに整理する。</td>
               </tr>
             </tbody>
           </table>
         </div>
         <div class="callout">
-          <strong>診断のまとめ：</strong>
+          <strong>使い方の例：</strong>
           <p>
-            設計の考え方はすでに良い出発点です。次は、抽象的な「分離」を、
-            実際のデータ（フォームの値、Pydanticモデル、DBのJSON、月次の数値）に落とし込む段階です。
+            たとえばWebの流れが曖昧なら、まず「Webの流れ」と「コードの読み方」を読み、
+            実際のフォーム、モデル、DB保存、テンプレートを1本だけ追います。
           </p>
         </div>
       </section>
@@ -917,13 +920,20 @@ bonus_months: list[int]</code></pre>
               <span class="badge">HTML：画面の構造</span>
               <span class="badge">JSON：データ交換</span>
             </div>
+            <p class="mini-note">
+              HTMLのひな型は<strong>Jinja2</strong>で値を埋め込み、部分更新には
+              <strong>HTMX</strong>を使います。実装は<code>web/templates/</code>と
+              <code>web/main.py</code>を対応させて読みます。
+            </p>
           </div>
           <div class="card">
             <h3>DB：後で取り出すための保存</h3>
             <p>メモリ上の変数はプログラム終了で消えます。SQLiteのようなデータベースに保存すると、次のリクエストや再起動後にも世帯データを取り出せます。</p>
             <pre><code>INSERT INTO households
   (id, name, data, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?)</code></pre>
+VALUES (?, ?, ?, ?, ?)
+ON CONFLICT(id) DO UPDATE ...</code></pre>
+            <p class="mini-note">新規作成と既存データの更新を1つのSQLで扱う方式を<strong>UPSERT</strong>と呼びます。</p>
           </div>
           <div class="card">
             <h3>非同期（async / await）</h3>
@@ -997,6 +1007,12 @@ VALUES (?, ?, ?, ?, ?)</code></pre>
                 <td><a class="file-link" href="https://github.com/tatuki-1106-cloud/fp-simulator/blob/master/src/fp_simulator/mcp_server/server.py">server.py</a></td>
               </tr>
               <tr>
+                <td><code>src/fp_simulator/web/auth.py</code></td>
+                <td>IAP認証とMCP APIキー認証</td>
+                <td>ローカルと本番の認証条件、認証ヘッダー、401/503</td>
+                <td><a class="file-link" href="https://github.com/tatuki-1106-cloud/fp-simulator/blob/master/src/fp_simulator/web/auth.py">auth.py</a></td>
+              </tr>
+              <tr>
                 <td><code>tests/</code></td>
                 <td>動作の確認と回帰防止</td>
                 <td>テスト名、入力、期待値、失敗時の意味</td>
@@ -1008,6 +1024,72 @@ VALUES (?, ?, ?, ?, ?)</code></pre>
                 <td>目的、MVP、将来拡張、前提条件</td>
                 <td><a class="file-link" href="https://github.com/tatuki-1106-cloud/fp-simulator/blob/master/docs/%E8%A6%81%E4%BB%B6%E5%AE%9A%E7%BE%A9%E6%9B%B8.md">要件定義書.md</a></td>
               </tr>
+              <tr>
+                <td><code>docs/引き継ぎ資料.md</code></td>
+                <td>運用・開発を引き継ぐための記録</td>
+                <td>現状、注意点、次に確認すること</td>
+                <td><a class="file-link" href="https://github.com/tatuki-1106-cloud/fp-simulator/blob/master/docs/%E5%BC%95%E3%81%8D%E7%B6%99%E3%81%8E%E8%B3%87%E6%96%99.md">引き継ぎ資料.md</a></td>
+              </tr>
+              <tr>
+                <td><code>.github/workflows/</code> + <code>deploy/</code></td>
+                <td>教材公開・本番デプロイ・バックアップ</td>
+                <td>GitHub Pages、Docker、Cloud Run、Litestream</td>
+                <td><a class="file-link" href="https://github.com/tatuki-1106-cloud/fp-simulator/blob/master/.github/workflows/pages.yml">pages.yml</a> / <a class="file-link" href="https://github.com/tatuki-1106-cloud/fp-simulator/tree/master/deploy">deploy/</a></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>出力側の画面をたどる</h3>
+        <p>
+          入力ウィザードを読んだ後は、<code>main.py</code>のルートとテンプレートを対応させると、
+          計算結果がどのように表示されるかを確認できます。
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>入口・テンプレート</th>
+                <th>役割</th>
+                <th>読むポイント</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>/households/{id}/simulate</code> → <code>result.html</code></td>
+                <td>通常のシミュレーション結果</td>
+                <td><code>simulate()</code>のサマリーとライフマップの表示</td>
+              </tr>
+              <tr>
+                <td><code>/households/{id}/simulate/monthly</code> → <code>monthly_result.html</code></td>
+                <td>月ごとの明細</td>
+                <td><code>MonthlyCashflow</code>の各項目とトレース</td>
+              </tr>
+              <tr>
+                <td><code>/households/{id}/compare</code> → <code>compare.html</code></td>
+                <td>プランの比較</td>
+                <td>ベースラインと代替案が同じエンジンを使うこと</td>
+              </tr>
+              <tr>
+                <td><code>/households/{id}/disaster</code> → <code>disaster.html</code></td>
+                <td>災害・死亡などのシナリオ</td>
+                <td><code>simulate(..., scenario)</code>の第3引数</td>
+              </tr>
+              <tr>
+                <td><code>/households/{id}/audit</code> → <code>audit.html</code></td>
+                <td>操作履歴・監査ログ</td>
+                <td>誰がどの入口から何を変更したか</td>
+              </tr>
+              <tr>
+                <td><code>lifemap.html</code></td>
+                <td>複数画面で再利用するJinja2マクロ</td>
+                <td>独立したルートではなく、結果やウィザードへ埋め込まれる部品</td>
+              </tr>
+              <tr>
+                <td><code>/debug/parameters</code> → <code>debug_parameters.html</code></td>
+                <td>読み込んだ制度パラメータの確認</td>
+                <td>YAML、<code>ParameterStore</code>、適用日を照合する</td>
+              </tr>
             </tbody>
           </table>
         </div>
@@ -1016,6 +1098,7 @@ VALUES (?, ?, ?, ?, ?)</code></pre>
         <ol class="step-list">
           <li><strong>README.md</strong>で目的、起動方法、構成を確認する。</li>
           <li><strong>要件定義書</strong>で「正しい動作」の背景と用語を確認する。</li>
+          <li><strong>引き継ぎ資料</strong>で、現在の運用上の注意点と未完了の課題を確認する。</li>
           <li>目的に近い<strong>テスト</strong>を先に読み、入力と期待結果を知る。</li>
           <li>そのテストが呼ぶ<strong>engine / models</strong>を読む。</li>
           <li>最後に<strong>web / template / db</strong>を読んで、入口と保存をつなげる。</li>
@@ -1032,8 +1115,12 @@ VALUES (?, ?, ?, ?, ?)</code></pre>
       <section id="request-flow">
         <h2>5. Webの流れ：入力フォームから結果画面まで</h2>
         <p>
-          第17問でまだ分からないと答えた部分を、1本の流れとして見てみましょう。
+          HTTPからFastAPI、モデル、DB、テンプレートへ進む流れを、1本の処理として見てみましょう。
           ここでは「新しい世帯を作る」操作を例にします。
+        </p>
+        <p class="mini-note">
+          図中の「田中家」や金額は説明用の架空データです。実在する個人情報や家計情報を入力して
+          公開環境へ送信しないでください。
         </p>
         <div class="diagram">
           <svg viewBox="0 0 1060 520" role="img" aria-label="ブラウザからFastAPIとデータベースを経て結果画面に戻るシーケンス図">
@@ -1077,7 +1164,7 @@ VALUES (?, ?, ?, ?, ?)</code></pre>
             <text x="610" y="378" text-anchor="middle" font-size="12" fill="#53627f">保存完了 → リダイレクト</text>
 
             <rect x="275" y="423" width="180" height="48" rx="10" fill="#eafaf6" stroke="#66b7a8"></rect>
-            <text x="365" y="453" text-anchor="middle" font-size="14" fill="#12634f">302 /households/{id}/members</text>
+            <text x="365" y="453" text-anchor="middle" font-size="14" fill="#12634f">303 /households/{id}/members</text>
             <line x1="350" y1="447" x2="218" y2="447" stroke="#53658f" stroke-width="3" marker-end="url(#arrow-flow)"></line>
           </svg>
           <p class="diagram-caption">図2：POSTで受け取り、モデルで検証し、DBへ保存して次の画面へ進む</p>
@@ -1087,12 +1174,20 @@ VALUES (?, ?, ?, ?, ?)</code></pre>
         <div class="grid-2">
           <div class="card">
             <h4>GET：見せる・取得する</h4>
-            <p>URLを開いたときの処理です。例：<code>@app.get("/households/{household_id}/members")</code>。DBから世帯を取得し、テンプレートに値を渡してHTMLを返します。</p>
+            <p>URLを開いたときの処理です。例：<code>@app.get("/households/{household_id}/members")</code>。DBから世帯を取得し、Jinja2テンプレートに値を渡してHTMLを返します。</p>
           </div>
           <div class="card">
             <h4>POST：送る・変更する</h4>
             <p>フォームの送信など、データを変更する処理です。例：<code>@app.post("/households/{household_id}/members")</code>。入力をモデルにし、保存した後に次のGETへリダイレクトします。</p>
           </div>
+        </div>
+        <div class="callout success">
+          <strong>なぜ303へリダイレクトするのか：</strong>
+          <p>
+            POSTの保存が終わった後に303（See Other）でGETのURLへ移す設計を
+            <strong>POST/Redirect/GET</strong>と呼びます。ブラウザの再読み込みでPOSTを再送して
+            二重保存する事故を避け、結果画面をGETとして安全に開けるようにします。
+          </p>
         </div>
         <div class="callout">
           <strong>画面に表示されないときの切り分け：</strong>
@@ -1108,6 +1203,11 @@ VALUES (?, ?, ?, ?, ?)</code></pre>
         <p>
           このリポジトリの中心は <code>engine/cashflow.py</code> です。
           世帯主の基準年月から想定寿命まで、月を1つずつ進めながら収入・税・支出・残高を計算します。
+        </p>
+        <p class="mini-note">
+          Webの<code>/households/{household_id}/simulate</code>、比較画面、災害シナリオ、
+          月次結果画面はそれぞれ<code>main.py</code>から<code>simulate()</code>を呼びます。
+          MCPの<code>run_simulation</code>も同じエンジンを再利用します。入口が違っても計算を共有する設計です。
         </p>
         <div class="diagram">
           <svg viewBox="0 0 1060 330" role="img" aria-label="月次キャッシュフローの計算手順">
@@ -1210,6 +1310,7 @@ class MonthlyCashflow:
     monthly_amount: int
     bonus_months: list[int] = Field(default_factory=list)
     annual_raise_rate: float = 0.0</code></pre>
+        <p class="mini-note">これは実装の一部を抜き出した例です。完全な定義と他の項目は<code>engine/models.py</code>を確認してください。</p>
         <div class="grid-2">
           <div class="card">
             <h4>必須項目</h4>
@@ -1236,9 +1337,20 @@ class MonthlyCashflow:
         <pre><code>- path: 所得税.基礎控除.控除額
   description: 基礎控除
   values:
-    - from: "2025-01-01"
+    - from: 2013-01-01
+      value: 380000
+      source: https://www.nta.go.jp/taxes/shiraberu/taxanswer/shotoku/1199.htm
+    - from: 2020-01-01
+      value: 480000
+      source: https://www.nta.go.jp/taxes/shiraberu/taxanswer/shotoku/1199.htm
+    - from: 2025-01-01
       value: 580000
-      source: "国税庁 ..."</code></pre>
+      source: https://www.nta.go.jp/taxes/shiraberu/taxanswer/shotoku/1199.htm</code></pre>
+        <p class="mini-note">
+          <code>ParameterStore</code>は、計算日以前の<code>from</code>のうち最も新しい値を選びます。
+          まだ適用開始日前なら最古の値を使います。既定の<code>parameters/</code>以外を使う本番設定には
+          <code>FP_PARAMETERS_DIR</code>、テストでストアを作り直すときには<code>reset_store()</code>を確認します。
+        </p>
         <div class="diagram">
           <svg viewBox="0 0 1060 260" role="img" aria-label="適用日によってパラメータの値を選ぶ図">
             <defs>
@@ -1274,14 +1386,21 @@ class MonthlyCashflow:
         <pre><code># 保存
 data = household.model_dump_json()
 await db.execute(
-    "INSERT INTO households (id, name, data, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+    """INSERT INTO households (id, name, data, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET
+         name=excluded.name, data=excluded.data, updated_at=excluded.updated_at""",
     (household.id, household.name, data, now, now),
 )
 
 # 取得
 household = Household.model_validate_json(row[0])</code></pre>
+        <p>
+          <code>ON CONFLICT(id) DO UPDATE</code>は、IDが未登録ならINSERT、登録済みならUPDATEに切り替える
+          <strong>UPSERT</strong>です。保存関数を読むときは、新規作成だけでなく既存世帯の更新時にどの列が変わるかも確認します。
+        </p>
         <p class="mini-note">
-          一般的な大規模システムでは、検索しやすいように項目を別テーブルへ分解する設計もあります。
+          これは実装を短くした抜粋です。一般的な大規模システムでは、検索しやすいように項目を別テーブルへ分解する設計もあります。
           ここでは「ドメインモデルをそのまま保存する」というシンプルさとのトレードオフを学べます。
         </p>
       </section>
@@ -1310,9 +1429,16 @@ household = Household.model_validate_json(row[0])</code></pre>
           </div>
         </div>
         <h3>テストの基本形（Arrange / Act / Assert）</h3>
-        <pre><code>def test_net_is_income_minus_tax_and_expense():
+        <pre><code>import datetime
+
+from fp_simulator.engine.cashflow import MonthlyCashflow
+
+
+def test_net_is_income_minus_tax_and_expense():
     # Arrange（準備）
     monthly = MonthlyCashflow(
+        date=datetime.date(2026, 1, 1),
+        age=40,
         salary_income=300000,
         income_tax=50000,
         living_expense=180000,
@@ -1323,6 +1449,7 @@ household = Household.model_validate_json(row[0])</code></pre>
 
     # Assert（確認）
     assert result == 70000</code></pre>
+        <p class="mini-note">必須項目の<code>date</code>と<code>age</code>を含めた、実際に実行できる最小例です。</p>
         <ol class="step-list">
           <li><strong>再現条件を小さくする：</strong>家族全員ではなく、最小の世帯・1つの収入・1つの支出にする。</li>
           <li><strong>期待値を決める：</strong>手計算できる値、または要件・制度資料から正しい値を決める。</li>
@@ -1341,8 +1468,8 @@ household = Household.model_validate_json(row[0])</code></pre>
       <section id="debugging">
         <h2>9. 不具合修正の手順：入力から出力までを追う</h2>
         <p>
-          第14問では「入力が関数に渡り、意図した出力になるか処理の流れを追う」と答えられました。
-          その考え方を、再現・観測・修正・回帰確認のループにします。
+          「入力が関数に渡り、意図した出力になるか処理の流れを追う」という考え方を、
+          再現・観測・修正・回帰確認のループにします。
         </p>
         <div class="diagram">
           <svg viewBox="0 0 1060 390" role="img" aria-label="不具合修正のループ">
@@ -1403,7 +1530,7 @@ household = Household.model_validate_json(row[0])</code></pre>
       <section id="mcp">
         <h2>10. MCPを理解する：LLM用の別の入口</h2>
         <p>
-          第13問の理解は正しい方向です。MCP（Model Context Protocol）は、
+          MCP（Model Context Protocol）は、
           LLMアプリケーションが外部の機能を「ツール」として呼び出すための共通の接続方法です。
           このリポジトリでは、Web画面とは別に、世帯の参照・シミュレーション・金額の説明・更新を提供します。
         </p>
@@ -1438,6 +1565,65 @@ household = Household.model_validate_json(row[0])</code></pre>
             <text x="517" y="270" text-anchor="middle" font-size="14" fill="#53627f">結果をLLMへ返し、自然言語で説明する</text>
           </svg>
           <p class="diagram-caption">図6：MCPは新しい計算エンジンではなく、既存機能をLLMから呼ぶ入口</p>
+        </div>
+        <p class="mini-note">
+          図には代表的なツールを載せています。実際の定義は
+          <code>mcp_server/server.py</code>にあり、世帯・税制パラメータの参照系と、
+          シミュレーション・明細・根拠説明・更新系に分かれています。
+        </p>
+        <h3>実装されているMCPツール</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>ツール</th>
+                <th>役割</th>
+                <th>主な入力</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>list_households</code></td>
+                <td>世帯の一覧を返す</td>
+                <td>なし</td>
+              </tr>
+              <tr>
+                <td><code>get_household</code></td>
+                <td>世帯の詳細JSONを返す</td>
+                <td><code>household_id</code></td>
+              </tr>
+              <tr>
+                <td><code>list_tax_parameters</code></td>
+                <td>利用可能な税制パラメータのパスを返す</td>
+                <td>なし</td>
+              </tr>
+              <tr>
+                <td><code>get_tax_parameter</code></td>
+                <td>指定日の値と出典を返す</td>
+                <td><code>path</code>、任意の<code>date</code></td>
+              </tr>
+              <tr>
+                <td><code>run_simulation</code></td>
+                <td>シミュレーションのサマリーを返す</td>
+                <td><code>household_id</code></td>
+              </tr>
+              <tr>
+                <td><code>get_cashflow</code></td>
+                <td>指定年月のキャッシュフローを返す</td>
+                <td><code>household_id</code>、年、月</td>
+              </tr>
+              <tr>
+                <td><code>explain_amount</code></td>
+                <td>金額の計算根拠を返す</td>
+                <td>世帯、年月、項目</td>
+              </tr>
+              <tr>
+                <td><code>update_household</code></td>
+                <td>世帯JSONを検証して更新する</td>
+                <td><code>household_id</code>、世帯JSON</td>
+              </tr>
+            </tbody>
+          </table>
         </div>
         <div class="grid-2">
           <div class="card">
@@ -1557,7 +1743,7 @@ household = Household.model_validate_json(row[0])</code></pre>
       </section>
 
       <section id="roadmap">
-        <h2>12. あなた向け学習ロードマップ</h2>
+        <h2>12. 学習ロードマップ</h2>
         <p>
           順番にチェックし、各項目で小さな成果物を残してください。
           チェック状態はこのブラウザに保存されます（別の端末とは共有されません）。
@@ -1586,7 +1772,7 @@ household = Household.model_validate_json(row[0])</code></pre>
           <li><label><input type="checkbox" data-progress="change-debug"><span>不具合を再現するテストを先に作り、修正後に通ることを確認できる。</span></label></li>
         </ul>
 
-        <h3>フェーズD：自分の新規プロジェクト</h3>
+        <h3>フェーズD：新規プロジェクト</h3>
         <ul class="checklist">
           <li><label><input type="checkbox" data-progress="new-requirements"><span>解決したい課題、利用者、MVPの範囲を1ページに書ける。</span></label></li>
           <li><label><input type="checkbox" data-progress="new-model"><span>主要なデータモデルと入力制約を図または表にできる。</span></label></li>
@@ -1685,6 +1871,36 @@ household = Household.model_validate_json(row[0])</code></pre>
                 <td><code>web/templates/</code></td>
               </tr>
               <tr>
+                <td>Jinja2</td>
+                <td>Pythonの値をHTMLテンプレートへ埋め込むテンプレートエンジン。</td>
+                <td><code>web/main.py</code>、<code>web/templates/</code></td>
+              </tr>
+              <tr>
+                <td>HTMX</td>
+                <td>HTML属性を使って、ページ全体を再読み込みせずHTTPリクエストや部分更新を行うライブラリ。</td>
+                <td><code>web/templates/base.html</code></td>
+              </tr>
+              <tr>
+                <td>ミドルウェア</td>
+                <td>リクエストをアプリ本体へ渡す前後に、認証など共通処理を挟む仕組み。</td>
+                <td><code>web/auth.py</code></td>
+              </tr>
+              <tr>
+                <td>303リダイレクト</td>
+                <td>POST後に別URLをGETで表示させるHTTPレスポンス。POST/Redirect/GETで使う。</td>
+                <td><code>web/main.py</code>の<code>RedirectResponse</code></td>
+              </tr>
+              <tr>
+                <td>UPSERT</td>
+                <td>登録がなければINSERT、あればUPDATEする保存方式。</td>
+                <td><code>db/database.py</code>の<code>ON CONFLICT</code></td>
+              </tr>
+              <tr>
+                <td>シングルトン</td>
+                <td>アプリ内で共有する1つの状態やインスタンスを使い回す設計。</td>
+                <td><code>parameters/loader.py</code>の<code>get_store()</code></td>
+              </tr>
+              <tr>
                 <td>永続化</td>
                 <td>プログラム終了後もデータを残すこと。</td>
                 <td><code>db/database.py</code></td>
@@ -1726,7 +1942,8 @@ household = Household.model_validate_json(row[0])</code></pre>
 
   <footer class="footer">
     <p>
-      この教材はリポジトリの構造とインタビュー時点の理解度をもとにした学習用資料です。
+      このページは、FPシミュレーターのリポジトリを題材にした公開学習教材です。
+      本文中の世帯名・金額・日付は説明用の架空例であり、実在する個人情報や家計情報を入力・共有しないでください。
       税制・制度の実務判断や金融商品の助言として利用せず、実装を読むための教材として利用してください。
     </p>
   </footer>
