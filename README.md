@@ -5,7 +5,7 @@ FP-UNIVライクな日本のライフプラン・シミュレーター。月次�
 ## ドキュメント
 
 - [docs/要件定義書.md](docs/要件定義書.md) — 機能要件・非機能要件・アーキテクチャ
-- [docs/learning-path.html](docs/learning-path.html) — 初心者向け学習ロードマップ（リポジトリの読み方・機能追加・不具合修正）
+- [docs/index.html](docs/index.html) — 初心者向け学習ロードマップ（リポジトリの読み方・機能追加・不具合修正）
 
 ### GitHub Pages
 
