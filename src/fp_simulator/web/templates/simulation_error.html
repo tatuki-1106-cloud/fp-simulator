@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>シミュレーションを実行できません</h1>
+<p class="form-error">{{ error }}</p>
+<p>入力内容を確認してから、もう一度実行してください。</p>
+<p>
+  <a href="/households/{{ household.id }}/members">Q1 家族を確認</a> |
+  <a href="/households/{{ household.id }}/incomes">Q2 収入を確認</a> |
+  <a href="/households/{{ household.id }}/simulate{% if plan_id %}?plan_id={{ plan_id }}{% endif %}">再実行</a>
+</p>
+{% endblock %}

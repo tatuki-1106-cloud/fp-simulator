@@ -33,6 +33,85 @@
 </table>
 {% endif %}
 
+<h2>産休・育休の設定</h2>
+{% if household.childcare_leaves %}
+<table>
+  <thead>
+    <tr><th>対象収入</th><th>子の生年月日</th><th>産前産後休業</th><th>産後パパ育休</th><th>育児休業</th><th></th></tr>
+  </thead>
+  <tbody>
+  {% for leave in household.childcare_leaves %}
+    {% set leave_income = household.incomes | selectattr("id", "equalto", leave.income_id) | first %}
+    <tr>
+      <td>{{ leave_income.name if leave_income else leave.income_id }}</td>
+      <td>{{ leave.child_birth_date }}</td>
+      <td>
+        {% if leave.maternity_leave_start %}
+          {{ leave.maternity_leave_start }}〜{{ leave.maternity_leave_end }}
+        {% else %}—{% endif %}
+      </td>
+      <td>
+        {% if leave.paternity_leave_start %}
+          {{ leave.paternity_leave_start }}〜{{ leave.paternity_leave_end }}
+        {% else %}—{% endif %}
+      </td>
+      <td>
+        {% if leave.childcare_leave_start %}
+          {{ leave.childcare_leave_start }}〜{{ leave.childcare_leave_end }}
+        {% else %}—{% endif %}
+      </td>
+      <td>
+        <div class="row-actions">
+          <a href="/households/{{ household.id }}/incomes?leave_edit_id={{ leave.id }}" class="btn-edit-link">編集</a>
+          <form method="post" action="/households/{{ household.id }}/childcare-leaves/{{ leave.id }}/delete" style="display:inline">
+            <button type="submit">削除</button>
+          </form>
+        </div>
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="neutral">産休・育休の設定はまだありません。対象収入ごとに登録できます。</p>
+{% endif %}
+
+<h3>{{ "産休・育休を編集" if leave_edit_target else "産休・育休を追加" }}</h3>
+<form method="post" action="/households/{{ household.id }}/childcare-leaves">
+  <input type="hidden" name="edit_id" value="{{ leave_edit_target.id if leave_edit_target else '' }}">
+  {% set leave_v = leave_values if leave_values else leave_edit_target %}
+  <p><label>対象収入:
+    <select name="income_id" required>
+      {% set current_income = leave_v.income_id if leave_v else "" %}
+      {% for i in household.incomes %}
+        <option value="{{ i.id }}" {% if i.id == current_income %}selected{% endif %}>{{ i.name }}（{{ i.member_id }}）</option>
+      {% endfor %}
+    </select></label>
+    <small class="field-hint">休業する収入を選択してください。給付金はこの収入の標準報酬を基に計算します。</small></p>
+  <p><label>子の生年月日:
+    <input type="date" name="child_birth_date" required value="{{ leave_v.child_birth_date if leave_v else '' }}"></label>
+    <small class="field-hint">給付金の対象となる子の生年月日です。</small></p>
+  <fieldset>
+    <legend>産前産後休業</legend>
+    <p><label>開始日: <input type="date" name="maternity_leave_start" value="{{ leave_v.maternity_leave_start if leave_v else '' }}"></label>
+      <label>終了日: <input type="date" name="maternity_leave_end" value="{{ leave_v.maternity_leave_end if leave_v else '' }}"></label></p>
+    <small class="field-hint">産前休業と産後休業を合わせた期間を入力します。</small>
+  </fieldset>
+  <fieldset>
+    <legend>産後パパ育休</legend>
+    <p><label>開始日: <input type="date" name="paternity_leave_start" value="{{ leave_v.paternity_leave_start if leave_v else '' }}"></label>
+      <label>終了日: <input type="date" name="paternity_leave_end" value="{{ leave_v.paternity_leave_end if leave_v else '' }}"></label></p>
+    <small class="field-hint">取得しない場合は空欄にしてください。</small>
+  </fieldset>
+  <fieldset>
+    <legend>育児休業</legend>
+    <p><label>開始日: <input type="date" name="childcare_leave_start" value="{{ leave_v.childcare_leave_start if leave_v else '' }}"></label>
+      <label>終了日: <input type="date" name="childcare_leave_end" value="{{ leave_v.childcare_leave_end if leave_v else '' }}"></label></p>
+    <small class="field-hint">取得しない場合は空欄にしてください。</small>
+  </fieldset>
+  <p><button type="submit">{{ "更新" if leave_edit_target else "追加" }}</button></p>
+</form>
+
 <h2>{{ "収入を編集" if edit_target else "収入を追加" }}</h2>
 {{ error_banner(error) }}
 {{ edit_mode_banner(edit_target.id if edit_target else "", "/households/" ~ household.id ~ "/incomes") }}

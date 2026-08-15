@@ -21,9 +21,15 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from fp_simulator.engine.childcare_leave import (
+    childcare_benefit_for_days,
+    leave_days_by_type,
+    leave_includes_month_end,
+    leave_periods,
+    maternity_allowance_for_days,
+)
 from fp_simulator.engine.dependency import (
     age_at,
-    age_at_year_end,
     calc_deductions_for_household,
 )
 from fp_simulator.engine.education import monthly_education_costs
@@ -51,6 +57,7 @@ from fp_simulator.engine.loan import LoanTerms, MonthlyRepayment, loan_schedule
 from fp_simulator.engine.models import (
     Expense,
     Household,
+    Income,
     Member,
     OwnedHousingPlan,
     PlanAssumptions,
@@ -65,7 +72,7 @@ from fp_simulator.engine.pension import (
 )
 from fp_simulator.engine.resident_tax import monthly_resident_tax_schedule
 from fp_simulator.engine.retirement import net_retirement_allowance
-from fp_simulator.engine.social_insurance import monthly_social_insurance
+from fp_simulator.engine.social_insurance import monthly_social_insurance, standard_remuneration
 from fp_simulator.parameters.loader import ParameterStore
 
 TraceValue = str | int | float | bool | None | list[str] | dict[str, object]
@@ -89,6 +96,9 @@ class MonthlyCashflow:
     age: int  # 世帯主の当月末年齢
     # 収入
     salary_income: int = 0
+    maternity_allowance: int = 0
+    paternity_leave_benefit: int = 0
+    childcare_benefit: int = 0
     pension_income: int = 0
     retirement_income: int = 0
     other_income: int = 0
@@ -126,6 +136,9 @@ class MonthlyCashflow:
     def total_income(self) -> int:
         return (
             self.salary_income
+            + self.maternity_allowance
+            + self.paternity_leave_benefit
+            + self.childcare_benefit
             + self.pension_income
             + self.retirement_income
             + self.other_income
@@ -201,6 +214,19 @@ class FinancingContext:
     vehicle_loan_fees_by_date: defaultdict[datetime.date, list[tuple[str, int]]]
     vehicle_replacement_principal: dict[tuple[str, datetime.date], int]
     vehicle_replacement_dates: dict[str, list[datetime.date]]
+
+
+@dataclass(frozen=True)
+class IncomeMonthCompensation:
+    """収入1件の当月支給額と休業日数."""
+
+    base_salary: int
+    base_bonus: int
+    salary: int
+    bonus: int
+    days_in_month: int
+    work_days: int
+    leave_days: dict[str, list[datetime.date]]
 
 
 @dataclass(frozen=True)
@@ -644,6 +670,228 @@ def _record_event_expense(
         )
 
 
+def _income_is_active(income: Income, member: Member, current: datetime.date) -> bool:
+    """指定月に収入が発生するかを判定する."""
+    member_age = age_at(member.birth_date, current)
+    if member_age < income.start_age:
+        return False
+    if income.end_age is not None and member_age > income.end_age:
+        return False
+    if member_age == income.start_age and current.month < income.start_month:
+        return False
+    return not (
+        income.end_age is not None
+        and member_age == income.end_age
+        and current.month > income.end_month
+    )
+
+
+def _income_month_compensation(
+    household: Household,
+    income: Income,
+    member: Member,
+    current: datetime.date,
+    assumptions: PlanAssumptions,
+) -> IncomeMonthCompensation | None:
+    """休業日数を反映した収入1件の月次支給額を返す."""
+    if not _income_is_active(income, member, current):
+        return None
+
+    days_in_month = calendar.monthrange(current.year, current.month)[1]
+    years_elapsed = current.year - assumptions.base_year
+    raise_factor = (1 + income.annual_raise_rate) ** years_elapsed
+    base_salary = int(income.monthly_amount * raise_factor)
+    base_bonus = int(income.bonus_amount * raise_factor)
+    leave_days = leave_days_by_type(
+        household.childcare_leaves,
+        income.id,
+        member.id,
+        current.year,
+        current.month,
+    )
+    total_leave_days = sum(len(days) for days in leave_days.values())
+    work_days = max(days_in_month - total_leave_days, 0)
+    return IncomeMonthCompensation(
+        base_salary=base_salary,
+        base_bonus=base_bonus,
+        salary=base_salary * work_days // days_in_month,
+        bonus=base_bonus * work_days // days_in_month
+        if current.month in income.bonus_months
+        else 0,
+        days_in_month=days_in_month,
+        work_days=work_days,
+        leave_days=leave_days,
+    )
+
+
+def _annual_salary_estimate(
+    household: Household,
+    year: int,
+    assumptions: PlanAssumptions,
+    member_alive: MemberAlive,
+    reference_date: datetime.date | None = None,
+) -> int:
+    """休業日数を反映した年間給与・賞与の推定額."""
+    total = 0
+    for month in range(1, 13):
+        current = datetime.date(year, month, 1)
+        for income in household.incomes:
+            member = next((m for m in household.members if m.id == income.member_id), None)
+            if member is None or not member_alive(member, current):
+                continue
+            if reference_date is not None and not _income_is_active(income, member, reference_date):
+                continue
+            compensation = _income_month_compensation(
+                household, income, member, current, assumptions
+            )
+            if compensation is not None:
+                total += compensation.salary + compensation.bonus
+    return total
+
+
+def _annual_social_insurance_estimate(
+    store: ParameterStore,
+    household: Household,
+    year: int,
+    assumptions: PlanAssumptions,
+    member_alive: MemberAlive,
+    reference_date: datetime.date | None = None,
+) -> int:
+    """休業月の月末免除を反映した年間社会保険料の推定額."""
+    total = 0
+    employee_types = (
+        SocialInsuranceType.KYOSAI_KOSEI,
+        SocialInsuranceType.YAKUIN_KOSEI,
+    )
+    for month in range(1, 13):
+        current = datetime.date(year, month, 1)
+        for income in household.incomes:
+            if income.social_insurance_type not in employee_types:
+                continue
+            member = next((m for m in household.members if m.id == income.member_id), None)
+            if member is None or not member_alive(member, current):
+                continue
+            if reference_date is not None and not _income_is_active(income, member, reference_date):
+                continue
+            compensation = _income_month_compensation(
+                household, income, member, current, assumptions
+            )
+            if compensation is None or leave_includes_month_end(
+                household.childcare_leaves,
+                income.id,
+                member.id,
+                year,
+                month,
+            ):
+                continue
+            premiums = monthly_social_insurance(
+                store,
+                current,
+                compensation.base_salary,
+                member.prefecture,
+                age_at(member.birth_date, current),
+                is_employee=True,
+            )
+            total += premiums.total
+    return total
+
+
+def _apply_leave_benefits(
+    store: ParameterStore,
+    household: Household,
+    income: Income,
+    member: Member,
+    current: datetime.date,
+    compensation: IncomeMonthCompensation,
+    cf: MonthlyCashflow,
+) -> None:
+    """産休・育休の給付金を月次CFへ記録する."""
+    if income.social_insurance_type not in (
+        SocialInsuranceType.KYOSAI_KOSEI,
+        SocialInsuranceType.YAKUIN_KOSEI,
+    ):
+        return
+
+    standard = standard_remuneration(compensation.base_salary)
+    if standard <= 0:
+        return
+
+    leave_days = compensation.leave_days
+    for leave in household.childcare_leaves:
+        if leave.member_id != member.id:
+            continue
+        if leave.income_id is not None and leave.income_id != income.id:
+            continue
+        periods = leave_periods(leave)
+        benefit_periods = [
+            period
+            for period in periods
+            if period.leave_type in {"産後パパ育休", "育児休業"}
+        ]
+        benefit_start = min((period.start for period in benefit_periods), default=None)
+        for period in periods:
+            dates = [
+                date
+                for date in leave_days.get(period.leave_type, [])
+                if period.start <= date <= period.end
+            ]
+            if not dates:
+                continue
+            if period.leave_type == "産前産後休業":
+                amount = maternity_allowance_for_days(
+                    store,
+                    current,
+                    standard,
+                    len(dates),
+                    compensation.days_in_month,
+                )
+                cf.maternity_allowance += amount
+                trace_item = "出産手当金"
+                basis = {
+                    "休業種別": period.leave_type,
+                    "日割り": True,
+                }
+            else:
+                if benefit_start is None:
+                    continue
+                amount = childcare_benefit_for_days(
+                    store,
+                    standard,
+                    benefit_start,
+                    dates,
+                )
+                target = (
+                    "paternity_leave_benefit"
+                    if period.leave_type == "産後パパ育休"
+                    else "childcare_benefit"
+                )
+                setattr(cf, target, getattr(cf, target) + amount)
+                trace_item = (
+                    "産後パパ育休給付金"
+                    if period.leave_type == "産後パパ育休"
+                    else "育児休業給付金"
+                )
+                basis = {
+                    "休業種別": period.leave_type,
+                    "給付判定開始日": benefit_start.isoformat(),
+                    "日割り": True,
+                }
+            cf.traces.append(
+                TraceEntry(
+                    trace_item,
+                    amount,
+                    {
+                        "member": member.name,
+                        "income": income.name,
+                        **basis,
+                        "標準報酬月額": standard,
+                        "対象日数": len(dates),
+                        "月日数": compensation.days_in_month,
+                    },
+                )
+            )
+
+
 def _apply_work_income(
     store: ParameterStore,
     household: Household,
@@ -663,57 +911,67 @@ def _apply_work_income(
         if member is None or not member_alive(member, current):
             continue
         member_age = age_at(member.birth_date, current)
-
-        if member_age < income.start_age:
-            continue
-        if income.end_age is not None and member_age > income.end_age:
-            continue
-        if member_age == income.start_age and month < income.start_month:
-            continue
-
-        is_active = not (
-            income.end_age is not None
-            and member_age == income.end_age
-            and month > income.end_month
+        compensation = _income_month_compensation(
+            household, income, member, current, assumptions
         )
-        if is_active:
-            years_elapsed = year - assumptions.base_year
-            raise_factor = (1 + income.annual_raise_rate) ** years_elapsed
-            salary = int(income.monthly_amount * raise_factor)
-            bonus = (
-                int(income.bonus_amount * raise_factor)
-                if month in income.bonus_months
-                else 0
+        if compensation is not None:
+            monthly_salary_total += compensation.salary + compensation.bonus
+            _apply_leave_benefits(
+                store,
+                household,
+                income,
+                member,
+                current,
+                compensation,
+                cf,
             )
-            monthly_salary_total += salary + bonus
 
             if income.social_insurance_type in (
                 SocialInsuranceType.KYOSAI_KOSEI,
                 SocialInsuranceType.YAKUIN_KOSEI,
             ):
-                si = monthly_social_insurance(
-                    store,
-                    current,
-                    salary,
-                    member.prefecture,
-                    member_age,
-                    is_employee=True,
-                )
-                cf.social_insurance += si.total
-                cf.traces.append(
-                    TraceEntry(
-                        "社会保険料",
-                        si.total,
-                        {
-                            "member": member.name,
-                            "標準報酬月額": salary,
-                            "厚生年金": si.pension,
-                            "健康保険": si.health,
-                            "介護保険": si.nursing,
-                            "雇用保険": si.employment,
-                        },
+                if leave_includes_month_end(
+                    household.childcare_leaves,
+                    income.id,
+                    member.id,
+                    year,
+                    month,
+                ):
+                    cf.traces.append(
+                        TraceEntry(
+                            "社会保険料免除",
+                            0,
+                            {
+                                "member": member.name,
+                                "income": income.name,
+                                "判定": "休業期間が月末を含む",
+                            },
+                        )
                     )
-                )
+                else:
+                    si = monthly_social_insurance(
+                        store,
+                        current,
+                        compensation.base_salary,
+                        member.prefecture,
+                        member_age,
+                        is_employee=True,
+                    )
+                    cf.social_insurance += si.total
+                    cf.traces.append(
+                        TraceEntry(
+                            "社会保険料",
+                            si.total,
+                            {
+                                "member": member.name,
+                                "標準報酬月額": compensation.base_salary,
+                                "厚生年金": si.pension,
+                                "健康保険": si.health,
+                                "介護保険": si.nursing,
+                                "雇用保険": si.employment,
+                            },
+                        )
+                    )
 
         if (
             income.retirement_age is not None
@@ -871,26 +1129,24 @@ def _apply_income_tax(
     if monthly_salary_total <= 0:
         return
 
-    est_annual = 0
-    for income in household.incomes:
-        member = next(
-            (m for m in household.members if m.id == income.member_id), None
+    active_income_now = any(
+        (member := next((m for m in household.members if m.id == income.member_id), None))
+        is not None
+        and member_alive(member, current)
+        and _income_is_active(income, member, current)
+        for income in household.incomes
+    )
+    est_annual = (
+        _annual_salary_estimate(
+            household,
+            year,
+            assumptions,
+            member_alive,
+            reference_date=current,
         )
-        if member is None or not member_alive(member, current):
-            continue
-        # 月次の勤労収入判定と同じく、当月1日時点の満年齢を使う。
-        member_age = age_at(member.birth_date, current)
-        if member_age < income.start_age or (
-            income.end_age is not None and member_age > income.end_age
-        ):
-            continue
-        years_elapsed = year - assumptions.base_year
-        raise_factor = (1 + income.annual_raise_rate) ** years_elapsed
-        annual = int(income.monthly_amount * raise_factor) * 12
-        annual += int(income.bonus_amount * raise_factor) * len(
-            income.bonus_months
-        )
-        est_annual += annual
+        if active_income_now
+        else 0
+    )
 
     spouse_income = 0  # MVP: 配偶者収入は0扱い(将来拡張)
     spouse_ded, dep_ded = calc_deductions_for_household(
@@ -898,7 +1154,14 @@ def _apply_income_tax(
     )
     deductions = Deductions(
         basic=store.get("所得税.基礎控除.控除額", datetime.date(year, 12, 31)),
-        social_insurance=cf.social_insurance * 12,
+        social_insurance=_annual_social_insurance_estimate(
+            store,
+            household,
+            year,
+            assumptions,
+            member_alive,
+            reference_date=current,
+        ),
         spouse=spouse_ded,
         dependent=dep_ded,
     )
@@ -916,7 +1179,11 @@ def _apply_income_tax(
             TraceEntry(
                 "所得税(源泉徴収)",
                 monthly_tax,
-                {"推定年収": est_annual, "年間推定税額": annual_tax},
+                {
+                    "推定年収": est_annual,
+                    "年間推定税額": annual_tax,
+                    "年間社会保険料控除": deductions.social_insurance,
+                },
             )
         )
     else:
@@ -930,6 +1197,7 @@ def _apply_income_tax(
                 {
                     "年間確定税額": annual_tax,
                     "1-11月徴収済": withheld_so_far,
+                    "年間社会保険料控除": deductions.social_insurance,
                 },
             )
         )
@@ -948,57 +1216,21 @@ def _apply_resident_tax(
     """前年所得課税の住民税を月次CFへ反映する."""
     if year not in resident_tax_cache:
         prev_year = year - 1
-        prev_est_annual = 0
-        for income in household.incomes:
-            member = next(
-                (m for m in household.members if m.id == income.member_id), None
-            )
-            if member is None:
-                continue
-            if not member_alive(member, datetime.date(prev_year, 12, 31)):
-                continue
-            member_age = age_at_year_end(member.birth_date, prev_year)
-            if member_age < income.start_age or (
-                income.end_age is not None and member_age > income.end_age
-            ):
-                continue
-            years_elapsed = prev_year - assumptions.base_year
-            raise_factor = (1 + income.annual_raise_rate) ** years_elapsed
-            annual = int(income.monthly_amount * raise_factor) * 12
-            annual += int(income.bonus_amount * raise_factor) * len(
-                income.bonus_months
-            )
-            prev_est_annual += annual
+        prev_est_annual = _annual_salary_estimate(
+            household,
+            prev_year,
+            assumptions,
+            member_alive,
+        )
 
         if prev_est_annual > 0:
-            prev_si = 0
-            for income in household.incomes:
-                member = next(
-                    (m for m in household.members if m.id == income.member_id),
-                    None,
-                )
-                if member is None:
-                    continue
-                member_age_prev = age_at(
-                    member.birth_date, datetime.date(prev_year, 6, 1)
-                )
-                if member_age_prev < income.start_age or (
-                    income.end_age is not None
-                    and member_age_prev > income.end_age
-                ):
-                    continue
-                years_elapsed = prev_year - assumptions.base_year
-                raise_factor = (1 + income.annual_raise_rate) ** years_elapsed
-                prev_monthly = int(income.monthly_amount * raise_factor)
-                si = monthly_social_insurance(
-                    store,
-                    datetime.date(prev_year, 6, 1),
-                    prev_monthly,
-                    member.prefecture,
-                    member_age_prev,
-                    is_employee=True,
-                )
-                prev_si += si.total * 12
+            prev_si = _annual_social_insurance_estimate(
+                store,
+                household,
+                prev_year,
+                assumptions,
+                member_alive,
+            )
 
             prev_deductions = Deductions(
                 basic=store.get(
@@ -1567,6 +1799,7 @@ def simulate(
     scenario: DisasterScenario | None = None,
 ) -> SimulationResult:
     """世帯の生涯キャッシュフローをシミュレーションする."""
+    household.validate_childcare_leave_links()
     if scenario is not None:
         if scenario.death_age < 0 or scenario.death_age > 120:
             raise ValueError("death_age must be between 0 and 120")

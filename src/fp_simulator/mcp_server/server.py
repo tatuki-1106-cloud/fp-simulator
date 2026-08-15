@@ -64,7 +64,10 @@ async def get_tax_parameter(path: str, date: str | None = None) -> str:
         date: 適用日(YYYY-MM-DD)。省略時は今日
     """
     store = get_store()
-    d = datetime.date.fromisoformat(date) if date else datetime.date.today()
+    try:
+        d = datetime.date.fromisoformat(date) if date else datetime.date.today()
+    except ValueError as exc:
+        return json.dumps({"error": f"日付が不正です: {exc}"}, ensure_ascii=False)
     try:
         value = store.get(path, d)
         source = store.get_source(path, d)
@@ -91,7 +94,10 @@ async def run_simulation(household_id: str) -> str:
         return json.dumps({"error": "世帯が見つかりません"}, ensure_ascii=False)
 
     store = get_store()
-    result = simulate(store, household)
+    try:
+        result = simulate(store, household)
+    except ValueError as exc:
+        return json.dumps({"error": str(exc)}, ensure_ascii=False)
 
     balances = [m.balance for m in result.monthly]
     min_balance = min(balances) if balances else 0
@@ -103,8 +109,21 @@ async def run_simulation(household_id: str) -> str:
     for m in result.monthly:
         y = m.date.year
         if y not in yearly:
-            yearly[y] = {"year": y, "income": 0, "expense": 0, "tax_si": 0, "net": 0, "balance_end": 0}
+            yearly[y] = {
+                "year": y,
+                "income": 0,
+                "leave_benefit": 0,
+                "expense": 0,
+                "tax_si": 0,
+                "net": 0,
+                "balance_end": 0,
+            }
         yearly[y]["income"] += m.total_income
+        yearly[y]["leave_benefit"] += (
+            m.maternity_allowance
+            + m.paternity_leave_benefit
+            + m.childcare_benefit
+        )
         yearly[y]["expense"] += m.total_expense
         yearly[y]["tax_si"] += m.total_tax_si
         yearly[y]["net"] += m.net
@@ -138,11 +157,19 @@ async def get_cashflow(household_id: str, year: int, month: int | None = None) -
     if household is None:
         return json.dumps({"error": "世帯が見つかりません"}, ensure_ascii=False)
 
-    store = get_store()
-    result = simulate(store, household)
-
+    target = None
     if month is not None:
-        target = datetime.date(year, month, 1)
+        try:
+            target = datetime.date(year, month, 1)
+        except ValueError as exc:
+            return json.dumps({"error": f"年月が不正です: {exc}"}, ensure_ascii=False)
+
+    store = get_store()
+    try:
+        result = simulate(store, household)
+    except ValueError as exc:
+        return json.dumps({"error": str(exc)}, ensure_ascii=False)
+    if month is not None:
         m = next((m for m in result.monthly if m.date == target), None)
         if m is None:
             return json.dumps({"error": "該当月のデータがありません"}, ensure_ascii=False)
@@ -150,7 +177,14 @@ async def get_cashflow(household_id: str, year: int, month: int | None = None) -
             {
                 "date": m.date.isoformat(),
                 "age": m.age,
-                "income": {"salary": m.salary_income, "pension": m.pension_income, "retirement": m.retirement_income},
+                "income": {
+                    "salary": m.salary_income,
+                    "maternity_allowance": m.maternity_allowance,
+                    "paternity_leave_benefit": m.paternity_leave_benefit,
+                    "childcare_benefit": m.childcare_benefit,
+                    "pension": m.pension_income,
+                    "retirement": m.retirement_income,
+                },
                 "tax_si": {"social_insurance": m.social_insurance, "income_tax": m.income_tax, "resident_tax": m.resident_tax},
                 "expense": {"living": m.living_expense, "event": m.event_expense},
                 "net": m.net,
@@ -169,6 +203,12 @@ async def get_cashflow(household_id: str, year: int, month: int | None = None) -
         {
             "year": year,
             "total_income": sum(m.total_income for m in year_data),
+            "leave_benefit": sum(
+                m.maternity_allowance
+                + m.paternity_leave_benefit
+                + m.childcare_benefit
+                for m in year_data
+            ),
             "total_expense": sum(m.total_expense for m in year_data),
             "total_tax_si": sum(m.total_tax_si for m in year_data),
             "net": sum(m.net for m in year_data),
@@ -193,9 +233,16 @@ async def explain_amount(household_id: str, year: int, month: int, item: str) ->
     if household is None:
         return json.dumps({"error": "世帯が見つかりません"}, ensure_ascii=False)
 
+    try:
+        target = datetime.date(year, month, 1)
+    except ValueError as exc:
+        return json.dumps({"error": f"年月が不正です: {exc}"}, ensure_ascii=False)
+
     store = get_store()
-    result = simulate(store, household)
-    target = datetime.date(year, month, 1)
+    try:
+        result = simulate(store, household)
+    except ValueError as exc:
+        return json.dumps({"error": str(exc)}, ensure_ascii=False)
     m = next((m for m in result.monthly if m.date == target), None)
     if m is None:
         return json.dumps({"error": "該当月のデータがありません"}, ensure_ascii=False)
@@ -221,7 +268,8 @@ async def update_household(household_id: str, household_json: str) -> str:
     """
     try:
         updated = Household.model_validate_json(household_json)
-    except Exception as e:
+        updated.validate_childcare_leave_links()
+    except ValueError as e:
         return json.dumps({"error": f"JSONの検証に失敗しました: {e}"}, ensure_ascii=False)
     existing = await db_get_household(household_id)
     if existing is not None:

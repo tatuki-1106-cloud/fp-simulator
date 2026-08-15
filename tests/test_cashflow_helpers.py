@@ -17,6 +17,7 @@ from fp_simulator.engine.cashflow import (
     _automatic_survivor_pension,
 )
 from fp_simulator.engine.models import (
+    ChildcareLeave,
     Household,
     Income,
     Member,
@@ -332,3 +333,114 @@ def test_apply_income_tax_excludes_income_not_started_in_birth_month(store):
         lambda _member, _date: True,
     )
     assert cf_next.income_tax > 0
+
+
+def test_apply_income_tax_does_not_include_future_income(store):
+    """現在月に未開始の別収入を当年の源泉徴収推定へ混ぜない."""
+    member = _householder(datetime.date(1996, 1, 1))
+    assumptions = PlanAssumptions(base_year=2026, base_month=1)
+    current_income = Income(
+        id="current",
+        member_id=member.id,
+        start_age=0,
+        monthly_amount=300_000,
+        social_insurance_type=SocialInsuranceType.KYOSAI_KOKUMIN,
+    )
+    household = Household(
+        id="future-income-tax",
+        name="将来収入税テスト",
+        members=[member],
+        incomes=[current_income],
+        assumptions=assumptions,
+    )
+    baseline = MonthlyCashflow(date=datetime.date(2026, 6, 1), age=30)
+    _apply_income_tax(
+        store,
+        household,
+        baseline.date,
+        2026,
+        assumptions,
+        300_000,
+        baseline,
+        lambda _member, _date: True,
+    )
+
+    household.incomes.append(
+        Income(
+            id="future",
+            member_id=member.id,
+            start_age=31,
+            monthly_amount=1_000_000,
+            social_insurance_type=SocialInsuranceType.KYOSAI_KOKUMIN,
+        )
+    )
+    with_future = MonthlyCashflow(date=datetime.date(2026, 6, 1), age=30)
+    _apply_income_tax(
+        store,
+        household,
+        with_future.date,
+        2026,
+        assumptions,
+        300_000,
+        with_future,
+        lambda _member, _date: True,
+    )
+
+    assert with_future.income_tax == baseline.income_tax
+
+
+def test_income_tax_uses_annual_social_insurance_after_leave_exemption(store):
+    """休業月に社保が0円でも、他月分の社保控除を所得税推定へ反映する."""
+    member = _householder(datetime.date(1990, 1, 1))
+    household = Household(
+        id="helper-tax-leave",
+        name="休業月税テスト",
+        members=[member],
+        incomes=[
+            Income(
+                id="salary",
+                member_id=member.id,
+                start_age=0,
+                monthly_amount=300_000,
+                social_insurance_type=SocialInsuranceType.KYOSAI_KOSEI,
+            )
+        ],
+        childcare_leaves=[
+            ChildcareLeave(
+                id="leave",
+                income_id="salary",
+                member_id=member.id,
+                child_birth_date=datetime.date(2026, 1, 20),
+                maternity_leave_start=datetime.date(2026, 1, 15),
+                maternity_leave_end=datetime.date(2026, 1, 31),
+            )
+        ],
+        assumptions=PlanAssumptions(base_year=2026, base_month=1),
+    )
+    cf = MonthlyCashflow(date=datetime.date(2026, 1, 1), age=36)
+    salary_total = _apply_work_income(
+        store,
+        household,
+        cf.date,
+        2026,
+        1,
+        household.assumptions,
+        cf,
+        lambda _member, _date: True,
+    )
+    assert salary_total > 0
+    assert cf.social_insurance == 0
+
+    _apply_income_tax(
+        store,
+        household,
+        cf.date,
+        2026,
+        household.assumptions,
+        salary_total,
+        cf,
+        lambda _member, _date: True,
+    )
+
+    tax_trace = next(trace for trace in cf.traces if trace.item == "所得税(源泉徴収)")
+    assert tax_trace.basis["年間社会保険料控除"] > 0

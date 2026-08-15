@@ -247,12 +247,42 @@ class ChildcareLeave(BaseModel):
     """産休・育休."""
 
     id: str
+    # 旧データでは未設定のため None を許容する。新規UIでは必須。
+    income_id: str | None = None
     member_id: str
     child_birth_date: datetime.date
-    maternity_leave_start: datetime.date  # 産前休業開始
-    maternity_leave_end: datetime.date  # 産後休業終了
-    childcare_leave_start: datetime.date  # 育休開始
-    childcare_leave_end: datetime.date  # 育休終了
+    maternity_leave_start: datetime.date | None = None  # 産前産後休業開始
+    maternity_leave_end: datetime.date | None = None  # 産前産後休業終了
+    paternity_leave_start: datetime.date | None = None  # 産後パパ育休開始
+    paternity_leave_end: datetime.date | None = None  # 産後パパ育休終了
+    childcare_leave_start: datetime.date | None = None  # 育児休業開始
+    childcare_leave_end: datetime.date | None = None  # 育児休業終了
+
+    @model_validator(mode="after")
+    def validate_periods(self) -> ChildcareLeave:
+        """各期間の対になる日付と順序を検証する."""
+        periods = (
+            ("maternity_leave", self.maternity_leave_start, self.maternity_leave_end),
+            ("paternity_leave", self.paternity_leave_start, self.paternity_leave_end),
+            ("childcare_leave", self.childcare_leave_start, self.childcare_leave_end),
+        )
+        normalized: list[tuple[str, datetime.date, datetime.date]] = []
+        for name, start, end in periods:
+            if (start is None) != (end is None):
+                raise ValueError(f"{name} start and end must be provided together")
+            if start is not None and end is not None:
+                if end < start:
+                    raise ValueError(f"{name} end must not precede start")
+                normalized.append((name, start, end))
+
+        if not normalized:
+            raise ValueError("at least one childcare leave period is required")
+
+        for index, (_, start, end) in enumerate(normalized):
+            for other_name, other_start, other_end in normalized[index + 1 :]:
+                if start <= other_end and other_start <= end:
+                    raise ValueError(f"childcare leave periods must not overlap: {other_name}")
+        return self
 
 
 class Account(BaseModel):
@@ -295,6 +325,59 @@ class Household(BaseModel):
     insurances: list[Insurance] = Field(default_factory=list)
     childcare_leaves: list[ChildcareLeave] = Field(default_factory=list)
     assumptions: PlanAssumptions = Field(default_factory=PlanAssumptions)
+
+    def validate_childcare_leave_links(self) -> Household:
+        """産休育休の対象者・収入リンクとレコード間の重複を検証する."""
+        member_ids = {member.id for member in self.members}
+        incomes_by_id = {income.id: income for income in self.incomes}
+        for leave in self.childcare_leaves:
+            if leave.member_id not in member_ids:
+                raise ValueError(
+                    f"childcare leave member does not exist: {leave.member_id}"
+                )
+            if leave.income_id is not None:
+                income = incomes_by_id.get(leave.income_id)
+                if income is None:
+                    raise ValueError(
+                        f"childcare leave income does not exist: {leave.income_id}"
+                    )
+                if income.member_id != leave.member_id:
+                    raise ValueError(
+                        "childcare leave income and member do not match"
+                    )
+
+        for index, leave in enumerate(self.childcare_leaves):
+            leave_periods = (
+                (leave.maternity_leave_start, leave.maternity_leave_end),
+                (leave.paternity_leave_start, leave.paternity_leave_end),
+                (leave.childcare_leave_start, leave.childcare_leave_end),
+            )
+            for other in self.childcare_leaves[index + 1 :]:
+                if leave.member_id != other.member_id:
+                    continue
+                if (
+                    leave.income_id is not None
+                    and other.income_id is not None
+                    and leave.income_id != other.income_id
+                ):
+                    continue
+                other_periods = (
+                    (other.maternity_leave_start, other.maternity_leave_end),
+                    (other.paternity_leave_start, other.paternity_leave_end),
+                    (other.childcare_leave_start, other.childcare_leave_end),
+                )
+                if any(
+                    start is not None
+                    and end is not None
+                    and other_start is not None
+                    and other_end is not None
+                    and start <= other_end
+                    and other_start <= end
+                    for start, end in leave_periods
+                    for other_start, other_end in other_periods
+                ):
+                    raise ValueError("childcare leave records must not overlap")
+        return self
 
     def householder(self) -> Member:
         """世帯主を返す."""

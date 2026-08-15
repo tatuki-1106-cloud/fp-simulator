@@ -32,9 +32,11 @@ from fp_simulator.db.database import (
     save_household,
     save_plan_snapshot,
 )
+from fp_simulator.engine.childcare_leave import leave_periods
 from fp_simulator.engine.insurance import InsurancePolicy, analyze_coverage
 from fp_simulator.engine.models import (
     Account,
+    ChildcareLeave,
     EducationPlan,
     Expense,
     Household,
@@ -95,18 +97,40 @@ def _wizard_error(
     return templates.TemplateResponse(request, template_name, ctx, status_code=400)
 
 
+def _simulation_error(
+    request: Request,
+    household: Household,
+    error: str,
+    plan_id: str | None = None,
+) -> HTMLResponse:
+    """シミュレーション入力不備をユーザー向け400画面へ変換."""
+    return templates.TemplateResponse(
+        request,
+        "simulation_error.html",
+        {
+            "title": "シミュレーションを実行できません",
+            "household": household,
+            "plan_id": plan_id,
+            "error": error,
+            "active_q": "sim",
+        },
+        status_code=400,
+    )
+
+
 def _export_rows(result, granularity: str) -> list[list[object]]:
     """シミュレーション結果をCSV/Excel共通の行データへ変換."""
     if granularity == "yearly":
         yearly = _yearly_summary(result.monthly)
         rows: list[list[object]] = [[
-            "年", "年齢", "収入", "乗り物売却", "支出", "住宅頭金", "固定資産税", "修繕費",
+            "年", "年齢", "収入", "休業給付", "乗り物売却", "支出", "住宅頭金", "固定資産税", "修繕費",
             "乗り物購入", "乗り物維持費", "乗り物税金・修繕", "車検", "税・社保", "収支",
             "現金・預金", "iDeCo", "NISA", "iDeCo受取", "NISA取崩", "金融資産合計",
         ]]
         rows.extend([
             [
-                item["year"], item["age"], item["income"], item["vehicle_sale_income"], item["expense"],
+                item["year"], item["age"], item["income"], item["leave_benefit"],
+                item["vehicle_sale_income"], item["expense"],
                 item["housing_down_payment"], item["property_tax"], item["repair_expense"],
                 item["vehicle_purchase_expense"], item["vehicle_maintenance"],
                 item["vehicle_tax_repair"], item["vehicle_inspection_expense"],
@@ -120,7 +144,8 @@ def _export_rows(result, granularity: str) -> list[list[object]]:
         return rows
 
     rows = [[
-        "年月", "年齢", "給与収入", "年金収入", "退職金", "その他収入",
+        "年月", "年齢", "給与収入", "出産手当金", "産後パパ育休給付金", "育児休業給付金",
+        "年金収入", "退職金", "その他収入",
         "死亡保険金", "乗り物売却", "iDeCo受取", "NISA取崩", "社会保険", "所得税", "住民税",
         "iDeCo受取時税", "生活費", "イベント支出",
         "住宅頭金", "固定資産税", "修繕費", "乗り物購入", "乗り物維持費", "乗り物税金・修繕", "車検",
@@ -130,6 +155,7 @@ def _export_rows(result, granularity: str) -> list[list[object]]:
     rows.extend([
         [
             month.date.isoformat(), month.age, month.salary_income,
+            month.maternity_allowance, month.paternity_leave_benefit, month.childcare_benefit,
             month.pension_income, month.retirement_income, month.other_income,
             month.death_benefit, month.vehicle_sale_income, month.ideco_withdrawal, month.nisa_withdrawal,
             month.social_insurance, month.income_tax, month.resident_tax,
@@ -392,12 +418,22 @@ async def members_delete(request: Request, household_id: str, member_id: str) ->
 
 
 @app.get("/households/{household_id}/incomes", response_class=HTMLResponse)
-async def incomes_edit(request: Request, household_id: str, edit_id: str = "") -> HTMLResponse:
+async def incomes_edit(
+    request: Request,
+    household_id: str,
+    edit_id: str = "",
+    leave_edit_id: str = "",
+) -> HTMLResponse:
     """Q2: 収入設定."""
     household = await get_household(household_id)
     if household is None:
         return RedirectResponse("/", status_code=303)
     edit_target = next((i for i in household.incomes if i.id == edit_id), None) if edit_id else None
+    leave_edit_target = (
+        next((leave for leave in household.childcare_leaves if leave.id == leave_edit_id), None)
+        if leave_edit_id
+        else None
+    )
     return templates.TemplateResponse(
         request,
         "wizard/incomes.html",
@@ -407,6 +443,7 @@ async def incomes_edit(request: Request, household_id: str, edit_id: str = "") -
             "si_types": list(SocialInsuranceType),
             "active_q": "Q2",
             "edit_target": edit_target,
+            "leave_edit_target": leave_edit_target,
         },
     )
 
@@ -447,6 +484,7 @@ async def incomes_add(
         "si_types": list(SocialInsuranceType),
         "active_q": "Q2",
         "edit_target": next((i for i in household.incomes if i.id == edit_id), None) if edit_id else None,
+        "leave_edit_target": None,
     }
     if not any(member.id == member_id for member in household.members):
         return _wizard_error(request, "wizard/incomes.html", context, "対象者が見つかりません", values)
@@ -473,6 +511,12 @@ async def incomes_add(
     )
     if edit_id:
         household.incomes = [income if i.id == edit_id else i for i in household.incomes]
+        household.childcare_leaves = [
+            leave.model_copy(update={"member_id": member_id})
+            if leave.income_id == edit_id
+            else leave
+            for leave in household.childcare_leaves
+        ]
     else:
         household.incomes.append(income)
     await save_household(household)
@@ -492,7 +536,13 @@ async def incomes_delete(request: Request, household_id: str, income_id: str) ->
     if household is None:
         return RedirectResponse("/", status_code=303)
     removed = next((i for i in household.incomes if i.id == income_id), None)
+    removed_leave_count = sum(
+        leave.income_id == income_id for leave in household.childcare_leaves
+    )
     household.incomes = [i for i in household.incomes if i.id != income_id]
+    household.childcare_leaves = [
+        leave for leave in household.childcare_leaves if leave.income_id != income_id
+    ]
     await save_household(household)
     await add_audit_log(
         household_id,
@@ -500,7 +550,184 @@ async def incomes_delete(request: Request, household_id: str, income_id: str) ->
         "web",
         "household.income.delete",
         income_id,
-        {"name": removed.name} if removed else {},
+        {"name": removed.name, "childcare_leaves_deleted": removed_leave_count}
+        if removed
+        else {},
+    )
+    return RedirectResponse(f"/households/{household_id}/incomes", status_code=303)
+
+
+@app.post("/households/{household_id}/childcare-leaves")
+async def childcare_leaves_add(
+    request: Request,
+    household_id: str,
+    income_id: str = Form(...),
+    child_birth_date: str = Form(...),
+    maternity_leave_start: str = Form(""),
+    maternity_leave_end: str = Form(""),
+    paternity_leave_start: str = Form(""),
+    paternity_leave_end: str = Form(""),
+    childcare_leave_start: str = Form(""),
+    childcare_leave_end: str = Form(""),
+    edit_id: str = Form(""),
+) -> Response:
+    """Q2: 産休・育休を追加・更新."""
+    household = await get_household(household_id)
+    if household is None:
+        return RedirectResponse("/", status_code=303)
+
+    values = {
+        "income_id": income_id,
+        "child_birth_date": child_birth_date,
+        "maternity_leave_start": maternity_leave_start,
+        "maternity_leave_end": maternity_leave_end,
+        "paternity_leave_start": paternity_leave_start,
+        "paternity_leave_end": paternity_leave_end,
+        "childcare_leave_start": childcare_leave_start,
+        "childcare_leave_end": childcare_leave_end,
+        "edit_id": edit_id,
+    }
+    context = {
+        "title": "Q2 収入",
+        "household": household,
+        "si_types": list(SocialInsuranceType),
+        "active_q": "Q2",
+        "edit_target": None,
+        "leave_edit_target": (
+            next((leave for leave in household.childcare_leaves if leave.id == edit_id), None)
+            if edit_id
+            else None
+        ),
+    }
+    income = next((item for item in household.incomes if item.id == income_id), None)
+    if income is None:
+        return _wizard_error(
+            request,
+            "wizard/incomes.html",
+            context,
+            "対象の収入が見つかりません",
+            values,
+            values_key="leave_values",
+        )
+    if edit_id and not any(leave.id == edit_id for leave in household.childcare_leaves):
+        return _wizard_error(
+            request,
+            "wizard/incomes.html",
+            context,
+            "編集対象の産休・育休設定が見つかりません",
+            values,
+            values_key="leave_values",
+        )
+
+    def parse_date(raw: str, label: str, required: bool = False) -> datetime.date | None:
+        if not raw.strip():
+            if required:
+                raise ValueError(f"{label}を入力してください")
+            return None
+        try:
+            return datetime.date.fromisoformat(raw)
+        except ValueError as exc:
+            raise ValueError(f"{label}の形式が正しくありません") from exc
+
+    try:
+        parsed_child_birth_date = parse_date(child_birth_date, "子の生年月日", required=True)
+        parsed_periods = {
+            "maternity_leave_start": parse_date(maternity_leave_start, "産前産後休業開始日"),
+            "maternity_leave_end": parse_date(maternity_leave_end, "産前産後休業終了日"),
+            "paternity_leave_start": parse_date(paternity_leave_start, "産後パパ育休開始日"),
+            "paternity_leave_end": parse_date(paternity_leave_end, "産後パパ育休終了日"),
+            "childcare_leave_start": parse_date(childcare_leave_start, "育児休業開始日"),
+            "childcare_leave_end": parse_date(childcare_leave_end, "育児休業終了日"),
+        }
+        leave = ChildcareLeave(
+            id=edit_id or str(uuid.uuid4()),
+            income_id=income.id,
+            member_id=income.member_id,
+            child_birth_date=parsed_child_birth_date,
+            **parsed_periods,
+        )
+        maternity_start = parsed_periods["maternity_leave_start"]
+        maternity_end = parsed_periods["maternity_leave_end"]
+        if (
+            maternity_start is not None
+            and maternity_end is not None
+            and not maternity_start <= parsed_child_birth_date <= maternity_end
+        ):
+            raise ValueError("子の生年月日は産前産後休業の期間内にしてください")
+        for period_name, start_key in (
+            ("産後パパ育休", "paternity_leave_start"),
+            ("育児休業", "childcare_leave_start"),
+        ):
+            start = parsed_periods[start_key]
+            if start is not None and start < parsed_child_birth_date:
+                raise ValueError(f"{period_name}の開始日は子の生年月日以降にしてください")
+    except ValueError as exc:
+        return _wizard_error(
+            request,
+            "wizard/incomes.html",
+            context,
+            str(exc),
+            values,
+            values_key="leave_values",
+        )
+
+    for existing in household.childcare_leaves:
+        if existing.id == leave.id or existing.income_id != leave.income_id:
+            continue
+        for new_period in leave_periods(leave):
+            if any(
+                new_period.start <= old_period.end
+                and old_period.start <= new_period.end
+                for old_period in leave_periods(existing)
+            ):
+                return _wizard_error(
+                    request,
+                    "wizard/incomes.html",
+                    context,
+                    "同じ収入の休業期間が重複しています",
+                    values,
+                    values_key="leave_values",
+                )
+
+    if edit_id:
+        household.childcare_leaves = [
+            leave if existing.id == edit_id else existing
+            for existing in household.childcare_leaves
+        ]
+    else:
+        household.childcare_leaves.append(leave)
+    await save_household(household)
+    await add_audit_log(
+        household_id,
+        getattr(request.state, "authenticated_email", None) or "web-user",
+        "web",
+        "household.childcare_leave.update" if edit_id else "household.childcare_leave.add",
+        leave.id,
+        {"income_id": income.id, "member_id": income.member_id},
+    )
+    return RedirectResponse(f"/households/{household_id}/incomes", status_code=303)
+
+
+@app.post("/households/{household_id}/childcare-leaves/{leave_id}/delete")
+async def childcare_leaves_delete(
+    request: Request, household_id: str, leave_id: str
+) -> RedirectResponse:
+    """Q2: 産休・育休を削除."""
+    household = await get_household(household_id)
+    if household is None:
+        return RedirectResponse("/", status_code=303)
+    removed = next((leave for leave in household.childcare_leaves if leave.id == leave_id), None)
+    household.childcare_leaves = [
+        leave for leave in household.childcare_leaves if leave.id != leave_id
+    ]
+    await save_household(household)
+    await add_audit_log(
+        household_id,
+        getattr(request.state, "authenticated_email", None) or "web-user",
+        "web",
+        "household.childcare_leave.delete",
+        leave_id,
+        {"income_id": removed.income_id} if removed else {},
     )
     return RedirectResponse(f"/households/{household_id}/incomes", status_code=303)
 
@@ -1973,6 +2200,7 @@ def _yearly_summary(monthly) -> list[dict]:
                 "year": month.date.year,
                 "age": month.age,
                 "income": 0,
+                "leave_benefit": 0,
                 "ideco_withdrawal": 0,
                 "nisa_withdrawal": 0,
                 "survivor_pension": 0,
@@ -1996,6 +2224,11 @@ def _yearly_summary(monthly) -> list[dict]:
             },
         )
         summary["income"] += month.total_income
+        summary["leave_benefit"] += (
+            month.maternity_allowance
+            + month.paternity_leave_benefit
+            + month.childcare_benefit
+        )
         summary["ideco_withdrawal"] += month.ideco_withdrawal
         summary["nisa_withdrawal"] += month.nisa_withdrawal
         summary["survivor_pension"] += month.survivor_pension
@@ -2032,6 +2265,9 @@ _TRACE_PARAMETER_SOURCES: dict[str, tuple[tuple[str, str], ...]] = {
         ("日本年金機構: 厚生年金保険料率", "社会保険.厚生年金.料率"),
         ("協会けんぽ: 健康保険・介護保険料率", "社会保険.健康保険.料率"),
         ("厚生労働省: 雇用保険料率", "社会保険.雇用保険.労働者負担率"),
+    ),
+    "社会保険料免除": (
+        ("協会けんぽ: 産前産後休業・育児休業中の保険料免除", "産休育休.社会保険料免除"),
     ),
     "年金収入": (
         ("日本年金機構: 老齢基礎年金", "年金.老齢基礎年金.満額"),
@@ -2070,6 +2306,17 @@ _TRACE_PARAMETER_SOURCES: dict[str, tuple[tuple[str, str], ...]] = {
     ),
     "NISA取崩": (
         ("金融庁: NISA非課税保有限度額", "NISA.非課税保有限度額"),
+    ),
+    "出産手当金": (
+        ("厚生労働省: 出産手当金", "産休育休.出産手当金.給付率"),
+    ),
+    "産後パパ育休給付金": (
+        ("厚生労働省: 育児休業給付", "産休育休.育児休業給付金.給付率.最初の180日"),
+        ("厚生労働省: 育児休業給付", "産休育休.育児休業給付金.給付率.181日以降"),
+    ),
+    "育児休業給付金": (
+        ("厚生労働省: 育児休業給付", "産休育休.育児休業給付金.給付率.最初の180日"),
+        ("厚生労働省: 育児休業給付", "産休育休.育児休業給付金.給付率.181日以降"),
     ),
 }
 
@@ -2120,7 +2367,10 @@ async def simulate_result(
     store = get_store()
     from fp_simulator.engine.cashflow import simulate
 
-    result = simulate(store, simulation_household)
+    try:
+        result = simulate(store, simulation_household)
+    except ValueError as exc:
+        return _simulation_error(request, household, str(exc), plan_id)
 
     range_options = [
         {"value": "1", "label": "1年"},
@@ -2190,11 +2440,16 @@ async def simulate_result(
     income_years = sorted({m.date.year for m in result.monthly})
     income_by_year: dict[int, list] = {}
     for m in result.monthly:
-        yearly_income = income_by_year.setdefault(m.date.year, [0, 0, 0, 0])
+        yearly_income = income_by_year.setdefault(m.date.year, [0, 0, 0, 0, 0])
         yearly_income[0] += m.salary_income
-        yearly_income[1] += m.pension_income + m.survivor_pension
-        yearly_income[2] += m.retirement_income
-        yearly_income[3] += (
+        yearly_income[1] += (
+            m.maternity_allowance
+            + m.paternity_leave_benefit
+            + m.childcare_benefit
+        )
+        yearly_income[2] += m.pension_income + m.survivor_pension
+        yearly_income[3] += m.retirement_income
+        yearly_income[4] += (
             m.other_income
             + m.death_benefit
             + m.child_allowance
@@ -2202,9 +2457,9 @@ async def simulate_result(
             + m.nisa_withdrawal
             + m.vehicle_sale_income
         )
-    income_series_labels = ["給与", "年金", "退職金", "その他"]
+    income_series_labels = ["給与", "産休・育休給付", "年金", "退職金", "その他"]
     income_series_values = [
-        [income_by_year[year][i] for year in income_years] for i in range(4)
+        [income_by_year[year][i] for year in income_years] for i in range(5)
     ]
 
     return templates.TemplateResponse(
@@ -2253,7 +2508,11 @@ async def _export_response(
     from fp_simulator.engine.cashflow import simulate
 
     simulation_household = selected_plan or household
-    rows = _export_rows(simulate(get_store(), simulation_household), granularity)
+    try:
+        result = simulate(get_store(), simulation_household)
+    except ValueError as exc:
+        return Response(f"シミュレーションを実行できません: {exc}", status_code=400)
+    rows = _export_rows(result, granularity)
     suffix = "xlsx" if excel else "csv"
     filename = f"fp-simulator-{granularity}.{suffix}"
     if excel:
@@ -2326,8 +2585,11 @@ async def compare_plans(
         alternative.assumptions.inflation_rate = alternative_inflation_rate
         alternative.assumptions.investment_return_rate = alternative_investment_return_rate
 
-    baseline_result = simulate(get_store(), baseline)
-    alternative_result = simulate(get_store(), alternative)
+    try:
+        baseline_result = simulate(get_store(), baseline)
+        alternative_result = simulate(get_store(), alternative)
+    except ValueError as exc:
+        return _simulation_error(request, household, str(exc))
 
     def metrics(result) -> dict:
         balances = [month.balance for month in result.monthly]
@@ -2440,19 +2702,22 @@ async def disaster_scenarios(
             or not 0 <= living_expense_reduction_rate <= 1
         ):
             return HTMLResponse("万が一シナリオの入力値が不正です", status_code=400)
-        baseline_result = simulate(store, household)
-        scenario_result = simulate(
-            store,
-            household,
-            DisasterScenario(
-                selected_member.id,
-                death_age,
-                f"{selected_member.name}万が一",
-                survivor_pension_monthly=survivor_pension_monthly,
-                child_allowance_monthly=child_allowance_monthly,
-                living_expense_reduction_rate=living_expense_reduction_rate,
-            ),
-        )
+        try:
+            baseline_result = simulate(store, household)
+            scenario_result = simulate(
+                store,
+                household,
+                DisasterScenario(
+                    selected_member.id,
+                    death_age,
+                    f"{selected_member.name}万が一",
+                    survivor_pension_monthly=survivor_pension_monthly,
+                    child_allowance_monthly=child_allowance_monthly,
+                    living_expense_reduction_rate=living_expense_reduction_rate,
+                ),
+            )
+        except ValueError as exc:
+            return _simulation_error(request, household, str(exc))
 
     death_date = (
         datetime.date(
@@ -2536,6 +2801,9 @@ async def disaster_scenarios(
 def _monthly_detail_items(month) -> list[tuple[str, int]]:
     """月次表の詳細列を展開表示するための非ゼロ内訳項目."""
     flow_items = [
+        ("出産手当金", month.maternity_allowance),
+        ("産後パパ育休給付金", month.paternity_leave_benefit),
+        ("育児休業給付金", month.childcare_benefit),
         ("乗り物売却", month.vehicle_sale_income),
         ("住宅頭金", month.housing_down_payment),
         ("固定資産税", month.property_tax),
@@ -2571,7 +2839,10 @@ async def monthly_simulation_result(
     from fp_simulator.engine.cashflow import simulate
 
     store = get_store()
-    result = simulate(store, simulation_household)
+    try:
+        result = simulate(store, simulation_household)
+    except ValueError as exc:
+        return _simulation_error(request, household, str(exc), plan_id)
     monthly = [m for m in result.monthly if m.date.year == year]
     if not monthly:
         return HTMLResponse("指定された年のシミュレーション結果がありません", status_code=404)

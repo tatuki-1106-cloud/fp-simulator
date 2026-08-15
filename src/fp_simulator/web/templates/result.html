@@ -110,7 +110,7 @@
 <div class="chart-grid">
   <div class="chart-box">
     <h3>年次収入構成</h3>
-    <p class="chart-note">生涯全体。給与・年金・退職金・その他収入の推移です。</p>
+    <p class="chart-note">生涯全体。給与・産休育休給付・年金・退職金・その他収入の推移です。</p>
     <canvas id="incomeChart"></canvas>
   </div>
   <div class="chart-box">
@@ -128,7 +128,7 @@
 <h2>年次キャッシュフロー</h2>
 <table>
   <thead>
-    <tr><th>年</th><th>年齢</th><th>収入</th><th>乗り物売却</th><th>支出</th><th>住宅頭金</th><th>固定資産税</th><th>修繕費</th><th>乗り物購入</th><th>乗り物維持費</th><th>乗り物税金・修繕</th><th>車検</th><th>税・社保</th><th>収支</th><th>現金・預金</th><th>iDeCo</th><th>NISA</th><th>iDeCo受取</th><th>NISA取崩</th><th>金融資産合計</th></tr>
+    <tr><th>年</th><th>年齢</th><th>収入</th><th>休業給付</th><th>乗り物売却</th><th>支出</th><th>住宅頭金</th><th>固定資産税</th><th>修繕費</th><th>乗り物購入</th><th>乗り物維持費</th><th>乗り物税金・修繕</th><th>車検</th><th>税・社保</th><th>収支</th><th>現金・預金</th><th>iDeCo</th><th>NISA</th><th>iDeCo受取</th><th>NISA取崩</th><th>金融資産合計</th>
   </thead>
   <tbody>
   {% for y in yearly %}
@@ -136,6 +136,7 @@
       <td><a href="/households/{{ household.id }}/simulate/monthly?year={{ y.year }}{% if plan_id %}&plan_id={{ plan_id }}{% endif %}">{{ y.year }}</a></td>
       <td>{{ y.age }}</td>
       <td>{{ "{:,}".format(y.income) }}</td>
+      <td>{{ "{:,}".format(y.leave_benefit) }}</td>
       <td>{{ "{:,}".format(y.vehicle_sale_income) }}</td>
       <td>{{ "{:,}".format(y.expense) }}</td>
       <td>{{ "{:,}".format(y.housing_down_payment) }}</td>
@@ -199,7 +200,7 @@ new Chart(ctx, {
   }
 });
 
-const incomeSeriesColors = ['#1a3a5c', '#2e8b57', '#d2691e', '#9370db'];
+const incomeSeriesColors = ['#1a3a5c', '#c05a2b', '#2e8b57', '#d2691e', '#9370db'];
 new Chart(document.getElementById('incomeChart'), {
   type: 'bar',
   data: {

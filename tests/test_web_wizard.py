@@ -889,3 +889,152 @@ async def test_vehicles_and_insurance_edit_flow(client: AsyncClient) -> None:
     household = await get_household(household_id)
     assert len(household.insurances) == 1
     assert household.insurances[0].monthly_premium == 15000
+
+
+async def test_childcare_leave_crud_validation_and_simulation(client: AsyncClient) -> None:
+    """Q2の産休育休CRUD、入力エラー保持、結果表示を確認する."""
+    from fp_simulator.db.database import get_household
+
+    household_id = await _new_household(client)
+    member_id = await _add_member(client, household_id, "はなこ")
+    r = await client.post(
+        f"/households/{household_id}/incomes",
+        data={
+            "member_id": member_id,
+            "name": "会社員",
+            "social_insurance_type": "給与(厚生年金)",
+            "start_age": 0,
+            "end_age": 60,
+            "monthly_amount": 300000,
+            "bonus_amount": 0,
+            "retirement_allowance": 0,
+            "retirement_age": 60,
+        },
+    )
+    assert r.status_code == 303
+    household = await get_household(household_id)
+    income_id = household.incomes[0].id
+
+    r = await client.post(
+        f"/households/{household_id}/childcare-leaves",
+        data={
+            "income_id": income_id,
+            "child_birth_date": "2026-01-01",
+            "maternity_leave_start": "2026-01-01",
+            "maternity_leave_end": "2026-01-31",
+            "paternity_leave_start": "",
+            "paternity_leave_end": "",
+            "childcare_leave_start": "2026-02-01",
+            "childcare_leave_end": "2026-02-20",
+        },
+    )
+    assert r.status_code == 303
+    household = await get_household(household_id)
+    leave_id = household.childcare_leaves[0].id
+
+    r = await client.get(f"/households/{household_id}/incomes")
+    assert r.status_code == 200
+    assert "産休・育休の設定" in r.text
+    assert "2026-01-31" in r.text
+    assert f"leave_edit_id={leave_id}" in r.text
+
+    r = await client.get(f"/households/{household_id}/incomes?leave_edit_id={leave_id}")
+    assert r.status_code == 200
+    assert ">更新<" in r.text
+    assert 'value="2026-01-01"' in r.text
+
+    r = await client.post(
+        f"/households/{household_id}/childcare-leaves",
+        data={
+            "income_id": income_id,
+            "child_birth_date": "2026-01-01",
+            "maternity_leave_start": "2026-02-10",
+            "maternity_leave_end": "2026-02-05",
+            "paternity_leave_start": "",
+            "paternity_leave_end": "",
+            "childcare_leave_start": "",
+            "childcare_leave_end": "",
+            "edit_id": leave_id,
+        },
+    )
+    assert r.status_code == 400
+    assert "must not precede start" in r.text
+    assert 'value="2026-02-10"' in r.text
+
+    r = await client.get(f"/households/{household_id}/simulate")
+    assert r.status_code == 200
+    assert "休業給付" in r.text
+    r = await client.get(f"/households/{household_id}/simulate/monthly?year=2026")
+    assert r.status_code == 200
+    assert "出産手当金" in r.text
+
+    r = await client.post(f"/households/{household_id}/childcare-leaves/{leave_id}/delete")
+    assert r.status_code == 303
+    household = await get_household(household_id)
+    assert household.childcare_leaves == []
+
+
+async def test_simulation_input_error_is_rendered_as_bad_request(client: AsyncClient) -> None:
+    """世帯主未設定などの不完全データを500ではなく入力エラーとして表示する."""
+    household_id = await _new_household(client, "未設定世帯")
+
+    r = await client.get(f"/households/{household_id}/simulate")
+
+    assert r.status_code == 400
+    assert "シミュレーションを実行できません" in r.text
+    assert "世帯主が見つかりません" in r.text
+
+
+async def test_income_edit_and_delete_keep_childcare_leave_links_consistent(
+    client: AsyncClient,
+) -> None:
+    """収入の対象者変更と削除で紐づく産休育休設定を整合させる."""
+    from fp_simulator.db.database import get_household
+
+    household_id = await _new_household(client, "収入リンク世帯")
+    first_member_id = await _add_member(client, household_id, "一郎")
+    second_member_id = await _add_member(client, household_id, "二郎")
+    income_data = {
+        "member_id": first_member_id,
+        "name": "給与",
+        "social_insurance_type": "給与(厚生年金)",
+        "start_age": 0,
+        "end_age": 60,
+        "monthly_amount": 300000,
+        "bonus_amount": 0,
+        "retirement_allowance": 0,
+        "retirement_age": 60,
+    }
+    r = await client.post(f"/households/{household_id}/incomes", data=income_data)
+    assert r.status_code == 303
+    household = await get_household(household_id)
+    income_id = household.incomes[0].id
+
+    r = await client.post(
+        f"/households/{household_id}/childcare-leaves",
+        data={
+            "income_id": income_id,
+            "child_birth_date": "2026-01-01",
+            "maternity_leave_start": "2026-01-01",
+            "maternity_leave_end": "2026-01-10",
+            "paternity_leave_start": "",
+            "paternity_leave_end": "",
+            "childcare_leave_start": "",
+            "childcare_leave_end": "",
+        },
+    )
+    assert r.status_code == 303
+
+    r = await client.post(
+        f"/households/{household_id}/incomes",
+        data={**income_data, "member_id": second_member_id, "edit_id": income_id},
+    )
+    assert r.status_code == 303
+    household = await get_household(household_id)
+    assert household.childcare_leaves[0].member_id == second_member_id
+
+    r = await client.post(f"/households/{household_id}/incomes/{income_id}/delete")
+    assert r.status_code == 303
+    household = await get_household(household_id)
+    assert household.incomes == []
+    assert household.childcare_leaves == []
