@@ -24,11 +24,12 @@ class Deductions:
     social_insurance: int  # 社会保険料控除
     spouse: int  # 配偶者控除
     dependent: int  # 扶養控除
-    # 将来: 生命保険料控除、地震保険料控除、医療費控除、iDeCo等
+    mutual_aid: int = 0  # 小規模企業共済等掛金控除(iDeCo掛金等)
+    # 将来: 生命保険料控除、地震保険料控除、医療費控除等
 
     @property
     def total(self) -> int:
-        return self.basic + self.social_insurance + self.spouse + self.dependent
+        return self.basic + self.social_insurance + self.spouse + self.dependent + self.mutual_aid
 
 
 def calc_taxable_income(
@@ -59,6 +60,38 @@ def calc_reconstruction_tax(store: ParameterStore, date: datetime.date, income_t
     """復興特別所得税(所得税額×2.1%)を返す."""
     rate = store.get("所得税.復興特別所得税率", date)
     return int(income_tax * rate)
+
+
+def public_pension_deduction(
+    store: ParameterStore, date: datetime.date, age: int, annual_pension_income: int
+) -> int:
+    """公的年金等控除額を返す.
+
+    その年の12月31日時点の年齢で65歳未満/以上のテーブルを選択する。
+    公的年金等に係る雑所得以外の合計所得金額は1,000万円以下を前提とする(簡略化)。
+    """
+    if annual_pension_income <= 0:
+        return 0
+    key = "所得税.公的年金等控除.65歳以上" if age >= 65 else "所得税.公的年金等控除.65歳未満"
+    table = store.get(key, date)
+    for bracket in table["brackets"]:
+        up_to = bracket["up_to"]
+        if up_to is None or annual_pension_income <= up_to:
+            return int(annual_pension_income * bracket["rate"]) + bracket["add"]
+    return 0
+
+
+def pension_miscellaneous_income(
+    store: ParameterStore, date: datetime.date, age: int, annual_pension_income: int
+) -> int:
+    """公的年金等に係る雑所得(収入 - 公的年金等控除)を返す.
+
+    老齢年金・iDeCoの年金受取などの公的年金等収入に適用する。
+    """
+    if annual_pension_income <= 0:
+        return 0
+    deduction = public_pension_deduction(store, date, age, annual_pension_income)
+    return max(0, annual_pension_income - deduction)
 
 
 def calc_annual_income_tax(

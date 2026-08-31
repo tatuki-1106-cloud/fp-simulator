@@ -14,8 +14,10 @@ from fp_simulator.engine.investment import (
     NisaAccount,
     ideco_annual_deduction,
     ideco_contribution_limit,
+    ideco_contribution_years,
     ideco_monthly_step,
     nisa_monthly_step,
+    nisa_withdraw,
     withdrawal_amount,
 )
 from fp_simulator.engine.insurance import (
@@ -82,6 +84,15 @@ class TestIdeco:
         # 1,000,000 × (1+0.0025) + 20,000 = 1,022,500
         assert new.balance == 1_022_500
         assert new.total_contributions == 120_000
+        assert new.contribution_months == 1
+
+    def test_contribution_years_rounds_up(self) -> None:
+        """退職所得控除の加入年数は1年未満切上げ・最低1年."""
+        assert ideco_contribution_years(IdecoAccount(contribution_months=0), 0) == 1
+        assert ideco_contribution_years(IdecoAccount(contribution_months=12), 0) == 1
+        assert ideco_contribution_years(IdecoAccount(contribution_months=13), 0) == 2
+        # 初期残高分の加入済み年数を加算
+        assert ideco_contribution_years(IdecoAccount(contribution_months=24), 10) == 12
 
 
 class TestNisa:
@@ -89,7 +100,9 @@ class TestNisa:
 
     def test_monthly_step(self, store) -> None:
         """月額投資と運用."""
-        acc = NisaAccount(balance=500_000, total_invested=500_000)
+        acc = NisaAccount(
+            tsumitate_balance=500_000, tsumitate_cost=500_000, tracking_year=2025
+        )
         new = nisa_monthly_step(store, D2025, acc, 50000, annual_return_rate=0.05)
         assert new.balance > 500_000
         assert new.total_invested == 550_000
@@ -99,6 +112,87 @@ class TestNisa:
         assert withdrawal_amount(100_000, 30_000) == 30_000
         assert withdrawal_amount(100_000, 200_000) == 100_000
         assert withdrawal_amount(0, 10_000) == 0
+
+    def test_frame_split_tracks_tsumitate_and_growth(self, store) -> None:
+        """つみたて枠と成長投資枠を分離して管理する."""
+        acc = NisaAccount(tracking_year=2025)
+        new = nisa_monthly_step(store, D2025, acc, 50_000, 100_000)
+        assert new.tsumitate_balance == 50_000
+        assert new.growth_balance == 100_000
+        assert new.year_invested_tsumitate == 50_000
+        assert new.year_invested_growth == 100_000
+
+    def test_tsumitate_overflow_spills_to_growth(self, store) -> None:
+        """つみたて枠の年間上限(120万円)超過分は成長投資枠へ振り替える."""
+        acc = NisaAccount(year_invested_tsumitate=1_150_000, tracking_year=2025)
+        new = nisa_monthly_step(store, D2025, acc, 100_000)
+        # つみたて枠の残り5万円のみつみたて枠、超過5万円は成長枠へ
+        assert new.year_invested_tsumitate == 1_200_000
+        assert new.year_invested_growth == 50_000
+        assert new.balance == acc.balance + 100_000
+
+    def test_growth_annual_limit_caps_investment(self, store) -> None:
+        """成長投資枠は年間240万円まで."""
+        acc = NisaAccount(year_invested_growth=2_350_000, tracking_year=2025)
+        new = nisa_monthly_step(store, D2025, acc, 0, 100_000)
+        assert new.year_invested_growth == 2_400_000
+        assert new.growth_balance == 50_000
+
+    def test_growth_lifetime_limit_is_12m(self, store) -> None:
+        """成長投資枠の生涯上限は1,200万円."""
+        acc = NisaAccount(
+            growth_balance=11_950_000, growth_cost=11_950_000, tracking_year=2025
+        )
+        new = nisa_monthly_step(store, D2025, acc, 0, 100_000)
+        assert new.growth_cost == 12_000_000
+
+    def test_lifetime_limit_is_18m(self, store) -> None:
+        """生涯非課税保有限度額は1,800万円(簿価ベース)."""
+        acc = NisaAccount(
+            tsumitate_balance=17_950_000, tsumitate_cost=17_950_000, tracking_year=2025
+        )
+        new = nisa_monthly_step(store, D2025, acc, 100_000)
+        assert new.tsumitate_cost == 18_000_000
+        assert new.total_invested == 18_000_000
+
+    def test_withdraw_reduces_cost_and_restores_next_year(self, store) -> None:
+        """売却で簿価按分の生涯枠を消費解除し、翌年に枠が復活する."""
+        acc = NisaAccount(
+            tsumitate_balance=18_000_000 * 2,  # 評価額は簿価の2倍(含み益100%)
+            tsumitate_cost=18_000_000,
+            tracking_year=2025,
+        )
+        acc, withdrawal = nisa_withdraw(acc, 3_600_000)
+        assert withdrawal == 3_600_000
+        # 簿価は取崩額の半分(按分)だけ減る
+        assert acc.tsumitate_cost == 16_200_000
+        assert acc.pending_restore_tsumitate == 1_800_000
+        # 当年は売却分の簿価も生涯枠を消費したまま(復活は翌年)
+        assert acc.total_invested == 18_000_000
+        new = nisa_monthly_step(store, D2025, acc, 100_000)
+        assert new.year_invested_tsumitate == 0
+        # 翌年になると簿価分の枠が復活して投資可能になる
+        next_year = nisa_monthly_step(
+            store, datetime.date(2026, 1, 1), acc, 100_000
+        )
+        assert next_year.pending_restore_tsumitate == 0
+        assert next_year.year_invested_tsumitate == 100_000
+
+    def test_withdraw_is_proportional_across_frames(self, store) -> None:
+        """取崩はつみたて枠・成長枠から評価額按分で行う."""
+        acc = NisaAccount(
+            tsumitate_balance=600_000,
+            growth_balance=400_000,
+            tsumitate_cost=600_000,
+            growth_cost=400_000,
+            tracking_year=2025,
+        )
+        acc, withdrawal = nisa_withdraw(acc, 100_000)
+        assert withdrawal == 100_000
+        assert acc.tsumitate_balance == 540_000
+        assert acc.growth_balance == 360_000
+        assert acc.pending_restore_tsumitate == 60_000
+        assert acc.pending_restore_growth == 40_000
 
 
 class TestInsurance:

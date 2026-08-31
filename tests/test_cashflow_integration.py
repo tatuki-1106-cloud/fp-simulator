@@ -263,7 +263,7 @@ class TestCashflowIntegration:
     def test_investment_withdrawals_reduce_accounts_and_add_net_cashflow(
         self, store, household: Household
     ) -> None:
-        """明示した受取月額を開始年齢から反映し、iDeCo税を控除する."""
+        """明示した受取月額を開始年齢から反映する(旧データは年金受取へ移行)."""
         household.ideco_plans.append(
             IdecoPlan(
                 id="ideco-withdrawal",
@@ -272,7 +272,7 @@ class TestCashflowIntegration:
                 monthly_contribution=0,
                 receive_start_age=30,
                 monthly_withdrawal=10_000,
-                withdrawal_tax_rate=0.1,
+                withdrawal_tax_rate=0.1,  # 旧フィールド(無視される)
             )
         )
         household.nisa_plans.append(
@@ -285,12 +285,15 @@ class TestCashflowIntegration:
                 monthly_withdrawal=5_000,
             )
         )
+        # 旧既定値「一時金」+受取月額>0 は年金受取として移行される
+        assert household.ideco_plans[0].receive_type == "年金"
         result = simulate(store, household)
         before = next(m for m in result.monthly if m.date == datetime.date(2026, 3, 1))
         receive_month = next(m for m in result.monthly if m.date == datetime.date(2026, 4, 1))
         assert before.ideco_withdrawal == 0
         assert receive_month.ideco_withdrawal == 10_000
-        assert receive_month.ideco_withdrawal_tax == 1_000
+        # 年金受取は雑所得として総合課税(年12万円は公的年金等控除内で税額0)
+        assert receive_month.ideco_withdrawal_tax == 0
         assert receive_month.nisa_withdrawal == 5_000
         assert receive_month.ideco_balance == 90_000
         assert receive_month.nisa_balance == 95_000
@@ -302,6 +305,253 @@ class TestCashflowIntegration:
             - receive_month.resident_tax
             - receive_month.ideco_withdrawal_tax
         )
+
+    def test_public_pension_is_taxed_as_misc_income(
+        self, store, household: Household
+    ) -> None:
+        """老齢年金は公的年金等控除を適用した雑所得として課税対象になる."""
+        # 課税が発生する水準へ年金額を引き上げる(平均標準報酬80万円)
+        household.pension_records[0].avg_standard_remuneration = 800_000
+        result = simulate(store, household)
+        # 夫は65歳(2061年4月)から受給。給与は60歳で終了済み
+        month = next(m for m in result.monthly if m.date == datetime.date(2062, 3, 1))
+        assert month.pension_income > 0
+        trace = next(t for t in month.traces if t.item == "所得税(源泉徴収)")
+        misc = trace.basis["公的年金等雑所得"]
+        annual_pension = month.pension_income * 12
+        assert misc > 0
+        # 65歳以上・年金収入330万円以下 → 控除110万円
+        assert misc == annual_pension - 1_100_000
+        # 雑所得への所得税が月次で源泉徴収される
+        assert month.income_tax > 0
+        # 前年(2061年)の年金雑所得に対する住民税が2062年6月以降に発生する
+        july = next(m for m in result.monthly if m.date == datetime.date(2062, 7, 1))
+        assert july.resident_tax > 0
+
+    def test_ideco_contribution_stops_after_lump_sum_receipt(
+        self, store, household: Household
+    ) -> None:
+        """一時金受取後は脱退扱いとなり、end_ageが後でも拠出を停止する."""
+        household.ideco_plans.append(
+            IdecoPlan(
+                id="ideco-stop",
+                member_id="husband",
+                initial_balance=1_000_000,
+                monthly_contribution=10_000,
+                start_age=0,
+                end_age=60,  # 受取開始(30歳)より後まで拠出可能な設定
+                receive_start_age=30,
+                receive_type="一時金",
+            )
+        )
+        result = simulate(store, household)
+        before = next(m for m in result.monthly if m.date == datetime.date(2026, 3, 1))
+        receive_month = next(
+            m for m in result.monthly if m.date == datetime.date(2026, 4, 1)
+        )
+        after = next(m for m in result.monthly if m.date == datetime.date(2026, 5, 1))
+        assert before.ideco_contribution == 10_000
+        # 受取開始月から拠出停止し、残高が全額一時金で支払われる
+        assert receive_month.ideco_contribution == 0
+        assert receive_month.ideco_withdrawal > 0
+        assert after.ideco_contribution == 0
+        assert after.ideco_balance == 0
+
+    def test_pension_only_zero_tax_month_has_no_income_tax_trace(
+        self, store, household: Household
+    ) -> None:
+        """給与がなく税額0の年金受取月は所得税トレースを出さない."""
+        household.incomes = []
+        household.ideco_plans.append(
+            IdecoPlan(
+                id="ideco-small-annuity",
+                member_id="husband",
+                initial_balance=1_000_000,
+                monthly_contribution=0,
+                receive_start_age=30,
+                receive_type="年金",
+                monthly_withdrawal=50_000,  # 年60万円: 公的年金等控除(60万)内
+            )
+        )
+        result = simulate(store, household)
+        receive_month = next(
+            m for m in result.monthly if m.date == datetime.date(2026, 4, 1)
+        )
+        assert receive_month.ideco_withdrawal == 50_000
+        assert receive_month.income_tax == 0
+        assert not any(
+            t.item.startswith("所得税") for t in receive_month.traces
+        )
+
+    def test_ideco_annuity_stops_after_annuity_years(
+        self, store, household: Household
+    ) -> None:
+        """受取期間を指定した年金受取は期間経過後に停止し、残高が残る."""
+        household.ideco_plans.append(
+            IdecoPlan(
+                id="ideco-limited-annuity",
+                member_id="husband",
+                initial_balance=10_000_000,
+                monthly_contribution=0,
+                receive_start_age=30,
+                receive_type="年金",
+                monthly_withdrawal=10_000,
+                annuity_years=2,
+            )
+        )
+        result = simulate(store, household)
+        # 受取開始: 2026年4月(30歳)。2年後の2028年4月(32歳)以降は停止
+        receiving = next(m for m in result.monthly if m.date == datetime.date(2027, 6, 1))
+        stopped = next(m for m in result.monthly if m.date == datetime.date(2028, 4, 1))
+        assert receiving.ideco_withdrawal == 10_000
+        assert stopped.ideco_withdrawal == 0
+        assert stopped.ideco_balance > 0
+
+    def test_ideco_lump_sum_dedup_reduces_deduction_within_19_years(
+        self, store, household: Household
+    ) -> None:
+        """退職金の後19年以内のiDeCo一時金は重複年数分の控除を減らす(19年ルール簡易)."""
+        # 退職金: 60歳・勤続31年(29〜60)。iDeCo一時金: 65歳受取(差5年)
+        household.ideco_plans.append(
+            IdecoPlan(
+                id="ideco-dedup",
+                member_id="husband",
+                initial_balance=10_000_000,
+                monthly_contribution=0,
+                prior_contribution_years=10,
+                start_age=0,
+                end_age=60,
+                receive_start_age=65,
+                receive_type="一時金",
+            )
+        )
+        result = simulate(store, household)
+        receive_month = next(
+            m for m in result.monthly if m.date == datetime.date(2061, 4, 1)
+        )
+        trace = next(t for t in receive_month.traces if t.item == "iDeCo一時金受取")
+        # iDeCo加入期間(近似): 60歳終端で10年 → 50〜60歳。勤続29〜60歳と10年重複
+        assert trace.basis["重複調整(19年ルール簡易)"] == 10
+        assert trace.basis["調整後控除年数"] == 0
+        # 調整後0年 → 控除は最低保障80万円のみ(簡易モデル)
+        assert trace.basis["退職所得控除"] == 800_000
+
+    def test_retirement_allowance_dedup_within_5_years(
+        self, store, household: Household
+    ) -> None:
+        """iDeCo一時金の後4年以内の退職金は重複年数分の控除を減らす(5年ルール簡易)."""
+        from fp_simulator.engine.retirement import net_retirement_allowance
+
+        # iDeCo一時金: 58歳受取(退職60歳との差2年)。加入20年(38〜58歳の近似)
+        household.ideco_plans.append(
+            IdecoPlan(
+                id="ideco-first",
+                member_id="husband",
+                initial_balance=5_000_000,
+                monthly_contribution=0,
+                prior_contribution_years=20,
+                start_age=0,
+                end_age=60,
+                receive_start_age=58,
+                receive_type="一時金",
+            )
+        )
+        result = simulate(store, household)
+        retire_month = next(
+            m for m in result.monthly if m.date == datetime.date(2056, 4, 1)
+        )
+        trace = next(t for t in retire_month.traces if t.item == "退職金(手取り)")
+        # 勤続29〜60歳(31年)とiDeCo加入38〜58歳が20年重複 → 調整後11年
+        assert trace.basis["重複調整(5年ルール簡易)"] == 20
+        assert trace.basis["調整後控除年数"] == 11
+        expected_net = net_retirement_allowance(
+            store, datetime.date(2056, 4, 1), 20_000_000, 11
+        )
+        assert retire_month.retirement_income == expected_net
+
+    def test_no_dedup_when_receipts_are_far_apart(
+        self, store, household: Household
+    ) -> None:
+        """退職金とiDeCo一時金が19年超離れていれば控除調整しない."""
+        # iDeCo一時金: 30歳受取(退職60歳より30年前) → 両ルールとも対象外
+        household.ideco_plans.append(
+            IdecoPlan(
+                id="ideco-early",
+                member_id="husband",
+                initial_balance=1_000_000,
+                monthly_contribution=0,
+                prior_contribution_years=5,
+                receive_start_age=30,
+                receive_type="一時金",
+            )
+        )
+        result = simulate(store, household)
+        lump_month = next(
+            m for m in result.monthly if m.date == datetime.date(2026, 4, 1)
+        )
+        lump_trace = next(t for t in lump_month.traces if t.item == "iDeCo一時金受取")
+        assert "重複調整(19年ルール簡易)" not in lump_trace.basis
+        retire_month = next(
+            m for m in result.monthly if m.date == datetime.date(2056, 4, 1)
+        )
+        retire_trace = next(
+            t for t in retire_month.traces if t.item == "退職金(手取り)"
+        )
+        assert "重複調整(5年ルール簡易)" not in retire_trace.basis
+
+    def test_ideco_lump_sum_taxed_as_retirement_income(
+        self, store, household: Household
+    ) -> None:
+        """一時金受取は受取開始年齢の到達月に退職所得として分離課税する."""
+        household.ideco_plans.append(
+            IdecoPlan(
+                id="ideco-lump",
+                member_id="husband",
+                initial_balance=10_000_000,
+                monthly_contribution=0,
+                receive_start_age=30,
+                receive_type="一時金",
+                prior_contribution_years=10,
+            )
+        )
+        result = simulate(store, household)
+        receive_month = next(
+            m for m in result.monthly if m.date == datetime.date(2026, 4, 1)
+        )
+        assert receive_month.ideco_withdrawal == 10_000_000
+        # 退職所得控除 40万×10年=400万 → 課税退職所得 (1000万-400万)/2=300万
+        # 所得税 300万×10%-9.75万=20.25万 → 復興税込み 206,752円、住民税 30万
+        assert receive_month.ideco_withdrawal_tax == 206_752 + 300_000
+        assert receive_month.ideco_balance == 0
+        # 一時金は一度だけ支払われる
+        after = next(m for m in result.monthly if m.date == datetime.date(2026, 5, 1))
+        assert after.ideco_withdrawal == 0
+
+    def test_ideco_annuity_is_taxed_as_public_pension_income(
+        self, store, household: Household
+    ) -> None:
+        """iDeCoの年金受取は公的年金等の雑所得として所得税へ合算する."""
+        household.ideco_plans.append(
+            IdecoPlan(
+                id="ideco-annuity",
+                member_id="husband",
+                initial_balance=50_000_000,
+                monthly_contribution=0,
+                receive_start_age=30,
+                receive_type="年金",
+                monthly_withdrawal=200_000,
+            )
+        )
+        result = simulate(store, household)
+        receive_month = next(
+            m for m in result.monthly if m.date == datetime.date(2026, 4, 1)
+        )
+        assert receive_month.ideco_withdrawal == 200_000
+        trace = next(
+            t for t in receive_month.traces if t.item == "所得税(源泉徴収)"
+        )
+        # 4-12月の9ヶ月分受取 年180万(65歳未満) → 控除 180万×25%+27.5万=72.5万
+        assert trace.basis["公的年金等雑所得"] == 1_800_000 - 725_000
 
     def test_investment_plan_validation_rejects_invalid_input(
         self, store, household: Household

@@ -24,6 +24,35 @@
 {% for vehicle in household.vehicles %}
   {% set _ = ns.events.append({"year": vehicle.ownership_start_year, "label": vehicle.name, "kind": "vehicle", "detail": "乗り物開始"}) %}
 {% endfor %}
+{% for income in household.incomes %}
+  {% if income.retirement_age is not none %}
+    {% set m = household.members | selectattr("id", "equalto", income.member_id) | first %}
+    {% if m %}
+      {% set _ = ns.events.append({"year": m.birth_date.year + income.retirement_age, "label": "退職", "kind": "milestone", "detail": m.name ~ " " ~ income.retirement_age ~ "歳"}) %}
+    {% endif %}
+  {% endif %}
+{% endfor %}
+{% for pension in household.pension_records %}
+  {% set m = household.members | selectattr("id", "equalto", pension.member_id) | first %}
+  {% if m %}
+    {% set pension_age = pension.start_age - (pension.months_early // 12) + (pension.months_deferred // 12) %}
+    {% set _ = ns.events.append({"year": m.birth_date.year + pension_age, "label": "年金受給開始", "kind": "milestone", "detail": m.name ~ " " ~ pension_age ~ "歳"}) %}
+  {% endif %}
+{% endfor %}
+{% for ideco in household.ideco_plans %}
+  {% set m = household.members | selectattr("id", "equalto", ideco.member_id) | first %}
+  {% if m %}
+    {% set _ = ns.events.append({"year": m.birth_date.year + ideco.receive_start_age, "label": "iDeCo受取開始", "kind": "milestone", "detail": m.name ~ " " ~ ideco.receive_type}) %}
+  {% endif %}
+{% endfor %}
+{% for nisa in household.nisa_plans %}
+  {% if nisa.receive_start_age is not none and nisa.monthly_withdrawal > 0 %}
+    {% set m = household.members | selectattr("id", "equalto", nisa.member_id) | first %}
+    {% if m %}
+      {% set _ = ns.events.append({"year": m.birth_date.year + nisa.receive_start_age, "label": "NISA取崩開始", "kind": "milestone", "detail": m.name ~ " 月" ~ "{:,}".format(nisa.monthly_withdrawal) ~ "円"}) %}
+    {% endif %}
+  {% endif %}
+{% endfor %}
 <div class="lifemap">
   <div class="lifemap-title">
     <strong>ライフマップ</strong>
@@ -78,6 +107,7 @@
     <span class="lifemap-legend-item"><span class="lifemap-legend-swatch event"></span>ライフイベント</span>
     <span class="lifemap-legend-item"><span class="lifemap-legend-swatch housing"></span>住宅</span>
     <span class="lifemap-legend-item"><span class="lifemap-legend-swatch vehicle"></span>乗り物</span>
+    <span class="lifemap-legend-item"><span class="lifemap-legend-swatch milestone"></span>退職・年金・受取</span>
   </div>
 </div>
 {% endif %}

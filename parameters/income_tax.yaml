@@ -137,3 +137,51 @@
     - from: 2013-01-01
       value: "full"
       source: https://www.nta.go.jp/taxes/shiraberu/taxanswer/shotoku/1130.htm
+
+# 公的年金等控除(公的年金等に係る雑所得以外の合計所得金額が1,000万円以下の場合)
+# 控除額 = 収入金額 × rate + add(up_toは収入金額の上限)
+- path: 所得税.公的年金等控除.65歳未満
+  description: 公的年金等控除(その年の12月31日時点で65歳未満、他の合計所得金額1,000万円以下)
+  values:
+    - from: 2020-01-01
+      value:
+        brackets:
+          - up_to: 1300000
+            rate: 0.0
+            add: 600000
+          - up_to: 4100000
+            rate: 0.25
+            add: 275000
+          - up_to: 7700000
+            rate: 0.15
+            add: 685000
+          - up_to: 10000000
+            rate: 0.05
+            add: 1455000
+          - up_to: null
+            rate: 0.0
+            add: 1955000
+      source: https://www.nta.go.jp/taxes/shiraberu/taxanswer/shotoku/1600.htm
+
+- path: 所得税.公的年金等控除.65歳以上
+  description: 公的年金等控除(その年の12月31日時点で65歳以上、他の合計所得金額1,000万円以下)
+  values:
+    - from: 2020-01-01
+      value:
+        brackets:
+          - up_to: 3300000
+            rate: 0.0
+            add: 1100000
+          - up_to: 4100000
+            rate: 0.25
+            add: 275000
+          - up_to: 7700000
+            rate: 0.15
+            add: 685000
+          - up_to: 10000000
+            rate: 0.05
+            add: 1455000
+          - up_to: null
+            rate: 0.0
+            add: 1955000
+      source: https://www.nta.go.jp/taxes/shiraberu/taxanswer/shotoku/1600.htm

@@ -262,9 +262,16 @@ async def test_create_household_and_full_flow(client: AsyncClient) -> None:
     assert "家族の年齢と主なライフイベント" in r.text
     assert "住宅購入" in r.text
     assert "ファミリーカー" in r.text
+    # ライフマップに退職・年金受給開始のマイルストーンが表示される
+    assert "退職" in r.text
+    assert "年金受給開始" in r.text
+    assert "退職・年金・受取" in r.text
     # 重要指標カードと収支内訳グラフ(生涯全体)
     assert 'class="summary-cards"' in r.text
     assert "card-value" in r.text
+    # 老後指標カード(年金受給ありのプラン)
+    assert "年金受給開始時の金融資産" in r.text
+    assert "老後の平均月間収支" in r.text
     assert 'id="incomeChart"' in r.text
     assert 'id="expenseChart"' in r.text
     assert "年次収入構成" in r.text
@@ -613,9 +620,12 @@ async def test_accounts_ideco_nisa_edit_and_delete(client: AsyncClient) -> None:
             "member_id": member_id,
             "initial_balance": 0,
             "monthly_contribution": 23000,
+            "subscriber_type": 1,
             "receive_start_age": 65,
+            "receive_type": "一時金",
+            "lump_sum_ratio_percent": 100,
+            "prior_contribution_years": 5,
             "monthly_withdrawal": 0,
-            "withdrawal_tax_rate": 0,
             "annual_return_rate": 0.03,
         },
     )
@@ -626,6 +636,7 @@ async def test_accounts_ideco_nisa_edit_and_delete(client: AsyncClient) -> None:
             "member_id": member_id,
             "initial_balance": 0,
             "monthly_investment": 30000,
+            "growth_monthly_investment": 20000,
             "annual_return_rate": 0.03,
         },
     )
@@ -635,6 +646,18 @@ async def test_accounts_ideco_nisa_edit_and_delete(client: AsyncClient) -> None:
     account_id = household.accounts[0].id
     ideco_id = household.ideco_plans[0].id
     nisa_id = household.nisa_plans[0].id
+    assert household.ideco_plans[0].receive_type == "一時金"
+    assert household.ideco_plans[0].subscriber_type == 1
+    assert household.ideco_plans[0].prior_contribution_years == 5
+    assert household.nisa_plans[0].growth_monthly_investment == 20000
+
+    # ライフマップにiDeCo受取開始マイルストーンと掛金上限ヒントが表示される
+    r = await client.get(f"/households/{household_id}/accounts")
+    assert r.status_code == 200
+    assert "iDeCo受取開始" in r.text
+    assert 'id="ideco-limit-hint"' in r.text
+    assert 'data-limit="68000"' in r.text
+    assert 'data-limit="23000"' in r.text
 
     # 口座編集(上書き)
     r = await client.get(f"/households/{household_id}/accounts?edit_account_id={account_id}")
@@ -650,16 +673,18 @@ async def test_accounts_ideco_nisa_edit_and_delete(client: AsyncClient) -> None:
     assert household.accounts[0].name == "普通預金(更新)"
     assert household.accounts[0].balance == 2000000
 
-    # iDeCo編集(上書き)
+    # iDeCo編集(上書き): 年金受取へ変更(受取期間15年)
     r = await client.post(
         f"/households/{household_id}/ideco",
         data={
             "member_id": member_id,
             "initial_balance": 0,
             "monthly_contribution": 12000,
+            "subscriber_type": 2,
             "receive_start_age": 60,
-            "monthly_withdrawal": 0,
-            "withdrawal_tax_rate": 0,
+            "receive_type": "年金",
+            "monthly_withdrawal": 50000,
+            "annuity_years": 15,
             "annual_return_rate": 0.02,
             "edit_id": ideco_id,
         },
@@ -668,6 +693,21 @@ async def test_accounts_ideco_nisa_edit_and_delete(client: AsyncClient) -> None:
     household = await get_household(household_id)
     assert len(household.ideco_plans) == 1
     assert household.ideco_plans[0].monthly_contribution == 12000
+    assert household.ideco_plans[0].subscriber_type == 2
+    assert household.ideco_plans[0].receive_type == "年金"
+    assert household.ideco_plans[0].monthly_withdrawal == 50000
+    assert household.ideco_plans[0].annuity_years == 15
+
+    # 不正な加入区分は400でフォームへ戻す
+    r = await client.post(
+        f"/households/{household_id}/ideco",
+        data={
+            "member_id": member_id,
+            "monthly_contribution": 10000,
+            "subscriber_type": 9,
+        },
+    )
+    assert r.status_code == 400
 
     # NISA編集(上書き)
     r = await client.post(

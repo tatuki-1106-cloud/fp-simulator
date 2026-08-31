@@ -64,6 +64,13 @@
       value: 2400000
       source: https://www.fsa.go.jp/policy/nisa2/index.html
 
+- path: NISA.成長投資枠.生涯上限
+  description: 新NISAの成長投資枠の生涯上限(非課税保有限度額1,800万円のうち成長投資枠は1,200万円まで)
+  values:
+    - from: 2024-01-01
+      value: 12000000
+      source: https://www.fsa.go.jp/policy/nisa2/index.html
+
 - path: 税制.小規模企業共済等掛金控除
   description: "iDeCo掛金は全額所得控除(小規模企業共済等掛金控除)"
   values:

@@ -17,6 +17,8 @@ from fp_simulator.engine.income_tax import (
     calc_annual_income_tax,
     calc_taxable_income,
     monthly_income_tax_schedule,
+    pension_miscellaneous_income,
+    public_pension_deduction,
 )
 from fp_simulator.engine.resident_tax import (
     calc_annual_resident_tax,
@@ -37,6 +39,43 @@ def store():
 
 D2024 = datetime.date(2024, 12, 31)
 D2025 = datetime.date(2025, 12, 31)
+
+
+class TestPublicPensionDeduction:
+    """公的年金等控除の検証(国税庁タックスアンサーNo.1600の計算例).
+
+    公的年金等に係る雑所得以外の合計所得金額1,000万円以下の速算表。
+    """
+
+    def test_under_65_2_8_million(self, store) -> None:
+        """64歳・公的年金等収入280万円 → 雑所得182.5万円(国税庁の計算例)."""
+        # 控除 = 280万×25% + 27.5万 = 97.5万
+        assert public_pension_deduction(store, D2025, 64, 2_800_000) == 975_000
+        assert pension_miscellaneous_income(store, D2025, 64, 2_800_000) == 1_825_000
+
+    def test_under_65_minimum_deduction(self, store) -> None:
+        """65歳未満は収入130万円以下なら控除60万円."""
+        assert public_pension_deduction(store, D2025, 64, 1_200_000) == 600_000
+        assert pension_miscellaneous_income(store, D2025, 64, 1_200_000) == 600_000
+
+    def test_over_65_3_5_million(self, store) -> None:
+        """70歳・公的年金等収入350万円 → 雑所得235万円(国税庁の計算例)."""
+        # 控除 = 350万×25% + 27.5万 = 115万
+        assert public_pension_deduction(store, D2025, 70, 3_500_000) == 1_150_000
+        assert pension_miscellaneous_income(store, D2025, 70, 3_500_000) == 2_350_000
+
+    def test_over_65_minimum_deduction(self, store) -> None:
+        """65歳以上は収入330万円以下なら控除110万円."""
+        assert public_pension_deduction(store, D2025, 65, 2_000_000) == 1_100_000
+        assert pension_miscellaneous_income(store, D2025, 65, 2_000_000) == 900_000
+
+    def test_high_income_cap(self, store) -> None:
+        """収入1,000万円超は控除195.5万円(上限)."""
+        assert public_pension_deduction(store, D2025, 70, 12_000_000) == 1_955_000
+
+    def test_zero_income(self, store) -> None:
+        """収入0は雑所得0."""
+        assert pension_miscellaneous_income(store, D2025, 70, 0) == 0
 
 
 class TestSalaryDeduction:

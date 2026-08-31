@@ -190,7 +190,12 @@ class EducationPlan(BaseModel):
 
 
 class IdecoPlan(BaseModel):
-    """iDeCo設定."""
+    """iDeCo設定.
+
+    受取時課税:
+    - 一時金: 受取開始年齢の到達月に残高(×一時金割合)を退職所得として分離課税
+    - 年金: 受取月額を公的年金等に係る雑所得として総合課税(公的年金と合算)
+    """
 
     id: str
     member_id: str
@@ -201,18 +206,34 @@ class IdecoPlan(BaseModel):
     end_age: int = Field(default=60, ge=0, le=120)  # 掛金拠出終了年齢
     receive_start_age: int = Field(default=65, ge=0, le=120)  # 受取開始年齢
     receive_type: Literal["一時金", "年金", "一時金+年金"] = "一時金"
-    monthly_withdrawal: int = Field(default=0, ge=0)  # 明示的な受取月額
-    withdrawal_tax_rate: float = Field(default=0.0, ge=0, le=1)  # 概算源泉税率
+    lump_sum_ratio: float = Field(default=1.0, ge=0, le=1)  # 一時金+年金時の一時金割合
+    prior_contribution_years: int = Field(default=0, ge=0)  # 初期残高分の加入済み年数
+    monthly_withdrawal: int = Field(default=0, ge=0)  # 年金受取の月額
+    annuity_years: int | None = Field(default=None, ge=1)  # 年金受取期間(None=残高が尽きるまで)
+    withdrawal_tax_rate: float = Field(default=0.0, ge=0, le=1)  # 旧・概算源泉税率(廃止済み、後方互換のため保持)
     annual_return_rate: float = 0.0  # 運用利回り
+
+    @model_validator(mode="after")
+    def _migrate_legacy_withdrawal(self) -> IdecoPlan:
+        # 旧データ移行: receive_typeがUI未対応だった頃の既定値「一時金」で
+        # 受取月額が設定されている場合は、旧来の月次受取(年金受取)として扱う。
+        if self.receive_type == "一時金" and self.monthly_withdrawal > 0:
+            self.receive_type = "年金"
+        return self
 
 
 class NisaPlan(BaseModel):
-    """NISA設定."""
+    """NISA設定.
+
+    monthly_investmentはつみたて投資枠の希望月額。枠上限を超える分は
+    成長投資枠へ自動振替する。growth_monthly_investmentは成長投資枠の希望月額。
+    """
 
     id: str
     member_id: str
     initial_balance: int = Field(default=0, ge=0)
-    monthly_investment: int = Field(ge=0)  # 月額投資
+    monthly_investment: int = Field(ge=0)  # つみたて投資枠の月額(超過分は成長枠へ振替)
+    growth_monthly_investment: int = Field(default=0, ge=0)  # 成長投資枠の月額
     start_age: int = Field(default=0, ge=0, le=120)
     end_age: int | None = Field(default=None, ge=0, le=120)  # None=生涯
     receive_start_age: int | None = Field(default=None, ge=0, le=120)  # 明示的な取崩開始年齢

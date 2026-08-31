@@ -8,6 +8,7 @@ import pathlib
 import pytest
 
 from fp_simulator.engine.cashflow import (
+    AnnualTaxEstimateCache,
     DisasterScenario,
     MonthlyCashflow,
     _apply_income_tax,
@@ -273,6 +274,7 @@ def test_apply_income_tax_records_monthly_withholding(store):
         300_000,
         cf,
         lambda _member, _date: True,
+        AnnualTaxEstimateCache(),
     )
 
     assert cf.income_tax >= 0
@@ -314,6 +316,7 @@ def test_apply_income_tax_excludes_income_not_started_in_birth_month(store):
         300_000,  # 他の収入が存在し月次課税ブロックが動作している状況を再現
         cf,
         lambda _member, _date: True,
+        AnnualTaxEstimateCache(),
     )
 
     # 誕生月はまだ支給されていないため、推定年収0として非課税になる
@@ -331,6 +334,7 @@ def test_apply_income_tax_excludes_income_not_started_in_birth_month(store):
         300_000,
         cf_next,
         lambda _member, _date: True,
+        AnnualTaxEstimateCache(),
     )
     assert cf_next.income_tax > 0
 
@@ -363,6 +367,7 @@ def test_apply_income_tax_does_not_include_future_income(store):
         300_000,
         baseline,
         lambda _member, _date: True,
+        AnnualTaxEstimateCache(),
     )
 
     household.incomes.append(
@@ -384,6 +389,7 @@ def test_apply_income_tax_does_not_include_future_income(store):
         300_000,
         with_future,
         lambda _member, _date: True,
+        AnnualTaxEstimateCache(),
     )
 
     assert with_future.income_tax == baseline.income_tax
@@ -440,6 +446,7 @@ def test_income_tax_uses_annual_social_insurance_after_leave_exemption(store):
         salary_total,
         cf,
         lambda _member, _date: True,
+        AnnualTaxEstimateCache(),
     )
 
     tax_trace = next(trace for trace in cf.traces if trace.item == "所得税(源泉徴収)")

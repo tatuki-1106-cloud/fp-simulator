@@ -48,12 +48,12 @@
 <h2>iDeCo設定</h2>
 {% if household.ideco_plans %}
 <table>
-  <thead><tr><th>対象者</th><th>初期残高</th><th>月額掛金</th><th>運用利回り</th><th>受取開始/受取月額</th><th></th></tr></thead>
+  <thead><tr><th>対象者</th><th>加入区分</th><th>初期残高</th><th>月額掛金</th><th>運用利回り</th><th>受取方法</th><th>受取開始/受取月額</th><th></th></tr></thead>
   <tbody>
   {% for p in household.ideco_plans %}
   {% set member = household.members | selectattr("id", "equalto", p.member_id) | first %}
     <tr>
-      <td>{{ member.name if member else p.member_id }}</td><td>{{ "{:,}".format(p.initial_balance) }}円</td><td>{{ "{:,}".format(p.monthly_contribution) }}円</td><td>{{ p.annual_return_rate }}</td><td>{{ p.receive_start_age }}歳 / {{ "{:,}".format(p.monthly_withdrawal) }}円</td>
+      <td>{{ member.name if member else p.member_id }}</td><td>{{ {1: "自営業等", 2: "会社員・公務員", 3: "専業主婦等"}.get(p.subscriber_type, p.subscriber_type) }}</td><td>{{ "{:,}".format(p.initial_balance) }}円</td><td>{{ "{:,}".format(p.monthly_contribution) }}円</td><td>{{ p.annual_return_rate }}</td><td>{{ p.receive_type }}{% if p.receive_type == "一時金+年金" %}(一時金{{ (p.lump_sum_ratio * 100) | round | int }}%){% endif %}</td><td>{{ p.receive_start_age }}歳 / {{ "{:,}".format(p.monthly_withdrawal) }}円</td>
       <td>
         <div class="row-actions">
           <a href="/households/{{ household.id }}/accounts?edit_ideco_id={{ p.id }}" class="btn-edit-link">編集</a>
@@ -81,13 +81,33 @@
      <small class="field-hint">iDeCoの加入者を選択します。</small></p>
   <p><label>初期残高: <input type="number" name="initial_balance" min="0" value="{{ iv.initial_balance if iv else 0 }}"></label>円
      <small class="field-hint">現時点までの拠出済み残高です。</small></p>
-  <p><label>月額掛金: <input type="number" name="monthly_contribution" min="0" value="{{ iv.monthly_contribution if iv else 23000 }}"></label>円
-     <small class="field-hint">加入区分により拠出限度額が異なります(例: 会社員は月23,000円が上限の場合あり)。</small></p>
+  <p><label>初期残高分の加入済み年数: <input type="number" name="prior_contribution_years" min="0" value="{{ iv.prior_contribution_years if iv else 0 }}"></label>年
+     <small class="field-hint">一時金受取の退職所得控除の計算に使う、これまでの加入年数です。</small></p>
+  <p><label>加入区分:
+    <select name="subscriber_type" id="ideco-subscriber-type">
+      {% set current_sub = (iv.subscriber_type | int) if iv and iv.subscriber_type else 2 %}
+      <option value="1" data-limit="{{ ideco_limits[1] if ideco_limits is defined else '' }}" {% if current_sub == 1 %}selected{% endif %}>自営業等(第1号)</option>
+      <option value="2" data-limit="{{ ideco_limits[2] if ideco_limits is defined else '' }}" {% if current_sub == 2 %}selected{% endif %}>会社員・公務員(第2号)</option>
+      <option value="3" data-limit="{{ ideco_limits[3] if ideco_limits is defined else '' }}" {% if current_sub == 3 %}selected{% endif %}>専業主婦等(第3号)</option>
+    </select></label>
+     <small class="field-hint">加入区分により掛金の拠出限度額が変わります(企業年金の有無による細分は簡略化)。</small></p>
+  <p><label>月額掛金: <input type="number" name="monthly_contribution" id="ideco-monthly-contribution" min="0" value="{{ iv.monthly_contribution if iv else 23000 }}"></label>円
+     <small class="field-hint" id="ideco-limit-hint">加入区分の拠出限度額を超えた分は掛金に計上されません。</small></p>
   <p><label>受取開始年齢: <input type="number" name="receive_start_age" value="{{ iv.receive_start_age if iv else 65 }}" min="0"></label>歳
      <small class="field-hint">原則60〜75歳の間で受取開始年齢を選べます。</small></p>
-  <p><label>受取月額(明示設定): <input type="number" name="monthly_withdrawal" value="{{ iv.monthly_withdrawal if iv else 0 }}" min="0"></label>円
-     <small class="field-hint">0の場合はシミュレーション側で按分計算します。</small></p>
-  <p><label>受取時の概算税率: <input type="number" name="withdrawal_tax_rate" value="{{ iv.withdrawal_tax_rate if iv else 0 }}" min="0" max="1" step="0.01"></label>（例: 0.2 = 20%。制度判定ではなく入力前提）</p>
+  <p><label>受取方法:
+    <select name="receive_type">
+      {% set current_type = iv.receive_type if iv else "一時金" %}
+      {% for t in ("一時金", "年金", "一時金+年金") %}<option value="{{ t }}" {% if t == current_type %}selected{% endif %}>{{ t }}</option>{% endfor %}
+    </select></label>
+     <small class="field-hint">一時金は退職所得(加入年数で退職所得控除)、年金は公的年金等の雑所得として課税されます。</small></p>
+  {% if ideco_values %}{% set ratio_percent = ideco_values.lump_sum_ratio_percent %}{% elif edit_ideco %}{% set ratio_percent = (edit_ideco.lump_sum_ratio * 100) | round | int %}{% else %}{% set ratio_percent = 50 %}{% endif %}
+  <p><label>一時金の割合(一時金+年金のみ): <input type="number" name="lump_sum_ratio_percent" min="0" max="100" value="{{ ratio_percent }}"></label>%
+     <small class="field-hint">受取開始時に残高の何%を一時金で受け取るかです。残りは年金受取になります。</small></p>
+  <p><label>年金受取の月額: <input type="number" name="monthly_withdrawal" value="{{ iv.monthly_withdrawal if iv else 0 }}" min="0"></label>円
+     <small class="field-hint">受取方法が「年金」「一時金+年金」の場合に毎月受け取る金額です。</small></p>
+  <p><label>年金受取期間: <input type="number" name="annuity_years" min="1" value="{{ iv.annuity_years if iv is not none and iv.annuity_years is not none else '' }}"></label>年（未入力=残高が尽きるまで）
+     <small class="field-hint">受取開始からこの年数が経過すると年金受取を終了します。</small></p>
   <p><label>運用利回り(年率): <input type="number" name="annual_return_rate" value="{{ iv.annual_return_rate if iv else 0 }}" step="0.01"></label>
      <small class="field-hint">拠出金の想定運用利回りです。</small></p>
   <p><button type="submit">{{ "更新" if edit_ideco else "iDeCoを追加" }}</button></p>
@@ -96,12 +116,12 @@
 <h2>NISA設定</h2>
 {% if household.nisa_plans %}
 <table>
-  <thead><tr><th>対象者</th><th>初期残高</th><th>月額投資</th><th>運用利回り</th><th>取崩開始/取崩月額</th><th></th></tr></thead>
+  <thead><tr><th>対象者</th><th>初期残高</th><th>つみたて枠月額</th><th>成長枠月額</th><th>運用利回り</th><th>取崩開始/取崩月額</th><th></th></tr></thead>
   <tbody>
   {% for p in household.nisa_plans %}
   {% set member = household.members | selectattr("id", "equalto", p.member_id) | first %}
     <tr>
-      <td>{{ member.name if member else p.member_id }}</td><td>{{ "{:,}".format(p.initial_balance) }}円</td><td>{{ "{:,}".format(p.monthly_investment) }}円</td><td>{{ p.annual_return_rate }}</td><td>{{ p.receive_start_age or '-' }}{% if p.receive_start_age is not none %}歳{% endif %} / {{ "{:,}".format(p.monthly_withdrawal) }}円</td>
+      <td>{{ member.name if member else p.member_id }}</td><td>{{ "{:,}".format(p.initial_balance) }}円</td><td>{{ "{:,}".format(p.monthly_investment) }}円</td><td>{{ "{:,}".format(p.growth_monthly_investment) }}円</td><td>{{ p.annual_return_rate }}</td><td>{{ p.receive_start_age or '-' }}{% if p.receive_start_age is not none %}歳{% endif %} / {{ "{:,}".format(p.monthly_withdrawal) }}円</td>
       <td>
         <div class="row-actions">
           <a href="/households/{{ household.id }}/accounts?edit_nisa_id={{ p.id }}" class="btn-edit-link">編集</a>
@@ -128,14 +148,33 @@
     </select></label>
      <small class="field-hint">NISA口座の名義人を選択します。</small></p>
   <p><label>初期残高: <input type="number" name="initial_balance" min="0" value="{{ nv.initial_balance if nv else 0 }}"></label>円
-     <small class="field-hint">現時点までの投資済み評価額です。</small></p>
-  <p><label>月額投資: <input type="number" name="monthly_investment" min="0" value="{{ nv.monthly_investment if nv else 0 }}"></label>円
-     <small class="field-hint">つみたて投資枠・成長投資枠の合計月額を入力します。</small></p>
+     <small class="field-hint">現時点までの投資済み評価額です。簿価=評価額とみなして生涯非課税枠を消費します。</small></p>
+  <p><label>つみたて投資枠 月額: <input type="number" name="monthly_investment" min="0" value="{{ nv.monthly_investment if nv else 0 }}"></label>円
+     <small class="field-hint">年間120万円まで。上限を超えた分は自動的に成長投資枠へ振り替えます。</small></p>
+  <p><label>成長投資枠 月額: <input type="number" name="growth_monthly_investment" min="0" value="{{ nv.growth_monthly_investment if nv else 0 }}"></label>円
+     <small class="field-hint">年間240万円・生涯1,200万円まで。生涯非課税枠は合計1,800万円(簿価ベース)で、売却分の簿価は翌年に復活します。</small></p>
   <p><label>取崩開始年齢: <input type="number" name="receive_start_age" min="0" value="{{ nv.receive_start_age if nv is not none and nv.receive_start_age is not none else '' }}"></label>歳（未入力=取崩なし）</p>
   <p><label>取崩月額: <input type="number" name="monthly_withdrawal" value="{{ nv.monthly_withdrawal if nv else 0 }}" min="0"></label>円
-     <small class="field-hint">取崩開始年齢以降、毎月取り崩す金額です。</small></p>
+     <small class="field-hint">取崩開始年齢以降、毎月取り崩す金額です(非課税)。</small></p>
   <p><label>運用利回り(年率): <input type="number" name="annual_return_rate" value="{{ nv.annual_return_rate if nv else 0 }}" step="0.01"></label>
      <small class="field-hint">投資信託・株式などの想定運用利回りです。</small></p>
   <p><button type="submit">{{ "更新" if edit_nisa else "NISAを追加" }}</button></p>
 </form>
+<script>
+(function () {
+  var sel = document.getElementById("ideco-subscriber-type");
+  var input = document.getElementById("ideco-monthly-contribution");
+  var hint = document.getElementById("ideco-limit-hint");
+  if (!sel || !input || !hint) return;
+  function update() {
+    var limit = sel.options[sel.selectedIndex].getAttribute("data-limit");
+    if (!limit) return;
+    input.max = limit;
+    hint.textContent = "選択中の加入区分の拠出限度額は月" +
+      Number(limit).toLocaleString("ja-JP") + "円です。上限を超えた分は掛金に計上されません。";
+  }
+  sel.addEventListener("change", update);
+  update();
+})();
+</script>
 {% endblock %}

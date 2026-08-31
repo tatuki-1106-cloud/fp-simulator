@@ -88,6 +88,18 @@
       <div class="card-value ok">生涯、貯蓄が赤字になることはありません</div>
     {% endif %}
   </div>
+  {% if retirement_assets is not none %}
+  <div class="summary-card">
+    <div class="card-label">年金受給開始時の金融資産</div>
+    <div class="card-value">{{ "{:,}".format(retirement_assets) }}円</div>
+    <div class="card-sub">{{ retirement_start_month.year }}年{{ retirement_start_month.month }}月(受給開始月)時点</div>
+  </div>
+  <div class="summary-card {% if retirement_avg_net < 0 %}danger{% else %}ok{% endif %}">
+    <div class="card-label">老後の平均月間収支</div>
+    <div class="card-value {% if retirement_avg_net < 0 %}danger{% else %}ok{% endif %}">{{ "{:,}".format(retirement_avg_net) }}円/月</div>
+    <div class="card-sub">年金受給開始以降の平均(取崩し・退職金を含む)</div>
+  </div>
+  {% endif %}
 </div>
 <table>
   <tr><th>最低貯蓄残高</th><td>{{ "{:,}".format(min_balance) }}円 ({{ min_balance_month }})</td></tr>

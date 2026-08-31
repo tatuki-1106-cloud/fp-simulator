@@ -927,6 +927,17 @@ async def expenses_delete(request: Request, household_id: str, expense_id: str) 
     return RedirectResponse(f"/households/{household_id}/expenses", status_code=303)
 
 
+def _ideco_limit_map(household: Household) -> dict[int, int]:
+    """加入区分ごとのiDeCo月額掛金上限(基準月時点)を返す."""
+    from fp_simulator.engine.investment import ideco_contribution_limit
+
+    store = get_store()
+    base = datetime.date(
+        household.assumptions.base_year, household.assumptions.base_month, 1
+    )
+    return {t: ideco_contribution_limit(store, base, t) for t in (1, 2, 3)}
+
+
 @app.get("/households/{household_id}/accounts", response_class=HTMLResponse)
 async def accounts_edit(
     request: Request,
@@ -958,6 +969,7 @@ async def accounts_edit(
             "edit_account": edit_account,
             "edit_ideco": edit_ideco,
             "edit_nisa": edit_nisa,
+            "ideco_limits": _ideco_limit_map(household),
         },
     )
 
@@ -984,6 +996,7 @@ async def accounts_add(
         "edit_account": next((a for a in household.accounts if a.id == edit_id), None) if edit_id else None,
         "edit_ideco": None,
         "edit_nisa": None,
+        "ideco_limits": _ideco_limit_map(household),
     }
     if not name.strip():
         return _wizard_error(
@@ -1874,9 +1887,13 @@ async def ideco_add(
     member_id: str = Form(...),
     initial_balance: int = Form(0),
     monthly_contribution: int = Form(23000),
+    subscriber_type: int = Form(2),
     receive_start_age: int = Form(65),
+    receive_type: str = Form("一時金"),
+    lump_sum_ratio_percent: int = Form(50),
+    prior_contribution_years: int = Form(0),
     monthly_withdrawal: int = Form(0),
-    withdrawal_tax_rate: float = Form(0.0),
+    annuity_years: int | None = Form(None),
     annual_return_rate: float = Form(0.0),
     edit_id: str = Form(""),
 ) -> Response:
@@ -1888,9 +1905,13 @@ async def ideco_add(
         "member_id": member_id,
         "initial_balance": initial_balance,
         "monthly_contribution": monthly_contribution,
+        "subscriber_type": subscriber_type,
         "receive_start_age": receive_start_age,
+        "receive_type": receive_type,
+        "lump_sum_ratio_percent": lump_sum_ratio_percent,
+        "prior_contribution_years": prior_contribution_years,
         "monthly_withdrawal": monthly_withdrawal,
-        "withdrawal_tax_rate": withdrawal_tax_rate,
+        "annuity_years": annuity_years,
         "annual_return_rate": annual_return_rate,
     }
     context = {
@@ -1901,6 +1922,7 @@ async def ideco_add(
         "edit_account": None,
         "edit_ideco": next((p for p in household.ideco_plans if p.id == edit_id), None) if edit_id else None,
         "edit_nisa": None,
+        "ideco_limits": _ideco_limit_map(household),
     }
     if not any(member.id == member_id for member in household.members):
         return _wizard_error(
@@ -1910,11 +1932,24 @@ async def ideco_add(
         initial_balance < 0
         or monthly_contribution < 0
         or monthly_withdrawal < 0
-        or not 0 <= withdrawal_tax_rate <= 1
+        or prior_contribution_years < 0
+        or subscriber_type not in (1, 2, 3)
+        or receive_type not in ("一時金", "年金", "一時金+年金")
+        or not 0 <= lump_sum_ratio_percent <= 100
         or not 0 <= receive_start_age <= 120
+        or (annuity_years is not None and annuity_years < 1)
     ):
         return _wizard_error(
             request, "wizard/accounts.html", context, "iDeCoの入力値が不正です", values, "ideco_values"
+        )
+    if receive_type in ("年金", "一時金+年金") and monthly_withdrawal <= 0:
+        return _wizard_error(
+            request,
+            "wizard/accounts.html",
+            context,
+            "年金受取を選ぶ場合は受取月額を入力してください",
+            values,
+            "ideco_values",
         )
     if edit_id and not any(p.id == edit_id for p in household.ideco_plans):
         return _wizard_error(
@@ -1925,9 +1960,13 @@ async def ideco_add(
         member_id=member_id,
         initial_balance=initial_balance,
         monthly_contribution=monthly_contribution,
+        subscriber_type=subscriber_type,
         receive_start_age=receive_start_age,
-        monthly_withdrawal=monthly_withdrawal,
-        withdrawal_tax_rate=withdrawal_tax_rate,
+        receive_type=receive_type,
+        lump_sum_ratio=lump_sum_ratio_percent / 100,
+        prior_contribution_years=prior_contribution_years,
+        monthly_withdrawal=monthly_withdrawal if receive_type != "一時金" else 0,
+        annuity_years=annuity_years if receive_type != "一時金" else None,
         annual_return_rate=annual_return_rate,
     )
     if edit_id:
@@ -1971,6 +2010,7 @@ async def nisa_add(
     member_id: str = Form(...),
     initial_balance: int = Form(0),
     monthly_investment: int = Form(0),
+    growth_monthly_investment: int = Form(0),
     receive_start_age: int | None = Form(None),
     monthly_withdrawal: int = Form(0),
     annual_return_rate: float = Form(0.0),
@@ -1984,6 +2024,7 @@ async def nisa_add(
         "member_id": member_id,
         "initial_balance": initial_balance,
         "monthly_investment": monthly_investment,
+        "growth_monthly_investment": growth_monthly_investment,
         "receive_start_age": receive_start_age,
         "monthly_withdrawal": monthly_withdrawal,
         "annual_return_rate": annual_return_rate,
@@ -1996,6 +2037,7 @@ async def nisa_add(
         "edit_account": None,
         "edit_ideco": None,
         "edit_nisa": next((p for p in household.nisa_plans if p.id == edit_id), None) if edit_id else None,
+        "ideco_limits": _ideco_limit_map(household),
     }
     if not any(member.id == member_id for member in household.members):
         return _wizard_error(
@@ -2004,6 +2046,7 @@ async def nisa_add(
     if (
         initial_balance < 0
         or monthly_investment < 0
+        or growth_monthly_investment < 0
         or monthly_withdrawal < 0
         or (receive_start_age is not None and not 0 <= receive_start_age <= 120)
     ):
@@ -2019,6 +2062,7 @@ async def nisa_add(
         member_id=member_id,
         initial_balance=initial_balance,
         monthly_investment=monthly_investment,
+        growth_monthly_investment=growth_monthly_investment,
         receive_start_age=receive_start_age,
         monthly_withdrawal=monthly_withdrawal,
         annual_return_rate=annual_return_rate,
@@ -2281,11 +2325,15 @@ _TRACE_PARAMETER_SOURCES: dict[str, tuple[tuple[str, str], ...]] = {
         ("国税庁: 給与所得控除", "所得税.給与所得控除.速算表"),
         ("国税庁: 所得税率", "所得税.税率.速算表"),
         ("国税庁: 基礎控除", "所得税.基礎控除.控除額"),
+        ("国税庁: 公的年金等控除", "所得税.公的年金等控除.65歳以上"),
+        ("国税庁: 小規模企業共済等掛金控除", "税制.小規模企業共済等掛金控除"),
     ),
     "所得税(年末調整)": (
         ("国税庁: 給与所得控除", "所得税.給与所得控除.速算表"),
         ("国税庁: 所得税率", "所得税.税率.速算表"),
         ("国税庁: 基礎控除", "所得税.基礎控除.控除額"),
+        ("国税庁: 公的年金等控除", "所得税.公的年金等控除.65歳以上"),
+        ("国税庁: 小規模企業共済等掛金控除", "税制.小規模企業共済等掛金控除"),
     ),
     "住民税": (
         ("総務省: 個人住民税", "住民税.所得割.税率"),
@@ -2298,11 +2346,16 @@ _TRACE_PARAMETER_SOURCES: dict[str, tuple[tuple[str, str], ...]] = {
     "iDeCo掛金": (
         ("iDeCo公式: 掛金上限", "iDeCo.掛金上限.第2号"),
     ),
-    "iDeCo受取": (
+    "iDeCo一時金受取": (
         ("iDeCo公式: 受取制度", "iDeCo.受取開始年齢.最小"),
+    ),
+    "iDeCo年金受取": (
+        ("iDeCo公式: 受取制度", "iDeCo.受取開始年齢.最小"),
+        ("国税庁: 公的年金等控除", "所得税.公的年金等控除.65歳以上"),
     ),
     "NISA投資": (
         ("金融庁: NISA制度", "NISA.年間投資上限"),
+        ("金融庁: NISA成長投資枠", "NISA.成長投資枠.生涯上限"),
     ),
     "NISA取崩": (
         ("金融庁: NISA非課税保有限度額", "NISA.非課税保有限度額"),
@@ -2325,6 +2378,18 @@ _TRACE_DIRECT_SOURCES: dict[str, tuple[dict[str, str], ...]] = {
         {
             "label": "こども家庭庁: 児童手当",
             "url": "https://www.cfa.go.jp/policies/kokoseido/jidouteate/",
+        },
+    ),
+    "iDeCo一時金受取": (
+        {
+            "label": "国税庁: 退職金と税",
+            "url": "https://www.nta.go.jp/taxes/shiraberu/taxanswer/shotoku/1420.htm",
+        },
+    ),
+    "iDeCo受取時税": (
+        {
+            "label": "国税庁: 退職金と税",
+            "url": "https://www.nta.go.jp/taxes/shiraberu/taxanswer/shotoku/1420.htm",
         },
     ),
 }
@@ -2406,6 +2471,21 @@ async def simulate_result(
     )
     final_balance = all_balances[-1] if all_balances else 0
 
+    # 老後指標(年金受給開始以降)
+    pension_start_index = next(
+        (i for i, m in enumerate(result.monthly) if m.pension_income > 0), None
+    )
+    retirement_assets = None
+    retirement_start_month = None
+    retirement_avg_net = None
+    if pension_start_index is not None:
+        retirement_months = result.monthly[pension_start_index:]
+        retirement_assets = retirement_months[0].total_assets
+        retirement_start_month = retirement_months[0].date
+        retirement_avg_net = sum(m.net for m in retirement_months) // len(
+            retirement_months
+        )
+
     # 生涯の支出内訳(円グラフ用・表示範囲に連動しない)
     lifetime_expense_categories = {
         "生活費": sum(m.living_expense for m in result.monthly),
@@ -2479,6 +2559,9 @@ async def simulate_result(
             "min_balance_month": min_balance_month,
             "final_balance": final_balance,
             "final_assets": result.monthly[-1].total_assets if result.monthly else 0,
+            "retirement_assets": retirement_assets,
+            "retirement_start_month": retirement_start_month,
+            "retirement_avg_net": retirement_avg_net,
             "ideco_balances": ideco_balances,
             "nisa_balances": nisa_balances,
             "total_assets": display_total_assets,

@@ -18,7 +18,7 @@ import calendar
 import datetime
 from collections import defaultdict
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from fp_simulator.engine.childcare_leave import (
@@ -30,6 +30,7 @@ from fp_simulator.engine.childcare_leave import (
 )
 from fp_simulator.engine.dependency import (
     age_at,
+    age_at_year_end,
     calc_deductions_for_household,
 )
 from fp_simulator.engine.education import monthly_education_costs
@@ -38,6 +39,8 @@ from fp_simulator.engine.income_tax import (
     Deductions,
     calc_annual_income_tax,
     calc_taxable_income,
+    pension_miscellaneous_income,
+    public_pension_deduction,
 )
 from fp_simulator.engine.insurance import (
     InsurancePolicy,
@@ -48,9 +51,11 @@ from fp_simulator.engine.investment import (
     IdecoAccount,
     NisaAccount,
     ideco_contribution_limit,
+    ideco_contribution_years,
     ideco_monthly_step,
     nisa_annual_limit,
     nisa_monthly_step,
+    nisa_withdraw,
     withdrawal_amount,
 )
 from fp_simulator.engine.loan import LoanTerms, MonthlyRepayment, loan_schedule
@@ -71,7 +76,12 @@ from fp_simulator.engine.pension import (
     total_pension,
 )
 from fp_simulator.engine.resident_tax import monthly_resident_tax_schedule
-from fp_simulator.engine.retirement import net_retirement_allowance
+from fp_simulator.engine.retirement import (
+    net_retirement_allowance,
+    retirement_income,
+    retirement_income_deduction,
+    retirement_tax,
+)
 from fp_simulator.engine.social_insurance import monthly_social_insurance, standard_remuneration
 from fp_simulator.parameters.loader import ParameterStore
 
@@ -796,6 +806,276 @@ def _annual_social_insurance_estimate(
     return total
 
 
+def _pension_start_age(pension_input: Any) -> int:
+    """繰上げ・繰下げを反映した受給開始年齢を返す."""
+    return (
+        pension_input.start_age
+        - (pension_input.months_early // 12)
+        + (pension_input.months_deferred // 12)
+    )
+
+
+def _ideco_annuity_receiving(ideco: Any, age: int) -> bool:
+    """指定年齢がiDeCo年金の受取期間内かを返す."""
+    if age < ideco.receive_start_age:
+        return False
+    return (
+        ideco.annuity_years is None
+        or age < ideco.receive_start_age + ideco.annuity_years
+    )
+
+
+def _period_overlap_years(a: tuple[int, int], b: tuple[int, int]) -> int:
+    """年齢ベースの期間(開始, 終了)同士の重複年数を返す."""
+    return max(0, min(a[1], b[1]) - max(a[0], b[0]))
+
+
+def _ideco_age_period(ideco: Any, total_years: int) -> tuple[int, int]:
+    """iDeCo加入期間の年齢レンジ(近似)を返す.
+
+    受取開始(または拠出終了)年齢を終端とし、加入年数分だけ遡る。
+    """
+    end = min(ideco.end_age, ideco.receive_start_age)
+    return (max(0, end - total_years), end)
+
+
+def _ideco_estimated_years(ideco: Any) -> int:
+    """iDeCoの加入年数の年齢ベース推定(拠出実績を参照できない場合用)."""
+    sim_years = (
+        max(0, min(ideco.end_age, ideco.receive_start_age) - ideco.start_age)
+        if ideco.monthly_contribution > 0
+        else 0
+    )
+    return ideco.prior_contribution_years + sim_years
+
+
+def _ideco_lump_sum_dedup_overlap(
+    household: Household, ideco: Any, member: Member, contribution_years: int
+) -> int:
+    """iDeCo一時金の退職所得控除の重複年数(19年ルール簡易版)を返す.
+
+    同一メンバーの退職金受取が「前年以前19年内」(年齢差1〜19)にある場合、
+    勤続期間とiDeCo加入期間の重複年数を返す。同一年受取の合算計算は行わない。
+    """
+    overlap = 0
+    for income in household.incomes:
+        if (
+            income.member_id != member.id
+            or income.retirement_age is None
+            or income.retirement_allowance <= 0
+        ):
+            continue
+        gap = ideco.receive_start_age - income.retirement_age
+        if not 1 <= gap <= 19:
+            continue
+        overlap = max(
+            overlap,
+            _period_overlap_years(
+                (income.start_age, income.retirement_age),
+                _ideco_age_period(ideco, contribution_years),
+            ),
+        )
+    return overlap
+
+
+def _retirement_allowance_dedup_overlap(
+    household: Household, income: Income, member: Member
+) -> int:
+    """退職金の退職所得控除の重複年数(5年ルール簡易版)を返す.
+
+    同一メンバーのiDeCo一時金受取が「前年以前4年内」(年齢差1〜4)にある場合、
+    勤続期間とiDeCo加入期間の重複年数を返す。
+    """
+    if income.retirement_age is None:
+        return 0
+    overlap = 0
+    for ideco in household.ideco_plans:
+        if (
+            ideco.member_id != member.id
+            or ideco.receive_type not in ("一時金", "一時金+年金")
+        ):
+            continue
+        gap = income.retirement_age - ideco.receive_start_age
+        if not 1 <= gap <= 4:
+            continue
+        overlap = max(
+            overlap,
+            _period_overlap_years(
+                (income.start_age, income.retirement_age),
+                _ideco_age_period(ideco, _ideco_estimated_years(ideco)),
+            ),
+        )
+    return overlap
+
+
+def _annual_pension_taxable_estimate(
+    store: ParameterStore,
+    household: Household,
+    year: int,
+    member_alive: MemberAlive,
+) -> tuple[int, dict[str, dict[str, int]]]:
+    """公的年金等(老齢年金+iDeCo年金受取)に係る雑所得の年間推定額を返す.
+
+    メンバーごとに年間の公的年金等収入を推定し、公的年金等控除を適用する。
+    iDeCoの年金受取は残高不足による減額を考慮しない簡略推定。
+
+    Returns:
+        (世帯合計の雑所得, メンバー名ごとの根拠 {収入, 控除, 雑所得})
+    """
+    year_end = datetime.date(year, 12, 31)
+    total_misc = 0
+    basis: dict[str, dict[str, int]] = {}
+    for member in household.members:
+        pension_income = 0
+        for pension_input in household.pension_records:
+            if pension_input.member_id != member.id:
+                continue
+            start_age = _pension_start_age(pension_input)
+            record = PensionRecord(
+                kokumin_months=pension_input.kokumin_months,
+                kousei_months=pension_input.kousei_months,
+                avg_standard_remuneration=pension_input.avg_standard_remuneration,
+                kousei_months_before_2003_04=pension_input.kousei_months_before_2003_04,
+                kousei_months_after_2003_04=pension_input.kousei_months_after_2003_04,
+            )
+            annual = total_pension(
+                store,
+                year_end,
+                record,
+                pension_input.months_early,
+                pension_input.months_deferred,
+            )
+            monthly = annual // 12
+            months = sum(
+                1
+                for month in range(1, 13)
+                if member_alive(member, datetime.date(year, month, 1))
+                and age_at(member.birth_date, datetime.date(year, month, 1)) >= start_age
+            )
+            pension_income += monthly * months
+        for ideco in household.ideco_plans:
+            if (
+                ideco.member_id != member.id
+                or ideco.receive_type not in ("年金", "一時金+年金")
+                or ideco.monthly_withdrawal <= 0
+            ):
+                continue
+            months = sum(
+                1
+                for month in range(1, 13)
+                if member_alive(member, datetime.date(year, month, 1))
+                and _ideco_annuity_receiving(
+                    ideco, age_at(member.birth_date, datetime.date(year, month, 1))
+                )
+            )
+            pension_income += ideco.monthly_withdrawal * months
+        if pension_income <= 0:
+            continue
+        age = age_at_year_end(member.birth_date, year)
+        deduction = public_pension_deduction(store, year_end, age, pension_income)
+        misc = pension_miscellaneous_income(store, year_end, age, pension_income)
+        total_misc += misc
+        basis[member.name] = {
+            "公的年金等収入": pension_income,
+            "公的年金等控除": deduction,
+            "雑所得": misc,
+        }
+    return total_misc, basis
+
+
+def _annual_ideco_deduction_estimate(
+    store: ParameterStore,
+    household: Household,
+    year: int,
+    member_alive: MemberAlive,
+) -> int:
+    """iDeCo掛金の年間所得控除(小規模企業共済等掛金控除)の推定額.
+
+    受給開始(一時金・年金受取)以降の月は拠出停止として数えない。
+    """
+    year_end = datetime.date(year, 12, 31)
+    total = 0
+    for ideco in household.ideco_plans:
+        member = next((m for m in household.members if m.id == ideco.member_id), None)
+        if member is None or ideco.monthly_contribution <= 0:
+            continue
+        monthly = min(
+            ideco.monthly_contribution,
+            ideco_contribution_limit(store, year_end, ideco.subscriber_type),
+        )
+        receives = ideco.receive_type in ("一時金", "一時金+年金") or (
+            ideco.monthly_withdrawal > 0
+        )
+        months = 0
+        for month in range(1, 13):
+            first = datetime.date(year, month, 1)
+            if not member_alive(member, first):
+                continue
+            age = age_at(member.birth_date, first)
+            if not ideco.start_age <= age < ideco.end_age:
+                continue
+            if receives and age >= ideco.receive_start_age:
+                continue
+            months += 1
+        total += monthly * months
+    return total
+
+
+def _ideco_annuity_active(
+    household: Household, current: datetime.date, member_alive: MemberAlive
+) -> bool:
+    """当月にiDeCoの年金受取が発生しうるかを返す."""
+    for ideco in household.ideco_plans:
+        if ideco.receive_type not in ("年金", "一時金+年金") or ideco.monthly_withdrawal <= 0:
+            continue
+        member = next((m for m in household.members if m.id == ideco.member_id), None)
+        if member is None or not member_alive(member, current):
+            continue
+        if _ideco_annuity_receiving(ideco, age_at(member.birth_date, current)):
+            return True
+    return False
+
+
+@dataclass
+class AnnualTaxEstimateCache:
+    """年単位の税務推定のキャッシュ(1回のsimulate内で有効).
+
+    公的年金等雑所得とiDeCo掛金控除の年次推定は年内で不変のため、
+    月次ループからの再計算を避ける。
+    """
+
+    pension_misc: dict[int, tuple[int, dict[str, dict[str, int]]]] = field(
+        default_factory=dict
+    )
+    ideco_deduction: dict[int, int] = field(default_factory=dict)
+
+    def pension_taxable(
+        self,
+        store: ParameterStore,
+        household: Household,
+        year: int,
+        member_alive: MemberAlive,
+    ) -> tuple[int, dict[str, dict[str, int]]]:
+        if year not in self.pension_misc:
+            self.pension_misc[year] = _annual_pension_taxable_estimate(
+                store, household, year, member_alive
+            )
+        return self.pension_misc[year]
+
+    def ideco_annual_deduction(
+        self,
+        store: ParameterStore,
+        household: Household,
+        year: int,
+        member_alive: MemberAlive,
+    ) -> int:
+        if year not in self.ideco_deduction:
+            self.ideco_deduction[year] = _annual_ideco_deduction_estimate(
+                store, household, year, member_alive
+            )
+        return self.ideco_deduction[year]
+
+
 def _apply_leave_benefits(
     store: ParameterStore,
     household: Household,
@@ -980,21 +1260,22 @@ def _apply_work_income(
             and income.retirement_allowance > 0
         ):
             years_of_service = income.retirement_age - income.start_age
+            # 5年ルール(簡易): 前年以前4年内のiDeCo一時金と重複する勤続年数を控除年数から除く
+            dedup_overlap = _retirement_allowance_dedup_overlap(household, income, member)
+            adjusted_years = max(0, years_of_service - dedup_overlap)
             net = net_retirement_allowance(
-                store, current, income.retirement_allowance, years_of_service
+                store, current, income.retirement_allowance, adjusted_years
             )
             cf.retirement_income += net
-            cf.traces.append(
-                TraceEntry(
-                    "退職金(手取り)",
-                    net,
-                    {
-                        "member": member.name,
-                        "額面": income.retirement_allowance,
-                        "勤続年数": years_of_service,
-                    },
-                )
-            )
+            basis: dict[str, TraceValue] = {
+                "member": member.name,
+                "額面": income.retirement_allowance,
+                "勤続年数": years_of_service,
+            }
+            if dedup_overlap > 0:
+                basis["重複調整(5年ルール簡易)"] = dedup_overlap
+                basis["調整後控除年数"] = adjusted_years
+            cf.traces.append(TraceEntry("退職金(手取り)", net, basis))
 
     cf.salary_income = monthly_salary_total
     return monthly_salary_total
@@ -1124,9 +1405,17 @@ def _apply_income_tax(
     monthly_salary_total: int,
     cf: MonthlyCashflow,
     member_alive: MemberAlive,
+    estimate_cache: AnnualTaxEstimateCache,
 ) -> None:
-    """所得税の源泉徴収・年末調整を月次CFへ反映する."""
-    if monthly_salary_total <= 0:
+    """所得税の源泉徴収・年末調整を月次CFへ反映する.
+
+    給与所得に加え、公的年金等(老齢年金・iDeCo年金受取)の雑所得を合算して課税する。
+    iDeCo掛金は小規模企業共済等掛金控除として全額所得控除する。
+    """
+    pension_receiving_now = cf.pension_income > 0 or _ideco_annuity_active(
+        household, current, member_alive
+    )
+    if monthly_salary_total <= 0 and not pension_receiving_now:
         return
 
     active_income_now = any(
@@ -1147,6 +1436,9 @@ def _apply_income_tax(
         if active_income_now
         else 0
     )
+    est_pension_misc, pension_misc_basis = estimate_cache.pension_taxable(
+        store, household, year, member_alive
+    )
 
     spouse_income = 0  # MVP: 配偶者収入は0扱い(将来拡張)
     spouse_ded, dep_ded = calc_deductions_for_household(
@@ -1164,13 +1456,21 @@ def _apply_income_tax(
         ),
         spouse=spouse_ded,
         dependent=dep_ded,
+        mutual_aid=estimate_cache.ideco_annual_deduction(
+            store, household, year, member_alive
+        ),
     )
     income_after = salary_income_after_deduction(
         store, datetime.date(year, 12, 31), est_annual
     )
+    # 総所得金額 = 給与所得 + 公的年金等に係る雑所得
     annual_tax = calc_annual_income_tax(
-        store, datetime.date(year, 12, 31), income_after, deductions
+        store, datetime.date(year, 12, 31), income_after + est_pension_misc, deductions
     )
+
+    # 年金のみで公的年金等控除等の範囲に収まる(税額0)の場合はトレースを出さない
+    if monthly_salary_total <= 0 and annual_tax <= 0:
+        return
 
     if current.month < 12:
         monthly_tax = annual_tax // 12
@@ -1181,8 +1481,11 @@ def _apply_income_tax(
                 monthly_tax,
                 {
                     "推定年収": est_annual,
+                    "公的年金等雑所得": est_pension_misc,
+                    "公的年金等の内訳": pension_misc_basis,
                     "年間推定税額": annual_tax,
                     "年間社会保険料控除": deductions.social_insurance,
+                    "小規模企業共済等掛金控除": deductions.mutual_aid,
                 },
             )
         )
@@ -1197,7 +1500,10 @@ def _apply_income_tax(
                 {
                     "年間確定税額": annual_tax,
                     "1-11月徴収済": withheld_so_far,
+                    "公的年金等雑所得": est_pension_misc,
+                    "公的年金等の内訳": pension_misc_basis,
                     "年間社会保険料控除": deductions.social_insurance,
+                    "小規模企業共済等掛金控除": deductions.mutual_aid,
                 },
             )
         )
@@ -1212,8 +1518,12 @@ def _apply_resident_tax(
     resident_tax_cache: dict[int, dict[datetime.date, int]],
     cf: MonthlyCashflow,
     member_alive: MemberAlive,
+    estimate_cache: AnnualTaxEstimateCache,
 ) -> None:
-    """前年所得課税の住民税を月次CFへ反映する."""
+    """前年所得課税の住民税を月次CFへ反映する.
+
+    給与所得に加え、公的年金等の雑所得を前年所得へ含める。
+    """
     if year not in resident_tax_cache:
         prev_year = year - 1
         prev_est_annual = _annual_salary_estimate(
@@ -1222,8 +1532,11 @@ def _apply_resident_tax(
             assumptions,
             member_alive,
         )
+        prev_pension_misc, _ = estimate_cache.pension_taxable(
+            store, household, prev_year, member_alive
+        )
 
-        if prev_est_annual > 0:
+        if prev_est_annual > 0 or prev_pension_misc > 0:
             prev_si = _annual_social_insurance_estimate(
                 store,
                 household,
@@ -1240,6 +1553,9 @@ def _apply_resident_tax(
                 social_insurance=prev_si,
                 spouse=0,
                 dependent=0,
+                mutual_aid=estimate_cache.ideco_annual_deduction(
+                    store, household, prev_year, member_alive
+                ),
             )
             prev_income_after = salary_income_after_deduction(
                 store,
@@ -1249,7 +1565,7 @@ def _apply_resident_tax(
             prev_taxable = calc_taxable_income(
                 store,
                 datetime.date(prev_year, 12, 31),
-                prev_income_after,
+                prev_income_after + prev_pension_misc,
                 prev_deductions,
             )
             resident_tax_cache[year] = monthly_resident_tax_schedule(
@@ -1308,7 +1624,13 @@ def _apply_investments(
     nisa_accounts: dict[str, NisaAccount],
     member_alive: MemberAlive,
 ) -> None:
-    """iDeCo・NISAの積立・運用・取崩を月次CFへ反映する."""
+    """iDeCo・NISAの積立・運用・取崩を月次CFへ反映する.
+
+    iDeCoの受取:
+    - 一時金: 受取開始年齢の到達月に残高(×一時金割合)を退職所得として分離課税
+    - 年金: 受取月額を計上し、公的年金等の雑所得として所得税・住民税側で課税
+    NISAの取崩は非課税。売却分の簿価は翌年に生涯非課税枠へ復活する。
+    """
     for ideco in household.ideco_plans:
         member = next(
             (m for m in household.members if m.id == ideco.member_id), None
@@ -1316,8 +1638,17 @@ def _apply_investments(
         if member is None or not member_alive(member, current):
             continue
         member_age = age_at(member.birth_date, current)
-        in_contribution_window = ideco.start_age <= member_age < ideco.end_age
         previous = ideco_accounts[ideco.id]
+        # 受給開始後(一時金受取済み・年金受取開始後)は脱退扱いで拠出しない
+        receipt_started = member_age >= ideco.receive_start_age and (
+            ideco.receive_type in ("一時金", "一時金+年金")
+            or ideco.monthly_withdrawal > 0
+        )
+        in_contribution_window = (
+            ideco.start_age <= member_age < ideco.end_age
+            and not previous.lump_sum_paid
+            and not receipt_started
+        )
         updated = ideco_monthly_step(
             store,
             current,
@@ -1326,7 +1657,6 @@ def _apply_investments(
             ideco.subscriber_type,
             ideco.annual_return_rate,
         )
-        ideco_accounts[ideco.id] = updated
         contribution = updated.total_contributions - previous.total_contributions
         cf.ideco_contribution += contribution
         if contribution > 0:
@@ -1343,42 +1673,80 @@ def _apply_investments(
                     },
                 )
             )
+
+        # 一時金受取(退職所得として分離課税)
         if (
-            ideco.receive_start_age is not None
+            not updated.lump_sum_paid
+            and ideco.receive_type in ("一時金", "一時金+年金")
             and member_age >= ideco.receive_start_age
+        ):
+            ratio = 1.0 if ideco.receive_type == "一時金" else ideco.lump_sum_ratio
+            lump_sum = int(updated.balance * ratio)
+            updated = replace(
+                updated,
+                balance=updated.balance - lump_sum,
+                lump_sum_paid=True,
+            )
+            if lump_sum > 0:
+                years = ideco_contribution_years(updated, ideco.prior_contribution_years)
+                # 19年ルール(簡易): 前年以前19年内の退職金と重複する加入年数を控除年数から除く
+                dedup_overlap = _ideco_lump_sum_dedup_overlap(
+                    household, ideco, member, years
+                )
+                adjusted_years = max(0, years - dedup_overlap)
+                tax = retirement_tax(store, current, lump_sum, adjusted_years)
+                cf.ideco_withdrawal += lump_sum
+                cf.ideco_withdrawal_tax += tax.total
+                lump_basis: dict[str, TraceValue] = {
+                    "member": member.name,
+                    "加入年数": years,
+                    "退職所得控除": retirement_income_deduction(adjusted_years),
+                    "課税退職所得": retirement_income(
+                        store, current, lump_sum, adjusted_years
+                    ),
+                    "note": "退職所得として分離課税(退職金との控除重複調整は年単位の簡易近似)",
+                }
+                if dedup_overlap > 0:
+                    lump_basis["重複調整(19年ルール簡易)"] = dedup_overlap
+                    lump_basis["調整後控除年数"] = adjusted_years
+                cf.traces.append(TraceEntry("iDeCo一時金受取", lump_sum, lump_basis))
+                if tax.total > 0:
+                    cf.traces.append(
+                        TraceEntry(
+                            "iDeCo受取時税",
+                            tax.total,
+                            {
+                                "所得税": tax.income_tax,
+                                "住民税": tax.resident_tax,
+                                "課税方式": "退職所得(分離課税)",
+                            },
+                        )
+                    )
+
+        # 年金受取(公的年金等の雑所得として総合課税側で処理)
+        if (
+            ideco.receive_type in ("年金", "一時金+年金")
             and ideco.monthly_withdrawal > 0
+            and _ideco_annuity_receiving(ideco, member_age)
         ):
             withdrawal = withdrawal_amount(
                 updated.balance, ideco.monthly_withdrawal
             )
-            updated = IdecoAccount(
-                balance=updated.balance - withdrawal,
-                total_contributions=updated.total_contributions,
-            )
+            updated = replace(updated, balance=updated.balance - withdrawal)
             cf.ideco_withdrawal += withdrawal
-            withdrawal_tax = int(withdrawal * ideco.withdrawal_tax_rate)
-            cf.ideco_withdrawal_tax += withdrawal_tax
             if withdrawal > 0:
                 cf.traces.append(
                     TraceEntry(
-                        "iDeCo受取",
+                        "iDeCo年金受取",
                         withdrawal,
                         {
                             "member": member.name,
                             "月額": ideco.monthly_withdrawal,
-                            "概算税率": ideco.withdrawal_tax_rate,
-                            "概算税額": withdrawal_tax,
+                            "受取期間(年)": ideco.annuity_years or "残高が尽きるまで",
+                            "note": "公的年金等の雑所得として所得税・住民税へ合算",
                         },
                     )
                 )
-                if withdrawal_tax > 0:
-                    cf.traces.append(
-                        TraceEntry(
-                            "iDeCo受取時税",
-                            withdrawal_tax,
-                            {"概算税率": ideco.withdrawal_tax_rate},
-                        )
-                    )
         ideco_accounts[ideco.id] = updated
 
     for nisa in household.nisa_plans:
@@ -1397,9 +1765,9 @@ def _apply_investments(
             current,
             previous,
             nisa.monthly_investment if in_contribution_window else 0,
+            nisa.growth_monthly_investment if in_contribution_window else 0,
             nisa.annual_return_rate,
         )
-        nisa_accounts[nisa.id] = updated
         investment = updated.total_invested - previous.total_invested
         cf.nisa_investment += investment
         if investment > 0:
@@ -1409,8 +1777,13 @@ def _apply_investments(
                     investment,
                     {
                         "member": member.name,
+                        "つみたて枠投資": updated.year_invested_tsumitate
+                        - previous.year_invested_tsumitate,
+                        "成長枠投資": updated.year_invested_growth
+                        - previous.year_invested_growth,
                         "年間上限": nisa_annual_limit(store, current),
-                        "note": "運用益非課税",
+                        "生涯枠消費": updated.total_invested,
+                        "note": "運用益非課税。つみたて枠超過分は成長投資枠へ振替",
                     },
                 )
             )
@@ -1419,13 +1792,7 @@ def _apply_investments(
             and member_age >= nisa.receive_start_age
             and nisa.monthly_withdrawal > 0
         ):
-            withdrawal = withdrawal_amount(
-                updated.balance, nisa.monthly_withdrawal
-            )
-            nisa_accounts[nisa.id] = NisaAccount(
-                balance=updated.balance - withdrawal,
-                total_invested=updated.total_invested,
-            )
+            updated, withdrawal = nisa_withdraw(updated, nisa.monthly_withdrawal)
             cf.nisa_withdrawal += withdrawal
             if withdrawal > 0:
                 cf.traces.append(
@@ -1436,9 +1803,12 @@ def _apply_investments(
                             "member": member.name,
                             "月額": nisa.monthly_withdrawal,
                             "税": "非課税",
+                            "翌年復活する簿価": updated.pending_restore_tsumitate
+                            + updated.pending_restore_growth,
                         },
                     )
                 )
+        nisa_accounts[nisa.id] = updated
 
 
 def _apply_expenses(
@@ -1834,7 +2204,11 @@ def simulate(
         for plan in household.ideco_plans
     }
     nisa_accounts = {
-        plan.id: NisaAccount(balance=plan.initial_balance)
+        # 初期残高は簿価=評価額と仮定してつみたて枠へ計上(生涯枠を消費)
+        plan.id: NisaAccount(
+            tsumitate_balance=plan.initial_balance,
+            tsumitate_cost=plan.initial_balance,
+        )
         for plan in household.nisa_plans
     }
 
@@ -1849,6 +2223,7 @@ def simulate(
 
     # 住民税スケジュールを事前計算(年ごとにキャッシュ)
     resident_tax_cache: dict[int, dict[datetime.date, int]] = {}
+    estimate_cache = AnnualTaxEstimateCache()
 
     current = start
     deceased = next(
@@ -1904,6 +2279,7 @@ def simulate(
             monthly_salary_total=monthly_salary_total,
             cf=cf,
             member_alive=member_alive,
+            estimate_cache=estimate_cache,
         )
         _apply_resident_tax(
             store=store,
@@ -1914,6 +2290,7 @@ def simulate(
             resident_tax_cache=resident_tax_cache,
             cf=cf,
             member_alive=member_alive,
+            estimate_cache=estimate_cache,
         )
 
         # --- ローン返済 ---
