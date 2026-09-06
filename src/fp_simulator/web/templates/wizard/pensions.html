@@ -39,20 +39,50 @@
 <form method="post" action="/households/{{ household.id }}/pensions">
   <input type="hidden" name="edit_id" value="{{ edit_target.id if edit_target else '' }}">
   {% set v = values if values else edit_target %}
+  {% set current_member = v.member_id if v else (household.members[0].id if household.members else "") %}
+  {% set suggested_remuneration = remuneration_suggestions.get(current_member, 0) %}
   <p><label>対象者:
-    <select name="member_id">
-      {% set current_member = v.member_id if v else "" %}
-      {% for m in household.members %}<option value="{{ m.id }}" {% if m.id == current_member %}selected{% endif %}>{{ m.name }}({{ m.relationship.value }})</option>{% endfor %}
+    <select name="member_id" id="pension-member-id">
+      {% for m in household.members %}<option value="{{ m.id }}" data-remuneration="{{ remuneration_suggestions.get(m.id, 0) }}" {% if m.id == current_member %}selected{% endif %}>{{ m.name }}({{ m.relationship.value }})</option>{% endfor %}
     </select></label>
      <small class="field-hint">年金記録を登録する対象者を選択します。</small></p>
   <p><label>国民年金加入月数: <input type="number" name="kokumin_months" min="0" value="{{ v.kokumin_months if v else 480 }}"></label>(480=40年満額)
      <small class="field-hint">これまでの国民年金への加入月数の実績です。</small></p>
   <p><label>厚生年金加入月数: <input type="number" name="kousei_months" min="0" value="{{ v.kousei_months if v else 0 }}"></label>
      <small class="field-hint">会社員・公務員期間の厚生年金加入月数です。</small></p>
-  <p><label>平均標準報酬額: <input type="number" name="avg_standard_remuneration" min="0" value="{{ v.avg_standard_remuneration if v else 0 }}"></label>円
-     <small class="field-hint">厚生年金加入期間の平均月収(標準報酬月額)の目安です。</small></p>
+  <p><label>平均標準報酬額: <input type="number" name="avg_standard_remuneration" id="pension-avg-standard-remuneration" min="0" value="{{ v.avg_standard_remuneration if v else suggested_remuneration }}" data-auto-value="{{ suggested_remuneration if not edit_target else '' }}"></label>円
+     <button type="button" id="pension-apply-remuneration">収入から反映</button>
+     <small class="field-hint">同じ対象者の「給与(厚生年金)」「役員報酬(厚生年金)」から、標準報酬月額と賞与の月額換算を期間加重して算出した目安です。昇給・再評価率は含まれないため、必要に応じて上書きしてください。</small></p>
   <p><label>受給開始年齢: <input type="number" name="start_age" min="0" max="120" value="{{ v.start_age if v else 65 }}"></label>
      <small class="field-hint">年金の受給を開始する年齢です(繰上げ・繰下げ受給の目安)。</small></p>
   <p><button type="submit">{{ "更新" if edit_target else "追加" }}</button></p>
 </form>
+<script>
+(function () {
+  var member = document.getElementById("pension-member-id");
+  var input = document.getElementById("pension-avg-standard-remuneration");
+  var apply = document.getElementById("pension-apply-remuneration");
+  if (!member || !input || !apply) return;
+
+  var autoValue = input.getAttribute("data-auto-value") || "";
+  function selectedSuggestion() {
+    var option = member.options[member.selectedIndex];
+    return option ? option.getAttribute("data-remuneration") || "0" : "0";
+  }
+  function applySuggestion() {
+    var value = selectedSuggestion();
+    input.value = value;
+    autoValue = value;
+  }
+  member.addEventListener("change", function () {
+    if (input.value === "" || input.value === "0" || input.value === autoValue) {
+      applySuggestion();
+    }
+  });
+  apply.addEventListener("click", applySuggestion);
+  input.addEventListener("input", function () {
+    if (input.value !== autoValue) autoValue = "";
+  });
+})();
+</script>
 {% endblock %}

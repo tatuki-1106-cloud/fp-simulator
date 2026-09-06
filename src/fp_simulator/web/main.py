@@ -38,6 +38,7 @@ from fp_simulator.engine.models import (
     Account,
     ChildcareLeave,
     EducationPlan,
+    EducationStage,
     Expense,
     Household,
     IdecoPlan,
@@ -53,6 +54,7 @@ from fp_simulator.engine.models import (
     SocialInsuranceType,
     Vehicle,
 )
+from fp_simulator.engine.pension import estimate_avg_standard_remuneration
 from fp_simulator.mcp_server.server import mcp as mcp_server
 from fp_simulator.parameters.loader import ParameterStore, get_store
 from fp_simulator.web.auth import McpAuthMiddleware, authenticated_email, iap_auth_required
@@ -89,10 +91,11 @@ def _wizard_error(
     error: str,
     values: dict,
     values_key: str = "values",
+    error_key: str = "error",
 ) -> HTMLResponse:
     """入力エラー時に、送信済みの値を保持したまま同じフォームをHTTP 400で再表示する."""
     ctx = dict(context)
-    ctx["error"] = error
+    ctx[error_key] = error
     ctx[values_key] = values
     return templates.TemplateResponse(request, template_name, ctx, status_code=400)
 
@@ -118,12 +121,20 @@ def _simulation_error(
     )
 
 
+def _pension_remuneration_suggestions(household: Household) -> dict[str, int]:
+    """収入設定から対象者別の平均標準報酬額の入力目安を作る."""
+    return {
+        member.id: estimate_avg_standard_remuneration(household.incomes, member.id)
+        for member in household.members
+    }
+
+
 def _export_rows(result, granularity: str) -> list[list[object]]:
     """シミュレーション結果をCSV/Excel共通の行データへ変換."""
     if granularity == "yearly":
         yearly = _yearly_summary(result.monthly)
         rows: list[list[object]] = [[
-            "年", "年齢", "収入", "休業給付", "乗り物売却", "支出", "住宅頭金", "固定資産税", "修繕費",
+            "年", "年齢", "収入", "休業給付", "乗り物売却", "支出", "教育費", "住宅頭金", "固定資産税", "修繕費",
             "乗り物購入", "乗り物維持費", "乗り物税金・修繕", "車検", "税・社保", "収支",
             "現金・預金", "iDeCo", "NISA", "iDeCo受取", "NISA取崩", "金融資産合計",
             "ガソリン代", "電気代", "自動車税", "重量税",
@@ -131,7 +142,7 @@ def _export_rows(result, granularity: str) -> list[list[object]]:
         rows.extend([
             [
                 item["year"], item["age"], item["income"], item["leave_benefit"],
-                item["vehicle_sale_income"], item["expense"],
+                item["vehicle_sale_income"], item["expense"], item["education_expense"],
                 item["housing_down_payment"], item["property_tax"], item["repair_expense"],
                 item["vehicle_purchase_expense"], item["vehicle_maintenance"],
                 item["vehicle_tax_repair"], item["vehicle_inspection_expense"],
@@ -466,6 +477,7 @@ async def incomes_add(
     end_age: int = Form(60),
     monthly_amount: int = Form(...),
     bonus_amount: int = Form(0),
+    annual_raise_rate: float = Form(0.0),
     retirement_allowance: int = Form(0),
     retirement_age: int = Form(60),
     edit_id: str = Form(""),
@@ -482,6 +494,7 @@ async def incomes_add(
         "end_age": end_age,
         "monthly_amount": monthly_amount,
         "bonus_amount": bonus_amount,
+        "annual_raise_rate": annual_raise_rate,
         "retirement_allowance": retirement_allowance,
         "retirement_age": retirement_age,
     }
@@ -497,6 +510,14 @@ async def incomes_add(
         return _wizard_error(request, "wizard/incomes.html", context, "対象者が見つかりません", values)
     if monthly_amount < 0 or bonus_amount < 0 or retirement_allowance < 0:
         return _wizard_error(request, "wizard/incomes.html", context, "金額は0以上で入力してください", values)
+    if not -1 <= annual_raise_rate <= 1:
+        return _wizard_error(
+            request,
+            "wizard/incomes.html",
+            context,
+            "年間昇給率は-100%以上100%以下で入力してください",
+            values,
+        )
     if end_age < start_age:
         return _wizard_error(
             request, "wizard/incomes.html", context, "終了年齢は開始年齢以降にしてください", values
@@ -513,6 +534,7 @@ async def incomes_add(
         monthly_amount=monthly_amount,
         bonus_months=[6, 12] if bonus_amount > 0 else [],
         bonus_amount=bonus_amount,
+        annual_raise_rate=annual_raise_rate,
         retirement_allowance=retirement_allowance,
         retirement_age=retirement_age,
     )
@@ -532,7 +554,11 @@ async def incomes_add(
         getattr(request.state, "authenticated_email", None) or "web-user",
         "web",
         "household.income.update" if edit_id else "household.income.add",
-        details={"name": name, "monthly_amount": monthly_amount},
+        details={
+            "name": name,
+            "monthly_amount": monthly_amount,
+            "annual_raise_rate": annual_raise_rate,
+        },
     )
     return RedirectResponse(f"/households/{household_id}/incomes", status_code=303)
 
@@ -751,7 +777,13 @@ async def pensions_edit(request: Request, household_id: str, edit_id: str = "") 
     return templates.TemplateResponse(
         request,
         "wizard/pensions.html",
-        {"title": "Q3 年金", "household": household, "active_q": "Q3", "edit_target": edit_target},
+        {
+            "title": "Q3 年金",
+            "household": household,
+            "active_q": "Q3",
+            "edit_target": edit_target,
+            "remuneration_suggestions": _pension_remuneration_suggestions(household),
+        },
     )
 
 
@@ -784,6 +816,7 @@ async def pensions_add(
         "edit_target": (
             next((p for p in household.pension_records if p.id == edit_id), None) if edit_id else None
         ),
+        "remuneration_suggestions": _pension_remuneration_suggestions(household),
     }
     if not any(member.id == member_id for member in household.members):
         return _wizard_error(request, "wizard/pensions.html", context, "対象者が見つかりません", values)
@@ -840,18 +873,64 @@ async def pensions_delete(request: Request, household_id: str, record_id: str) -
     return RedirectResponse(f"/households/{household_id}/pensions", status_code=303)
 
 
+def _expenses_context(household: Household, edit_id: str = "") -> dict:
+    """Q4生活費画面の共通コンテキストを作る."""
+    return {
+        "title": "Q4 生活費",
+        "household": household,
+        "active_q": "Q4",
+        "edit_target": next((e for e in household.expenses if e.id == edit_id), None)
+        if edit_id
+        else None,
+    }
+
+
 @app.get("/households/{household_id}/expenses", response_class=HTMLResponse)
 async def expenses_edit(request: Request, household_id: str, edit_id: str = "") -> HTMLResponse:
     """Q4: 生活費設定."""
     household = await get_household(household_id)
     if household is None:
         return RedirectResponse("/", status_code=303)
-    edit_target = next((e for e in household.expenses if e.id == edit_id), None) if edit_id else None
     return templates.TemplateResponse(
         request,
         "wizard/expenses.html",
-        {"title": "Q4 生活費", "household": household, "active_q": "Q4", "edit_target": edit_target},
+        _expenses_context(household, edit_id),
     )
+
+
+@app.post("/households/{household_id}/expenses/assumptions")
+async def expenses_assumptions_update(
+    request: Request,
+    household_id: str,
+    inflation_rate: float = Form(...),
+) -> Response:
+    """Q4の物価上昇率を更新."""
+    household = await get_household(household_id)
+    if household is None:
+        return RedirectResponse("/", status_code=303)
+    context = _expenses_context(household)
+    values = {"inflation_rate": inflation_rate}
+    if not -1 <= inflation_rate <= 1:
+        return _wizard_error(
+            request,
+            "wizard/expenses.html",
+            context,
+            "物価上昇率は-100%以上100%以下で入力してください",
+            values,
+            "assumption_values",
+            "assumption_error",
+        )
+
+    household.assumptions.inflation_rate = inflation_rate
+    await save_household(household)
+    await add_audit_log(
+        household_id,
+        getattr(request.state, "authenticated_email", None) or "web-user",
+        "web",
+        "household.assumptions.update",
+        details={"inflation_rate": inflation_rate},
+    )
+    return RedirectResponse(f"/households/{household_id}/expenses", status_code=303)
 
 
 @app.post("/households/{household_id}/expenses")
@@ -874,12 +953,7 @@ async def expenses_add(
         "start_age": start_age,
         "end_age": end_age,
     }
-    context = {
-        "title": "Q4 生活費",
-        "household": household,
-        "active_q": "Q4",
-        "edit_target": next((e for e in household.expenses if e.id == edit_id), None) if edit_id else None,
-    }
+    context = _expenses_context(household, edit_id)
     if not name.strip():
         return _wizard_error(request, "wizard/expenses.html", context, "内容を入力してください", values)
     if monthly_amount < 0:
@@ -1179,6 +1253,165 @@ async def loans_delete(request: Request, household_id: str, loan_id: str) -> Res
     return RedirectResponse(f"/households/{household_id}/loans", status_code=303)
 
 
+EDUCATION_STAGE_NAMES = ("幼稚園", "小学校", "中学校", "高校", "大学")
+EDUCATION_STAGE_OPTIONS = {
+    "幼稚園": ("公立", "私立", "未定"),
+    "小学校": ("公立", "私立", "未定"),
+    "中学校": ("公立", "私立", "未定"),
+    "高校": ("公立", "私立", "未定"),
+    "大学": ("国立", "私立文系", "私立理系", "専門学校", "未定"),
+}
+EDUCATION_DEFAULT_TYPES = {
+    "公立": dict(zip(EDUCATION_STAGE_NAMES, ("公立", "公立", "公立", "公立", "国立"))),
+    "私立": dict(zip(EDUCATION_STAGE_NAMES, ("私立", "私立", "私立", "私立", "私立文系"))),
+}
+
+
+def _education_stage_options() -> dict[str, tuple[str, ...]]:
+    """教育段階ごとの選択肢をテンプレートへ渡す."""
+    return EDUCATION_STAGE_OPTIONS
+
+
+def _education_form_values(plan: EducationPlan | None) -> dict:
+    """教育費フォームの初期値を作る."""
+    path = plan.path if plan else "公立"
+    stages = {
+        stage: {
+            "school_type": EDUCATION_DEFAULT_TYPES[path][stage],
+            "cost_mode": "平均",
+            "annual_cost": "",
+            "admission_fee": 0,
+            "annual_material_cost": 0,
+            "annual_transport_cost": 0,
+            "annual_other_cost": 0,
+            "annual_support": 0,
+            "living_arrangement": "自宅",
+            "monthly_living_cost": 0,
+        }
+        for stage in EDUCATION_STAGE_NAMES
+    }
+    if plan:
+        for stage in plan.stages:
+            stage_values = stage.model_dump()
+            if stage_values["annual_cost"] is None:
+                stage_values["annual_cost"] = ""
+            stages[stage.stage] = stage_values
+    return {
+        "member_id": plan.member_id if plan else "",
+        "path": path,
+        "include_lessons": plan.include_lessons if plan else False,
+        "lessons_start_age": plan.lessons_start_age if plan else 4,
+        "lessons_end_age": plan.lessons_end_age if plan else 12,
+        "lessons_monthly_amount": (
+            plan.lessons_monthly_amount if plan and plan.lessons_monthly_amount is not None else ""
+        ),
+        "cram_start_age": plan.cram_start_age if plan else 13,
+        "cram_end_age": plan.cram_end_age if plan else 18,
+        "cram_monthly_amount": (
+            plan.cram_monthly_amount if plan and plan.cram_monthly_amount is not None else ""
+        ),
+        "education_raise_rate": plan.education_raise_rate if plan else 0,
+        "stages": stages,
+    }
+
+
+def _education_form_values_from_form(
+    form,
+    path: str,
+    member_id: str,
+    include_lessons: bool,
+    edit_id: str,
+) -> dict:
+    """入力エラー時に教育費フォームの送信値を保持する."""
+    values = {
+        "member_id": member_id,
+        "path": path,
+        "include_lessons": include_lessons,
+        "lessons_start_age": form.get("lessons_start_age", 4),
+        "lessons_end_age": form.get("lessons_end_age", 12),
+        "lessons_monthly_amount": form.get("lessons_monthly_amount", ""),
+        "cram_start_age": form.get("cram_start_age", 13),
+        "cram_end_age": form.get("cram_end_age", 18),
+        "cram_monthly_amount": form.get("cram_monthly_amount", ""),
+        "education_raise_rate": form.get("education_raise_rate", 0),
+        "edit_id": edit_id,
+        "stages": {},
+    }
+    for stage in EDUCATION_STAGE_NAMES:
+        values["stages"][stage] = {
+            "school_type": form.get(
+                f"school_type_{stage}",
+                EDUCATION_DEFAULT_TYPES.get(path, EDUCATION_DEFAULT_TYPES["公立"])[stage],
+            ),
+            "cost_mode": form.get(f"cost_mode_{stage}", "平均"),
+            "annual_cost": form.get(f"annual_cost_{stage}", ""),
+            "admission_fee": form.get(f"admission_fee_{stage}", 0),
+            "annual_material_cost": form.get(f"annual_material_cost_{stage}", 0),
+            "annual_transport_cost": form.get(f"annual_transport_cost_{stage}", 0),
+            "annual_other_cost": form.get(f"annual_other_cost_{stage}", 0),
+            "annual_support": form.get(f"annual_support_{stage}", 0),
+            "living_arrangement": form.get(f"living_arrangement_{stage}", "自宅"),
+            "monthly_living_cost": form.get(f"monthly_living_cost_{stage}", 0),
+        }
+    return values
+
+
+def _education_int(form, key: str, default: int = 0) -> int:
+    """フォームの非負整数を読み取る."""
+    raw = form.get(key, default)
+    if raw == "":
+        raise ValueError(f"{key}を入力してください")
+    value = int(raw)
+    if value < 0:
+        raise ValueError(f"{key}は0以上で入力してください")
+    return value
+
+
+def _education_optional_int(form, key: str) -> int | None:
+    """空欄を許可した非負整数を読み取る."""
+    raw = form.get(key, "")
+    if raw == "":
+        return None
+    return _education_int(form, key)
+
+
+def _education_stages_from_form(form, path: str) -> list[EducationStage]:
+    """段階別教育費設定をフォームから生成する."""
+    if not any(f"school_type_{stage}" in form for stage in EDUCATION_STAGE_NAMES):
+        return []
+    stages: list[EducationStage] = []
+    defaults = EDUCATION_DEFAULT_TYPES.get(path, EDUCATION_DEFAULT_TYPES["公立"])
+    for stage in EDUCATION_STAGE_NAMES:
+        cost_mode = str(form.get(f"cost_mode_{stage}", "平均"))
+        annual_cost = (
+            _education_optional_int(form, f"annual_cost_{stage}")
+            if cost_mode == "個別"
+            else None
+        )
+        if cost_mode == "個別" and annual_cost is None:
+            raise ValueError(f"{stage}の個別年間費用を入力してください")
+        stages.append(
+            EducationStage(
+                stage=stage,
+                school_type=str(form.get(f"school_type_{stage}", defaults[stage])),
+                cost_mode=cost_mode,
+                annual_cost=annual_cost,
+                admission_fee=_education_int(form, f"admission_fee_{stage}"),
+                annual_material_cost=_education_int(
+                    form, f"annual_material_cost_{stage}"
+                ),
+                annual_transport_cost=_education_int(
+                    form, f"annual_transport_cost_{stage}"
+                ),
+                annual_other_cost=_education_int(form, f"annual_other_cost_{stage}"),
+                annual_support=_education_int(form, f"annual_support_{stage}"),
+                living_arrangement=str(form.get(f"living_arrangement_{stage}", "自宅")),
+                monthly_living_cost=_education_int(form, f"monthly_living_cost_{stage}"),
+            )
+        )
+    return stages
+
+
 @app.get("/households/{household_id}/education", response_class=HTMLResponse)
 async def education_edit(request: Request, household_id: str, edit_id: str = "") -> HTMLResponse:
     household = await get_household(household_id)
@@ -1190,7 +1423,14 @@ async def education_edit(request: Request, household_id: str, edit_id: str = "")
     return templates.TemplateResponse(
         request,
         "wizard/education.html",
-        {"title": "Q5 教育費", "household": household, "active_q": "Q5", "edit_target": edit_target},
+        {
+            "title": "Q5 教育費",
+            "household": household,
+            "active_q": "Q5",
+            "edit_target": edit_target,
+            "form_values": _education_form_values(edit_target),
+            "stage_options": _education_stage_options(),
+        },
     )
 
 
@@ -1198,35 +1438,68 @@ async def education_edit(request: Request, household_id: str, edit_id: str = "")
 async def education_add(
     request: Request,
     household_id: str,
-    member_id: str = Form(...),
-    path: str = Form("公立"),
-    include_lessons: str = Form(""),
-    edit_id: str = Form(""),
 ) -> Response:
+    form = await request.form()
+    member_id = str(form.get("member_id", ""))
+    path = str(form.get("path", "公立"))
+    include_lessons = bool(form.get("include_lessons"))
+    edit_id = str(form.get("edit_id", ""))
     household = await get_household(household_id)
     if household is None:
         return RedirectResponse("/", status_code=303)
-    values = {"member_id": member_id, "path": path, "include_lessons": include_lessons}
+    form_values = _education_form_values_from_form(form, path, member_id, include_lessons, edit_id)
+    values = dict(form_values)
     context = {
         "title": "Q5 教育費",
         "household": household,
         "active_q": "Q5",
+        "form_values": form_values,
+        "stage_options": _education_stage_options(),
         "edit_target": (
             next((e for e in household.education_plans if e.id == edit_id), None) if edit_id else None
         ),
     }
-    if not any(m.id == member_id for m in household.members):
+    child = next(
+        (
+            member
+            for member in household.members
+            if member.id == member_id and member.relationship == Relationship.CHILD
+        ),
+        None,
+    )
+    if child is None:
         return _wizard_error(request, "wizard/education.html", context, "対象の子が見つかりません", values)
     if path not in {"公立", "私立"}:
         return _wizard_error(request, "wizard/education.html", context, "進学パスが正しくありません", values)
     if edit_id and not any(e.id == edit_id for e in household.education_plans):
         return _wizard_error(request, "wizard/education.html", context, "編集対象の教育費プランが見つかりません", values)
-    plan = EducationPlan(
-        id=edit_id or str(uuid.uuid4()),
-        member_id=member_id,
-        path=path,
-        include_lessons=bool(include_lessons),
-    )
+    if not edit_id and any(e.member_id == member_id for e in household.education_plans):
+        return _wizard_error(
+            request,
+            "wizard/education.html",
+            context,
+            "同じ子の教育費プランは1件までです。既存プランを編集してください",
+            values,
+        )
+    try:
+        stages = _education_stages_from_form(form, path)
+        plan_values = {
+            "id": edit_id or str(uuid.uuid4()),
+            "member_id": member_id,
+            "path": path,
+            "stages": stages,
+            "include_lessons": include_lessons,
+            "lessons_start_age": _education_int(form, "lessons_start_age", 4),
+            "lessons_end_age": _education_int(form, "lessons_end_age", 12),
+            "lessons_monthly_amount": _education_optional_int(form, "lessons_monthly_amount"),
+            "cram_start_age": _education_int(form, "cram_start_age", 13),
+            "cram_end_age": _education_int(form, "cram_end_age", 18),
+            "cram_monthly_amount": _education_optional_int(form, "cram_monthly_amount"),
+            "education_raise_rate": float(form.get("education_raise_rate", "0") or 0),
+        }
+        plan = EducationPlan(**plan_values)
+    except (TypeError, ValueError) as exc:
+        return _wizard_error(request, "wizard/education.html", context, str(exc), values)
     if edit_id:
         household.education_plans = [
             plan if e.id == edit_id else e for e in household.education_plans
@@ -2348,6 +2621,7 @@ def _yearly_summary(monthly) -> list[dict]:
                 "survivor_pension": 0,
                 "child_allowance": 0,
                 "expense": 0,
+                "education_expense": 0,
                 "vehicle_sale_income": 0,
                 "housing_down_payment": 0,
                 "property_tax": 0,
@@ -2380,6 +2654,7 @@ def _yearly_summary(monthly) -> list[dict]:
         summary["survivor_pension"] += month.survivor_pension
         summary["child_allowance"] += month.child_allowance
         summary["expense"] += month.total_expense
+        summary["education_expense"] += month.education_expense
         summary["vehicle_sale_income"] += month.vehicle_sale_income
         summary["housing_down_payment"] += month.housing_down_payment
         summary["property_tax"] += month.property_tax
@@ -2408,6 +2683,61 @@ def _yearly_summary(monthly) -> list[dict]:
         summary["total_assets_end"] = month.total_assets
         summary["age"] = month.age
     return sorted(yearly.values(), key=lambda item: item["year"])
+
+
+def _education_summary(monthly) -> tuple[list[dict], list[dict]]:
+    """教育費を子ども別・年別に集計する."""
+    child_totals: dict[str, dict] = {}
+    year_totals: dict[int, dict] = {}
+    for month in monthly:
+        for trace in month.traces:
+            if trace.item != "教育費":
+                continue
+            child = str(trace.basis.get("child", "不明"))
+            child_row = child_totals.setdefault(
+                child,
+                {
+                    "child": child,
+                    "total": 0,
+                    "school_cost": 0,
+                    "lessons_cost": 0,
+                    "admission_fee": 0,
+                    "material_cost": 0,
+                    "transport_cost": 0,
+                    "living_cost": 0,
+                    "support": 0,
+                },
+            )
+            child_row["total"] += trace.amount
+            for key in (
+                "school_cost",
+                "lessons_cost",
+                "admission_fee",
+                "material_cost",
+                "transport_cost",
+                "living_cost",
+                "support",
+            ):
+                source_key = {
+                    "school_cost": "学校関連",
+                    "lessons_cost": "塾・習い事",
+                    "admission_fee": "入学金",
+                    "material_cost": "教材費",
+                    "transport_cost": "通学費",
+                    "living_cost": "通学・生活",
+                    "support": "支援・奨学金",
+                }[key]
+                child_row[key] += int(trace.basis.get(source_key, 0) or 0)
+            year_row = year_totals.setdefault(
+                month.date.year,
+                {"year": month.date.year, "total": 0, "max_monthly": 0},
+            )
+            year_row["total"] += trace.amount
+            year_row["max_monthly"] = max(year_row["max_monthly"], trace.amount)
+    return (
+        sorted(child_totals.values(), key=lambda row: row["child"]),
+        sorted(year_totals.values(), key=lambda row: row["year"]),
+    )
 
 
 _TRACE_PARAMETER_SOURCES: dict[str, tuple[tuple[str, str], ...]] = {
@@ -2625,6 +2955,7 @@ async def simulate_result(
     expense_breakdown_values = [
         amount for amount in lifetime_expense_categories.values() if amount > 0
     ]
+    education_summary, education_yearly_summary = _education_summary(result.monthly)
 
     # 生涯の年次収入構成(積み上げ棒グラフ用・表示範囲に連動しない)
     income_years = sorted({m.date.year for m in result.monthly})
@@ -2677,6 +3008,8 @@ async def simulate_result(
             "total_assets": display_total_assets,
             "expense_breakdown_labels": expense_breakdown_labels,
             "expense_breakdown_values": expense_breakdown_values,
+            "education_summary": education_summary,
+            "education_yearly_summary": education_yearly_summary,
             "income_years": income_years,
             "income_series_labels": income_series_labels,
             "income_series_values": income_series_values,

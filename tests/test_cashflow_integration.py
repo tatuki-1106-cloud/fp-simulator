@@ -150,6 +150,23 @@ class TestCashflowIntegration:
         # 残高 = 300万 + 収支
         assert m1.balance == 3_000_000 + m1.net
 
+    def test_living_expense_applies_inflation_rate(
+        self, store, household: Household
+    ) -> None:
+        """生活費に設定した物価上昇率を年単位で反映する."""
+        household.assumptions.inflation_rate = 0.02
+
+        result = simulate(store, household)
+        base_month = next(
+            month for month in result.monthly if month.date == datetime.date(2026, 1, 1)
+        )
+        following_year = next(
+            month for month in result.monthly if month.date == datetime.date(2027, 1, 1)
+        )
+
+        assert base_month.living_expense == 200_000
+        assert following_year.living_expense == 204_000
+
     def test_bonus_months(self, store, household: Household) -> None:
         """6月と12月は賞与が入る."""
         result = simulate(store, household)

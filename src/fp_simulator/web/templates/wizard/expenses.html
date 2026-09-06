@@ -5,6 +5,20 @@
 <h1>Q4. 生活費 — {{ household.name }}</h1>
 {{ lifemap(household) }}
 
+<section class="form-card">
+  <h2>物価上昇率</h2>
+  <p>将来の生活費などの支出を、基準年から毎年どの程度増加させるかを設定します。</p>
+  {{ error_banner(assumption_error) }}
+  <form method="post" action="/households/{{ household.id }}/expenses/assumptions">
+    {% set av = assumption_values if assumption_values is defined else household.assumptions %}
+    <p><label>物価上昇率（年率・小数）:
+      <input type="number" name="inflation_rate" min="-1" max="1" step="0.001" required value="{{ av.inflation_rate }}">
+    </label>
+    <small class="field-hint">例: 0.005 = 0.5%。現在の設定: {{ "{:.1%}".format(av.inflation_rate) }}</small></p>
+    <p><button type="submit">物価上昇率を保存</button></p>
+  </form>
+</section>
+
 {% if household.expenses %}
 <table>
   <thead><tr><th>内容</th><th>月額</th><th>期間(世帯主年齢)</th><th></th></tr></thead>
@@ -37,7 +51,7 @@
   <p><label>内容: <input type="text" name="name" value="{{ v.name if v else '生活費' }}"></label>
      <small class="field-hint">例: 生活費、食費、水道光熱費など。</small></p>
   <p><label>月額: <input type="number" name="monthly_amount" required min="0" value="{{ v.monthly_amount if v else '' }}"></label>円
-     <small class="field-hint">物価上昇率は前提条件で別途設定します。</small></p>
+     <small class="field-hint">設定した物価上昇率を基準年以降の金額に反映します。</small></p>
   <p><label>開始年齢: <input type="number" name="start_age" value="{{ v.start_age if v else 0 }}"></label>
      <label>終了年齢(0=生涯): <input type="number" name="end_age" value="{{ v.end_age if v else 0 }}"></label>
      <small class="field-hint">世帯主の年齢を基準に、支出が発生する期間を指定します。</small></p>

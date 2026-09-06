@@ -78,6 +78,13 @@
       value: 1100000
       source: https://www.mext.go.jp/a_menu/koutou/shinkou/07021403/1412492.htm
 
+- path: 教育費.大学.専門学校
+  description: 専門学校の年間費用(初期値・個別入力で調整可能)
+  values:
+    - from: 2013-01-01
+      value: 800000
+      source: https://www.mext.go.jp/a_menu/koutou/shinkou/07021403/1412492.htm
+
 - path: 教育費.習い事
   description: 習い事・塾の年間費用(平均)
   values:

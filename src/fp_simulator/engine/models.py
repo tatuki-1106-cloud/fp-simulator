@@ -224,13 +224,48 @@ class Vehicle(BaseModel):
         return self
 
 
+class EducationStage(BaseModel):
+    """教育段階ごとの進学・費用設定."""
+
+    stage: Literal["幼稚園", "小学校", "中学校", "高校", "大学"]
+    school_type: Literal["公立", "私立", "国立", "私立文系", "私立理系", "専門学校", "未定"] = "未定"
+    cost_mode: Literal["平均", "個別"] = "平均"
+    annual_cost: int | None = Field(default=None, ge=0)
+    admission_fee: int = Field(default=0, ge=0)
+    annual_material_cost: int = Field(default=0, ge=0)
+    annual_transport_cost: int = Field(default=0, ge=0)
+    annual_other_cost: int = Field(default=0, ge=0)
+    annual_support: int = Field(default=0, ge=0)
+    living_arrangement: Literal["自宅", "一人暮らし"] = "自宅"
+    monthly_living_cost: int = Field(default=0, ge=0)
+
+
 class EducationPlan(BaseModel):
     """教育費プラン(子ごと)."""
 
     id: str
     member_id: str  # 子のID
-    path: Literal["公立", "私立"] = "公立"
-    include_lessons: bool = False  # 習い事を含めるか
+    path: Literal["公立", "私立"] = "公立"  # 旧形式との互換用
+    stages: list[EducationStage] = Field(default_factory=list)
+    include_lessons: bool = False  # 旧形式との互換用
+    lessons_start_age: int = Field(default=4, ge=0, le=30)
+    lessons_end_age: int = Field(default=12, ge=0, le=30)
+    lessons_monthly_amount: int | None = Field(default=None, ge=0)
+    cram_start_age: int = Field(default=13, ge=0, le=30)
+    cram_end_age: int = Field(default=18, ge=0, le=30)
+    cram_monthly_amount: int | None = Field(default=None, ge=0)
+    education_raise_rate: float = Field(default=0.0, ge=-1, le=1)
+
+    @model_validator(mode="after")
+    def validate_stages_and_lessons(self) -> EducationPlan:
+        stage_names = [stage.stage for stage in self.stages]
+        if len(stage_names) != len(set(stage_names)):
+            raise ValueError("education stages must not contain duplicates")
+        if self.lessons_end_age < self.lessons_start_age:
+            raise ValueError("lessons_end_age must not precede lessons_start_age")
+        if self.cram_end_age < self.cram_start_age:
+            raise ValueError("cram_end_age must not precede cram_start_age")
+        return self
 
 
 class IdecoPlan(BaseModel):

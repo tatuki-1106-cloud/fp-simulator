@@ -33,7 +33,7 @@ from fp_simulator.engine.dependency import (
     age_at_year_end,
     calc_deductions_for_household,
 )
-from fp_simulator.engine.education import monthly_education_costs
+from fp_simulator.engine.education import education_cost_breakdown
 from fp_simulator.engine.income import salary_income_after_deduction
 from fp_simulator.engine.income_tax import (
     Deductions,
@@ -1605,20 +1605,33 @@ def _apply_education_expenses(
         if member is None or not member_alive(member, current):
             continue
         child_age = age_at(member.birth_date, current)
-        monthly_cost, schools = monthly_education_costs(
-            store, current, child_age, education_plan.path
+        breakdown = education_cost_breakdown(
+            store,
+            current,
+            child_age,
+            education_plan,
+            base_year=household.assumptions.base_year,
         )
-        if education_plan.include_lessons:
-            lessons = store.get("教育費.習い事", current) // 12
-            monthly_cost += lessons
-            schools.append("習い事")
+        monthly_cost = breakdown.total
         cf.education_expense += monthly_cost
         if monthly_cost > 0:
             cf.traces.append(
                 TraceEntry(
                     "教育費",
                     monthly_cost,
-                    {"child": member.name, "schools": schools},
+                    {
+                        "child": member.name,
+                        "member_id": member.id,
+                        "schools": breakdown.schools,
+                        "学校関連": breakdown.school_cost,
+                        "塾・習い事": breakdown.lessons_cost,
+                        "入学金": breakdown.admission_fee,
+                        "教材費": breakdown.material_cost,
+                        "通学費": breakdown.transport_cost,
+                        "通学・生活": breakdown.living_cost,
+                        "支援・奨学金": breakdown.support,
+                        "教育費上昇率": education_plan.education_raise_rate,
+                    },
                 )
             )
 

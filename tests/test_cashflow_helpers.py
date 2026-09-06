@@ -99,6 +99,53 @@ def test_apply_work_income_uses_age_at_month_start(store):
     assert birthday_month.salary_income == 300_000
 
 
+def test_apply_work_income_applies_annual_raise_rate(store):
+    member = _householder(datetime.date(1996, 4, 1))
+    household = Household(
+        id="helper-income-raise",
+        name="昇給率テスト",
+        members=[member],
+        incomes=[
+            Income(
+                id="salary",
+                member_id=member.id,
+                start_age=30,
+                monthly_amount=300_000,
+                annual_raise_rate=0.1,
+                social_insurance_type=SocialInsuranceType.KYOSAI_KOKUMIN,
+            )
+        ],
+        assumptions=PlanAssumptions(base_year=2026, base_month=1),
+    )
+    alive = lambda _member, _date: True
+
+    first_year = MonthlyCashflow(date=datetime.date(2026, 4, 1), age=30)
+    _apply_work_income(
+        store,
+        household,
+        first_year.date,
+        2026,
+        4,
+        household.assumptions,
+        first_year,
+        alive,
+    )
+    next_year = MonthlyCashflow(date=datetime.date(2027, 4, 1), age=31)
+    _apply_work_income(
+        store,
+        household,
+        next_year.date,
+        2027,
+        4,
+        household.assumptions,
+        next_year,
+        alive,
+    )
+
+    assert first_year.salary_income == 300_000
+    assert next_year.salary_income == 330_000
+
+
 def test_apply_pension_and_disaster_income_applies_survivor_support(store):
     deceased = _householder(datetime.date(1996, 4, 1))
     child = Member(

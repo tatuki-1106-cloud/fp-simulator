@@ -7,7 +7,7 @@
 
 {% if household.incomes %}
 <table>
-  <thead><tr><th>名前</th><th>対象者</th><th>種別</th><th>期間</th><th>月額(額面)</th><th>賞与</th><th>退職金</th><th></th></tr></thead>
+  <thead><tr><th>名前</th><th>対象者</th><th>種別</th><th>期間</th><th>月額(額面)</th><th>昇給率</th><th>賞与</th><th>退職金</th><th></th></tr></thead>
   <tbody>
   {% for i in household.incomes %}
   {% set member = household.members | selectattr("id", "equalto", i.member_id) | first %}
@@ -17,6 +17,7 @@
       <td>{{ i.social_insurance_type.value }}</td>
       <td>{{ i.start_age }}才〜{{ i.end_age }}才</td>
       <td>{{ "{:,}".format(i.monthly_amount) }}円</td>
+      <td>{{ "{:.1%}".format(i.annual_raise_rate) }}</td>
       <td>{{ "{:,}".format(i.bonus_amount) }}円×{{ i.bonus_months | length }}回</td>
       <td>{{ "{:,}".format(i.retirement_allowance) }}円({{ i.retirement_age }}才)</td>
       <td>
@@ -42,8 +43,9 @@
   <tbody>
   {% for leave in household.childcare_leaves %}
     {% set leave_income = household.incomes | selectattr("id", "equalto", leave.income_id) | first %}
+    {% set leave_income_member = household.members | selectattr("id", "equalto", leave_income.member_id) | first if leave_income else none %}
     <tr>
-      <td>{{ leave_income.name if leave_income else leave.income_id }}</td>
+      <td>{% if leave_income %}{{ leave_income.name }}（{{ leave_income_member.name if leave_income_member else leave_income.member_id }}）{% else %}{{ leave.income_id }}{% endif %}</td>
       <td>{{ leave.child_birth_date }}</td>
       <td>
         {% if leave.maternity_leave_start %}
@@ -84,7 +86,8 @@
     <select name="income_id" required>
       {% set current_income = leave_v.income_id if leave_v else "" %}
       {% for i in household.incomes %}
-        <option value="{{ i.id }}" {% if i.id == current_income %}selected{% endif %}>{{ i.name }}（{{ i.member_id }}）</option>
+        {% set income_member = household.members | selectattr("id", "equalto", i.member_id) | first %}
+        <option value="{{ i.id }}" {% if i.id == current_income %}selected{% endif %}>{{ i.name }}（{{ income_member.name if income_member else i.member_id }}）</option>
       {% endfor %}
     </select></label>
     <small class="field-hint">休業する収入を選択してください。給付金はこの収入の標準報酬を基に計算します。</small></p>
@@ -137,6 +140,8 @@
      <small class="field-hint">収入が発生する期間(世帯主の基準年齢)を入力します。</small></p>
   <p><label>月額(額面): <input type="number" name="monthly_amount" required min="0" value="{{ v.monthly_amount if v else '' }}"></label>円
      <small class="field-hint">税・社会保険料控除前の額面月収です。</small></p>
+  <p><label>年間昇給率: <input type="number" name="annual_raise_rate" value="{{ v.annual_raise_rate if v else 0 }}" min="-1" max="1" step="0.001"></label> (例: 0.02 = 2%)
+     <small class="field-hint">基準年の月額・賞与を基準に、毎年複利で反映します。減給を表す場合は負の値を入力します。</small></p>
   <p><label>賞与(1回あたり): <input type="number" name="bonus_amount" min="0" value="{{ v.bonus_amount if v else 0 }}"></label>円(6月・12月)
      <small class="field-hint">年2回(6月・12月)支給を想定した1回あたりの額面です。</small></p>
   <p><label>退職金(額面): <input type="number" name="retirement_allowance" min="0" value="{{ v.retirement_allowance if v else 0 }}"></label>円

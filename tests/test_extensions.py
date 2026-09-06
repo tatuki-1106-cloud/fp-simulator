@@ -7,8 +7,18 @@ import pathlib
 
 import pytest
 
-from fp_simulator.parameters.loader import get_store, reset_store
+from fp_simulator.engine.childcare_leave import (
+    childcare_benefit,
+    is_social_insurance_exempt,
+    maternity_allowance,
+)
 from fp_simulator.engine.education import monthly_education_costs
+from fp_simulator.engine.insurance import (
+    InsurancePolicy,
+    analyze_coverage,
+    monthly_premium_in_period,
+    surrender_value,
+)
 from fp_simulator.engine.investment import (
     IdecoAccount,
     NisaAccount,
@@ -20,17 +30,8 @@ from fp_simulator.engine.investment import (
     nisa_withdraw,
     withdrawal_amount,
 )
-from fp_simulator.engine.insurance import (
-    InsurancePolicy,
-    analyze_coverage,
-    monthly_premium_in_period,
-    surrender_value,
-)
-from fp_simulator.engine.childcare_leave import (
-    childcare_benefit,
-    is_social_insurance_exempt,
-    maternity_allowance,
-)
+from fp_simulator.engine.models import EducationPlan, EducationStage
+from fp_simulator.parameters.loader import get_store, reset_store
 
 
 @pytest.fixture(scope="module")
@@ -60,8 +61,50 @@ class TestEducation:
 
     def test_no_school_age(self, store) -> None:
         """2歳(幼稚園前)は0."""
-        monthly, schools = monthly_education_costs(store, D2025, 2, "公立")
+        monthly, _schools = monthly_education_costs(store, D2025, 2, "公立")
         assert monthly == 0
+
+    def test_stage_specific_custom_costs_and_support(self, store) -> None:
+        """段階別の個別費用・一時費用・支援・一人暮らしを反映する."""
+        plan = EducationPlan(
+            id="education-test",
+            member_id="child",
+            stages=[
+                EducationStage(
+                    stage="大学",
+                    school_type="私立理系",
+                    cost_mode="個別",
+                    annual_cost=1_200_000,
+                    admission_fee=300_000,
+                    annual_material_cost=60_000,
+                    annual_transport_cost=60_000,
+                    annual_support=120_000,
+                    living_arrangement="一人暮らし",
+                    monthly_living_cost=50_000,
+                )
+            ],
+        )
+        monthly, schools = monthly_education_costs(
+            store,
+            datetime.date(2025, 4, 1),
+            18,
+            plan=plan,
+            base_year=2025,
+        )
+        assert monthly == 450_000
+        assert "大学.私立理系" in schools
+
+    def test_lessons_are_limited_to_configured_ages(self, store) -> None:
+        """習い事は設定した年齢範囲だけ加算する."""
+        plan = EducationPlan(
+            id="lessons-test",
+            member_id="child",
+            include_lessons=True,
+            lessons_start_age=6,
+            lessons_end_age=10,
+        )
+        monthly, _ = monthly_education_costs(store, D2025, 11, plan=plan)
+        assert monthly == 321000 // 12
 
 
 class TestIdeco:

@@ -430,7 +430,12 @@ async def _new_household(client: AsyncClient, name: str = "テスト世帯") -> 
     return r.headers["location"].split("/")[2]
 
 
-async def _add_member(client: AsyncClient, household_id: str, name: str = "たろう") -> str:
+async def _add_member(
+    client: AsyncClient,
+    household_id: str,
+    name: str = "たろう",
+    relationship: str = "世帯主",
+) -> str:
     """テスト用のメンバーを追加し、そのIDを返す."""
     from fp_simulator.db.database import get_household
 
@@ -438,7 +443,7 @@ async def _add_member(client: AsyncClient, household_id: str, name: str = "た�
         f"/households/{household_id}/members",
         data={
             "name": name,
-            "relationship": "世帯主",
+            "relationship": relationship,
             "birth_date": "1996-04-01",
             "gender": "男",
             "life_expectancy_age": 90,
@@ -562,6 +567,33 @@ async def test_pensions_edit_and_delete(client: AsyncClient) -> None:
     assert household.pension_records == []
 
 
+async def test_pension_form_suggests_remuneration_from_income(client: AsyncClient) -> None:
+    """年金フォームは厚生年金対象の収入から平均標準報酬額を仮入力する."""
+    household_id = await _new_household(client)
+    member_id = await _add_member(client, household_id)
+    r = await client.post(
+        f"/households/{household_id}/incomes",
+        data={
+            "member_id": member_id,
+            "name": "会社員",
+            "social_insurance_type": "給与(厚生年金)",
+            "start_age": 30,
+            "end_age": 60,
+            "monthly_amount": 305000,
+            "bonus_amount": 500000,
+            "retirement_allowance": 0,
+            "retirement_age": 60,
+        },
+    )
+    assert r.status_code == 303
+
+    r = await client.get(f"/households/{household_id}/pensions")
+    assert r.status_code == 200
+    assert 'name="avg_standard_remuneration" id="pension-avg-standard-remuneration"' in r.text
+    assert 'value="383333"' in r.text
+    assert "収入から反映" in r.text
+
+
 async def test_expenses_delete_guards_against_event_type_rows(client: AsyncClient) -> None:
     """生活費削除ルートはevent_typeが「生活費」の行のみ削除する."""
     from fp_simulator.db.database import get_household
@@ -613,6 +645,37 @@ async def test_expenses_delete_guards_against_event_type_rows(client: AsyncClien
     assert r.status_code == 303
     household = await get_household(household_id)
     assert household.expenses == []
+
+
+async def test_expenses_can_update_inflation_rate(client: AsyncClient) -> None:
+    """Q4の物価上昇率を保存し、生活費画面に表示する."""
+    from fp_simulator.db.database import get_household
+
+    household_id = await _new_household(client, "物価上昇率テスト")
+
+    r = await client.post(
+        f"/households/{household_id}/expenses/assumptions",
+        data={"inflation_rate": "0.02"},
+    )
+    assert r.status_code == 303
+
+    household = await get_household(household_id)
+    assert household.assumptions.inflation_rate == pytest.approx(0.02)
+
+    r = await client.get(f"/households/{household_id}/expenses")
+    assert r.status_code == 200
+    assert 'name="inflation_rate"' in r.text
+    assert 'value="0.02"' in r.text
+    assert "2.0%" in r.text
+
+    invalid = await client.post(
+        f"/households/{household_id}/expenses/assumptions",
+        data={"inflation_rate": "1.01"},
+    )
+    assert invalid.status_code == 400
+    assert "100%" in invalid.text
+    household = await get_household(household_id)
+    assert household.assumptions.inflation_rate == pytest.approx(0.02)
 
 
 async def test_accounts_ideco_nisa_edit_and_delete(client: AsyncClient) -> None:
@@ -838,7 +901,7 @@ async def test_education_edit_and_delete(client: AsyncClient) -> None:
     from fp_simulator.db.database import get_household
 
     household_id = await _new_household(client)
-    member_id = await _add_member(client, household_id)
+    member_id = await _add_member(client, household_id, relationship="子")
     r = await client.post(
         f"/households/{household_id}/education",
         data={"member_id": member_id, "path": "公立"},
@@ -865,6 +928,57 @@ async def test_education_edit_and_delete(client: AsyncClient) -> None:
     assert r.status_code == 303
     household = await get_household(household_id)
     assert household.education_plans == []
+
+
+async def test_education_requires_child_and_prevents_duplicate_plans(
+    client: AsyncClient,
+) -> None:
+    """教育費は子のみを対象とし、同じ子の重複プランを防ぐ."""
+    from fp_simulator.db.database import get_household
+
+    household_id = await _new_household(client)
+    parent_id = await _add_member(client, household_id)
+    r = await client.post(
+        f"/households/{household_id}/education",
+        data={"member_id": parent_id, "path": "公立"},
+    )
+    assert r.status_code == 400
+    assert "対象の子が見つかりません" in r.text
+
+    child_id = await _add_member(client, household_id, "こども", relationship="子")
+    r = await client.post(
+        f"/households/{household_id}/education",
+        data={
+            "member_id": child_id,
+            "path": "公立",
+            "school_type_大学": "私立理系",
+            "cost_mode_大学": "個別",
+            "annual_cost_大学": "1200000",
+            "admission_fee_大学": "300000",
+            "annual_material_cost_大学": "60000",
+            "annual_transport_cost_大学": "60000",
+            "annual_support_大学": "120000",
+            "living_arrangement_大学": "一人暮らし",
+            "monthly_living_cost_大学": "50000",
+            "education_raise_rate": "0.01",
+        },
+    )
+    assert r.status_code == 303
+    household = await get_household(household_id)
+    plan = household.education_plans[0]
+    university = next(stage for stage in plan.stages if stage.stage == "大学")
+    assert university.cost_mode == "個別"
+    assert university.annual_cost == 1_200_000
+    assert university.annual_material_cost == 60_000
+    assert university.annual_transport_cost == 60_000
+    assert university.living_arrangement == "一人暮らし"
+
+    r = await client.post(
+        f"/households/{household_id}/education",
+        data={"member_id": child_id, "path": "公立"},
+    )
+    assert r.status_code == 400
+    assert "同じ子の教育費プラン" in r.text
 
 
 async def test_vehicles_and_insurance_edit_flow(client: AsyncClient) -> None:
@@ -988,6 +1102,7 @@ async def test_childcare_leave_crud_validation_and_simulation(client: AsyncClien
     r = await client.get(f"/households/{household_id}/incomes")
     assert r.status_code == 200
     assert "産休・育休の設定" in r.text
+    assert "会社員（はなこ）" in r.text
     assert "2026-01-31" in r.text
     assert f"leave_edit_id={leave_id}" in r.text
 
@@ -1091,3 +1206,57 @@ async def test_income_edit_and_delete_keep_childcare_leave_links_consistent(
     household = await get_household(household_id)
     assert household.incomes == []
     assert household.childcare_leaves == []
+
+
+async def test_income_raise_rate_is_saved_and_displayed(client: AsyncClient) -> None:
+    """収入の年間昇給率を保存し、収入一覧に表示する."""
+    from fp_simulator.db.database import get_household
+
+    household_id = await _new_household(client, "昇給率世帯")
+    member_id = await _add_member(client, household_id, "一郎")
+
+    r = await client.post(
+        f"/households/{household_id}/incomes",
+        data={
+            "member_id": member_id,
+            "name": "給与",
+            "social_insurance_type": "給与(厚生年金)",
+            "start_age": 30,
+            "end_age": 60,
+            "monthly_amount": 300000,
+            "bonus_amount": 500000,
+            "annual_raise_rate": 0.02,
+            "retirement_allowance": 0,
+            "retirement_age": 60,
+        },
+    )
+    assert r.status_code == 303
+
+    household = await get_household(household_id)
+    assert household.incomes[0].annual_raise_rate == 0.02
+    r = await client.get(f"/households/{household_id}/incomes")
+    assert r.status_code == 200
+    assert "年間昇給率" in r.text
+    assert "2.0%" in r.text
+
+
+async def test_income_raise_rate_validation_keeps_submitted_value(client: AsyncClient) -> None:
+    """収入の年間昇給率が範囲外の場合は入力値を保持してエラー表示する."""
+    household_id = await _new_household(client, "昇給率エラー世帯")
+    member_id = await _add_member(client, household_id, "一郎")
+
+    r = await client.post(
+        f"/households/{household_id}/incomes",
+        data={
+            "member_id": member_id,
+            "name": "給与",
+            "social_insurance_type": "給与(厚生年金)",
+            "start_age": 30,
+            "end_age": 60,
+            "monthly_amount": 300000,
+            "annual_raise_rate": 1.1,
+        },
+    )
+    assert r.status_code == 400
+    assert "年間昇給率は-100%以上100%以下" in r.text
+    assert 'value="1.1"' in r.text

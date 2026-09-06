@@ -9,8 +9,11 @@
 from __future__ import annotations
 
 import datetime
+from collections.abc import Iterable
 from dataclasses import dataclass
 
+from fp_simulator.engine.models import Income, SocialInsuranceType
+from fp_simulator.engine.social_insurance import standard_remuneration
 from fp_simulator.parameters.loader import ParameterStore
 
 
@@ -28,6 +31,53 @@ class PensionRecord:
     kousei_months_before_2003_04: int = 0
     # 2003年4月以降の加入月数(報酬比例計算用)
     kousei_months_after_2003_04: int = 0
+
+
+def estimate_avg_standard_remuneration(
+    incomes: Iterable[Income],
+    member_id: str,
+) -> int:
+    """収入登録から平均標準報酬額の入力目安を算出する.
+
+    厚生年金の対象となる収入だけを対象に、各収入の標準報酬月額へ
+    標準賞与額の年額を12で割った月額相当を加え、登録期間の月数で
+    加重平均する。昇給・再評価率はこの目安には含めず、年金画面での
+    手入力による補正を可能にする。
+    """
+    employee_types = {
+        SocialInsuranceType.KYOSAI_KOSEI,
+        SocialInsuranceType.YAKUIN_KOSEI,
+    }
+    total_monthly_amount = 0
+    total_annual_bonus_amount = 0
+    total_months = 0
+
+    for income in incomes:
+        if income.member_id != member_id or income.social_insurance_type not in employee_types:
+            continue
+
+        start = income.start_age * 12 + income.start_month
+        if income.end_age is None:
+            # 終了年齢が未指定の収入は、代表的な40年分で重み付けする。
+            months = 480
+        else:
+            end = income.end_age * 12 + income.end_month
+            months = max(1, end - start + 1)
+
+        standard_monthly = standard_remuneration(income.monthly_amount)
+        annual_standard_bonus = sum(
+            min((income.bonus_amount // 1_000) * 1_000, 1_500_000)
+            for _ in income.bonus_months
+        )
+        total_monthly_amount += standard_monthly * months
+        total_annual_bonus_amount += annual_standard_bonus * months
+        total_months += months
+
+    if total_months == 0:
+        return 0
+    numerator = total_monthly_amount * 12 + total_annual_bonus_amount
+    denominator = total_months * 12
+    return (numerator + denominator // 2) // denominator
 
 
 def basic_pension_amount(

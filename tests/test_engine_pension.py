@@ -10,7 +10,7 @@ import pathlib
 
 import pytest
 
-from fp_simulator.parameters.loader import get_store, reset_store
+from fp_simulator.engine.models import Income, SocialInsuranceType
 from fp_simulator.engine.pension import (
     PensionRecord,
     additional_pension_spouse,
@@ -18,6 +18,7 @@ from fp_simulator.engine.pension import (
     basic_pension_amount,
     employee_pension_fixed_amount,
     employee_pension_report_proportional,
+    estimate_avg_standard_remuneration,
     total_pension,
     transitional_addition,
 )
@@ -27,6 +28,7 @@ from fp_simulator.engine.retirement import (
     retirement_income_deduction,
     retirement_tax,
 )
+from fp_simulator.parameters.loader import get_store, reset_store
 
 
 @pytest.fixture(scope="module")
@@ -57,6 +59,31 @@ class TestBasicPension:
 
 class TestEmployeePension:
     """老齢厚生年金."""
+
+    def test_estimate_avg_standard_remuneration_from_income(self) -> None:
+        """厚生年金対象の収入から標準報酬月額の目安を算出する."""
+        incomes = [
+            Income(
+                id="employee",
+                member_id="member",
+                social_insurance_type=SocialInsuranceType.KYOSAI_KOSEI,
+                monthly_amount=305_000,
+                start_age=30,
+                end_age=60,
+                bonus_months=[6, 12],
+                bonus_amount=500_000,
+            ),
+            Income(
+                id="national",
+                member_id="member",
+                social_insurance_type=SocialInsuranceType.KYOSAI_KOKUMIN,
+                monthly_amount=900_000,
+            ),
+        ]
+
+        # 標準報酬30万円 + 賞与100万円/12か月 = 383,333円(四捨五入)
+        assert estimate_avg_standard_remuneration(incomes, "member") == 383_333
+        assert estimate_avg_standard_remuneration(incomes, "other") == 0
 
     def test_report_proportional(self, store) -> None:
         """報酬比例部分: 平均標準報酬30万×乗率0.005481×360月.

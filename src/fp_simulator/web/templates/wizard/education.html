@@ -34,22 +34,84 @@
 {{ edit_mode_banner(edit_target.id if edit_target else "", "/households/" ~ household.id ~ "/education") }}
 <form method="post" action="/households/{{ household.id }}/education">
   <input type="hidden" name="edit_id" value="{{ edit_target.id if edit_target else '' }}">
-  {% set v = values if values else edit_target %}
   <p><label>対象の子:
     <select name="member_id">
-      {% set current_member = v.member_id if v else "" %}
+      {% set current_member = form_values.member_id %}
       {% for m in household.members if m.relationship.value == "子" %}<option value="{{ m.id }}" {% if m.id == current_member %}selected{% endif %}>{{ m.name }}</option>{% endfor %}
     </select></label>
      <small class="field-hint">Q1で「子」として登録したメンバーが表示されます。</small></p>
   <p><label>進学パス:
     <select name="path">
-      {% set current_path = v.path if v else "公立" %}
+      {% set current_path = form_values.path %}
       <option value="公立" {% if current_path == "公立" %}selected{% endif %}>公立(幼稚園〜大学国立)</option>
       <option value="私立" {% if current_path == "私立" %}selected{% endif %}>私立(幼稚園〜大学私立)</option>
     </select></label>
-     <small class="field-hint">進学先の想定に応じて、教育費の目安が自動計算されます。</small></p>
-  <p><label><input type="checkbox" name="include_lessons" value="1" {% if v and v.include_lessons %}checked{% endif %}> 習い事を含める</label>
-     <small class="field-hint">塾・習い事の費用を上乗せするかどうかです。</small></p>
+     <small class="field-hint">詳細設定を使わない場合の初期値です。段階ごとに変更できます。</small></p>
+
+  <h3>段階別の進学先・費用</h3>
+  <p class="field-hint">「未定」は進学パスの初期値に置き換えて計算します。平均値を使う場合でも、入学金や教材費などは個別に上乗せできます。</p>
+  <table>
+    <thead>
+      <tr><th>段階</th><th>進学先</th><th>費用</th><th>入学金</th><th>教材費(年額)</th><th>通学費(年額)</th><th>その他(年額)</th><th>支援・奨学金(年額)</th><th>通学形態</th><th>生活費(月額)</th></tr>
+    </thead>
+    <tbody>
+    {% for stage in ("幼稚園", "小学校", "中学校", "高校", "大学") %}
+      {% set sv = form_values.stages[stage] %}
+      <tr>
+        <td>{{ stage }}</td>
+        <td>
+          <select name="school_type_{{ stage }}">
+            {% for option in stage_options[stage] %}<option value="{{ option }}" {% if sv.school_type == option %}selected{% endif %}>{{ option }}</option>{% endfor %}
+          </select>
+        </td>
+        <td>
+          <select name="cost_mode_{{ stage }}">
+            <option value="平均" {% if sv.cost_mode == "平均" %}selected{% endif %}>公的平均</option>
+            <option value="個別" {% if sv.cost_mode == "個別" %}selected{% endif %}>個別入力</option>
+          </select>
+          <input type="number" name="annual_cost_{{ stage }}" min="0" value="{{ sv.annual_cost }}" placeholder="年額">
+        </td>
+        <td><input type="number" name="admission_fee_{{ stage }}" min="0" value="{{ sv.admission_fee }}"></td>
+        <td><input type="number" name="annual_material_cost_{{ stage }}" min="0" value="{{ sv.annual_material_cost }}"></td>
+        <td><input type="number" name="annual_transport_cost_{{ stage }}" min="0" value="{{ sv.annual_transport_cost }}"></td>
+        <td><input type="number" name="annual_other_cost_{{ stage }}" min="0" value="{{ sv.annual_other_cost }}"></td>
+        <td><input type="number" name="annual_support_{{ stage }}" min="0" value="{{ sv.annual_support }}"></td>
+        <td>
+          <select name="living_arrangement_{{ stage }}">
+            <option value="自宅" {% if sv.living_arrangement == "自宅" %}selected{% endif %}>自宅</option>
+            <option value="一人暮らし" {% if sv.living_arrangement == "一人暮らし" %}selected{% endif %}>一人暮らし</option>
+          </select>
+        </td>
+        <td><input type="number" name="monthly_living_cost_{{ stage }}" min="0" value="{{ sv.monthly_living_cost }}"></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+
+  <h3>塾・習い事</h3>
+  <p><label><input type="checkbox" name="include_lessons" value="1" {% if form_values.include_lessons %}checked{% endif %}> 平均の習い事費を含める</label></p>
+  <p>
+    <label>習い事の期間:
+      <input type="number" name="lessons_start_age" min="0" max="30" value="{{ form_values.lessons_start_age }}">歳〜
+      <input type="number" name="lessons_end_age" min="0" max="30" value="{{ form_values.lessons_end_age }}">歳
+    </label>
+    <label>個別月額:
+      <input type="number" name="lessons_monthly_amount" min="0" value="{{ form_values.lessons_monthly_amount }}" placeholder="空欄=平均">
+    </label>
+  </p>
+  <p>
+    <label>塾の期間:
+      <input type="number" name="cram_start_age" min="0" max="30" value="{{ form_values.cram_start_age }}">歳〜
+      <input type="number" name="cram_end_age" min="0" max="30" value="{{ form_values.cram_end_age }}">歳
+    </label>
+    <label>月額:
+      <input type="number" name="cram_monthly_amount" min="0" value="{{ form_values.cram_monthly_amount }}" placeholder="空欄=なし">
+    </label>
+  </p>
+  <p><label>教育費上昇率(年率・小数):
+    <input type="number" name="education_raise_rate" min="-1" max="1" step="0.001" value="{{ form_values.education_raise_rate }}">
+  </label>
+  <small class="field-hint">例: 0.01 = 年1%。生活費の物価上昇率とは別に設定できます。</small></p>
   <p><button type="submit">{{ "更新" if edit_target else "追加" }}</button></p>
 </form>
 {% endblock %}

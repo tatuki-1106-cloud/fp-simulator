@@ -134,13 +134,14 @@
 
 <h2>前提条件</h2>
 <p style="font-size:0.9rem;color:#555;">
-  物価上昇率: {{ household.assumptions.inflation_rate }}% / 運用利回り: {{ household.assumptions.investment_return_rate }}%
+  物価上昇率: {{ "{:.1%}".format(household.assumptions.inflation_rate) }} /
+  運用利回り: {{ household.assumptions.investment_return_rate }}%
 </p>
 
 <h2>年次キャッシュフロー</h2>
 <table>
   <thead>
-    <tr><th>年</th><th>年齢</th><th>収入</th><th>休業給付</th><th>乗り物売却</th><th>支出</th><th>住宅頭金</th><th>固定資産税</th><th>修繕費</th><th>乗り物購入</th><th>乗り物維持費</th><th>ガソリン代</th><th>電気代</th><th>乗り物税金・修繕</th><th>自動車税</th><th>重量税</th><th>車検</th><th>税・社保</th><th>収支</th><th>現金・預金</th><th>iDeCo</th><th>NISA</th><th>iDeCo受取</th><th>NISA取崩</th><th>金融資産合計</th>
+    <tr><th>年</th><th>年齢</th><th>収入</th><th>休業給付</th><th>乗り物売却</th><th>支出</th><th>教育費</th><th>住宅頭金</th><th>固定資産税</th><th>修繕費</th><th>乗り物購入</th><th>乗り物維持費</th><th>ガソリン代</th><th>電気代</th><th>乗り物税金・修繕</th><th>自動車税</th><th>重量税</th><th>車検</th><th>税・社保</th><th>収支</th><th>現金・預金</th><th>iDeCo</th><th>NISA</th><th>iDeCo受取</th><th>NISA取崩</th><th>金融資産合計</th>
   </thead>
   <tbody>
   {% for y in yearly %}
@@ -151,6 +152,7 @@
       <td>{{ "{:,}".format(y.leave_benefit) }}</td>
       <td>{{ "{:,}".format(y.vehicle_sale_income) }}</td>
       <td>{{ "{:,}".format(y.expense) }}</td>
+      <td>{{ "{:,}".format(y.education_expense) }}</td>
       <td>{{ "{:,}".format(y.housing_down_payment) }}</td>
       <td>{{ "{:,}".format(y.property_tax) }}</td>
       <td>{{ "{:,}".format(y.repair_expense) }}</td>
@@ -174,6 +176,40 @@
   {% endfor %}
   </tbody>
 </table>
+
+{% if education_summary %}
+<h2>教育費の見込み</h2>
+<p>公的平均または入力した個別費用をもとにした見込みです。支援・奨学金は差し引いて表示しています。</p>
+<table>
+  <thead><tr><th>対象者</th><th>合計</th><th>学校関連</th><th>塾・習い事</th><th>入学金</th><th>教材費</th><th>通学費</th><th>通学・生活</th><th>支援・奨学金</th></tr></thead>
+  <tbody>
+  {% for row in education_summary %}
+    <tr>
+      <td>{{ row.child }}</td>
+      <td>{{ "{:,}".format(row.total) }}円</td>
+      <td>{{ "{:,}".format(row.school_cost) }}円</td>
+      <td>{{ "{:,}".format(row.lessons_cost) }}円</td>
+      <td>{{ "{:,}".format(row.admission_fee) }}円</td>
+      <td>{{ "{:,}".format(row.material_cost) }}円</td>
+      <td>{{ "{:,}".format(row.transport_cost) }}円</td>
+      <td>{{ "{:,}".format(row.living_cost) }}円</td>
+      <td>{{ "{:,}".format(row.support) }}円</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% if education_yearly_summary %}
+<h3>年別の教育費</h3>
+<table>
+  <thead><tr><th>年</th><th>年間合計</th><th>月額最大</th></tr></thead>
+  <tbody>
+  {% for row in education_yearly_summary %}
+    <tr><td>{{ row.year }}</td><td>{{ "{:,}".format(row.total) }}円</td><td>{{ "{:,}".format(row.max_monthly) }}円</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+{% endif %}
 
 <script>
 const ctx = document.getElementById('balanceChart');

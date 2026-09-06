@@ -67,7 +67,7 @@
     <tr><th>指標</th><th>{{ baseline.name }}</th><th>{{ alternative.name }}</th><th>差分（比較先 − 比較元）</th></tr>
   </thead>
   <tbody>
-    <tr><th>物価上昇率</th><td>{{ baseline.inflation_rate }}</td><td>{{ alternative.inflation_rate }}</td><td>{{ alternative.inflation_rate - baseline.inflation_rate }}</td></tr>
+    <tr><th>物価上昇率</th><td>{{ "{:.1%}".format(baseline.inflation_rate) }}</td><td>{{ "{:.1%}".format(alternative.inflation_rate) }}</td><td>{{ "{:+.1%}".format(alternative.inflation_rate - baseline.inflation_rate) }}</td></tr>
     <tr><th>運用利回り</th><td>{{ baseline.investment_return_rate }}</td><td>{{ alternative.investment_return_rate }}</td><td>{{ alternative.investment_return_rate - baseline.investment_return_rate }}</td></tr>
     <tr><th>最低貯蓄残高</th><td>{{ "{:,}".format(baseline.min_balance) }}円</td><td>{{ "{:,}".format(alternative.min_balance) }}円</td><td class="{{ delta_class(deltas.min_balance) }}">{{ signed(deltas.min_balance) }}円</td></tr>
     <tr><th>最終貯蓄残高</th><td>{{ "{:,}".format(baseline.final_balance) }}円</td><td>{{ "{:,}".format(alternative.final_balance) }}円</td><td class="{{ delta_class(deltas.final_balance) }}">{{ signed(deltas.final_balance) }}円</td></tr>
