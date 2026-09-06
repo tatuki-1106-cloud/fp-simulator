@@ -151,15 +151,34 @@ class Vehicle(BaseModel):
     id: str
     name: str = "自動車"
     vehicle_type: Literal["新車", "中古車"] = "新車"
+    vehicle_category: Literal["普通乗用車", "軽自動車", "二輪車"] = "普通乗用車"
     ownership_start_year: int = Field(default=2026, ge=1900, le=2200)
     ownership_start_month: int = Field(default=1, ge=1, le=12)
     ownership_end_year: int = Field(default=2090, ge=1900, le=2200)
     ownership_end_month: int = Field(default=12, ge=1, le=12)
     purchase_price: int = Field(ge=0)  # 取得価格(円)
     monthly_maintenance: int = Field(default=0, ge=0)  # 維持費(月額)
+    energy_type: Literal["なし", "ガソリン", "電気"] = "なし"
+    monthly_distance_km: float = Field(default=0.0, ge=0)  # 月間走行距離(km)
+    fuel_efficiency_km_per_liter: float = Field(default=0.0, ge=0)  # 燃費(km/L)
+    fuel_price_per_liter: int = Field(default=0, ge=0)  # ガソリン単価(円/L)
+    electricity_consumption_kwh_per_100km: float = Field(
+        default=0.0, ge=0
+    )  # 電費(kWh/100km)
+    electricity_price_per_kwh: int = Field(default=0, ge=0)  # 電気単価(円/kWh)
     annual_tax_repair: int = Field(default=0, ge=0)  # 税金・修繕費(年額)
+    annual_automobile_tax: int = Field(default=0, ge=0)  # 自動車税(減税前、年額)
+    automobile_tax_reduction_rate: float = Field(default=0.0, ge=0, le=1)
+    engine_displacement_cc: int = Field(default=0, ge=0)  # 排気量(自動車税計算用)
+    weight_tax_per_inspection: int = Field(default=0, ge=0)  # 重量税(減税前、車検1回)
+    weight_tax_reduction_rate: float = Field(default=0.0, ge=0, le=1)
+    vehicle_weight_kg: int = Field(default=0, ge=0)  # 車両重量(重量税計算用)
     replacement_cycle_years: int = Field(default=0, ge=0)  # 0=買替なし
     sale_price: int = Field(default=0, ge=0)  # 買替・所有終了時の売却額
+    sale_price_mode: Literal["手入力", "残価率", "定額法", "定率法"] = "手入力"
+    residual_value_rate: float = Field(default=0.0, ge=0, le=1)
+    depreciation_years: int = Field(default=0, ge=0)
+    declining_depreciation_rate: float = Field(default=0.0, ge=0, le=1)
     inspection_cost: int = Field(default=0, ge=0)  # 車検費用
     inspection_cycle_years: int = Field(default=2, ge=1, le=10)
     loan_id: str | None = None  # 初回購入に紐づくQ9ローン
@@ -177,6 +196,31 @@ class Vehicle(BaseModel):
             raise ValueError("ownership_end must not precede ownership_start")
         if self.replacement_loan_principal > 0 and self.replacement_loan_years <= 0:
             raise ValueError("replacement_loan_years is required when replacement loan is used")
+        if (
+            self.energy_type == "ガソリン"
+            and self.monthly_distance_km > 0
+            and self.fuel_efficiency_km_per_liter <= 0
+        ):
+            raise ValueError(
+                "fuel_efficiency_km_per_liter is required for gasoline vehicles"
+            )
+        if (
+            self.energy_type == "電気"
+            and self.monthly_distance_km > 0
+            and self.electricity_consumption_kwh_per_100km <= 0
+        ):
+            raise ValueError(
+                "electricity_consumption_kwh_per_100km is required for electric vehicles"
+            )
+        if self.sale_price_mode in {"定額法", "定率法"} and self.depreciation_years <= 0:
+            raise ValueError("depreciation_years is required for depreciation-based sale prices")
+        if (
+            self.sale_price_mode == "定率法"
+            and self.declining_depreciation_rate <= 0
+        ):
+            raise ValueError(
+                "declining_depreciation_rate is required for declining-balance sale prices"
+            )
         return self
 
 

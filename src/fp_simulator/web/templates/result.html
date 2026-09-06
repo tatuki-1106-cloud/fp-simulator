@@ -140,7 +140,7 @@
 <h2>年次キャッシュフロー</h2>
 <table>
   <thead>
-    <tr><th>年</th><th>年齢</th><th>収入</th><th>休業給付</th><th>乗り物売却</th><th>支出</th><th>住宅頭金</th><th>固定資産税</th><th>修繕費</th><th>乗り物購入</th><th>乗り物維持費</th><th>乗り物税金・修繕</th><th>車検</th><th>税・社保</th><th>収支</th><th>現金・預金</th><th>iDeCo</th><th>NISA</th><th>iDeCo受取</th><th>NISA取崩</th><th>金融資産合計</th>
+    <tr><th>年</th><th>年齢</th><th>収入</th><th>休業給付</th><th>乗り物売却</th><th>支出</th><th>住宅頭金</th><th>固定資産税</th><th>修繕費</th><th>乗り物購入</th><th>乗り物維持費</th><th>ガソリン代</th><th>電気代</th><th>乗り物税金・修繕</th><th>自動車税</th><th>重量税</th><th>車検</th><th>税・社保</th><th>収支</th><th>現金・預金</th><th>iDeCo</th><th>NISA</th><th>iDeCo受取</th><th>NISA取崩</th><th>金融資産合計</th>
   </thead>
   <tbody>
   {% for y in yearly %}
@@ -156,7 +156,11 @@
       <td>{{ "{:,}".format(y.repair_expense) }}</td>
       <td>{{ "{:,}".format(y.vehicle_purchase_expense) }}</td>
       <td>{{ "{:,}".format(y.vehicle_maintenance) }}</td>
+      <td>{{ "{:,}".format(y.vehicle_fuel_expense) }}</td>
+      <td>{{ "{:,}".format(y.vehicle_electricity_expense) }}</td>
       <td>{{ "{:,}".format(y.vehicle_tax_repair) }}</td>
+      <td>{{ "{:,}".format(y.vehicle_automobile_tax) }}</td>
+      <td>{{ "{:,}".format(y.vehicle_weight_tax) }}</td>
       <td>{{ "{:,}".format(y.vehicle_inspection_expense) }}</td>
       <td>{{ "{:,}".format(y.tax_si) }}</td>
       <td>{{ "{:,}".format(y.net) }}</td>

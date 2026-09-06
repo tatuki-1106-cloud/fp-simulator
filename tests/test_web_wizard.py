@@ -146,9 +146,19 @@ async def test_create_household_and_full_flow(client: AsyncClient) -> None:
             "ownership_end_month": 12,
             "purchase_price": 2000000,
             "monthly_maintenance": 20000,
+            "energy_type": "ガソリン",
+            "monthly_distance_km": 1000,
+            "fuel_efficiency_km_per_liter": 10,
+            "fuel_price_per_liter": 180,
+            "annual_automobile_tax": 30000,
+            "automobile_tax_reduction_rate": 0.5,
+            "weight_tax_per_inspection": 10000,
+            "weight_tax_reduction_rate": 0.2,
             "annual_tax_repair": 120000,
             "replacement_cycle_years": 3,
+            "sale_price_mode": "残価率",
             "sale_price": 500000,
+            "residual_value_rate": 0.2,
             "inspection_cost": 100000,
             "inspection_cycle_years": 2,
             "replacement_loan_principal": 1000000,
@@ -163,6 +173,7 @@ async def test_create_household_and_full_flow(client: AsyncClient) -> None:
     assert r.status_code == 200
     assert "ファミリーカー" in r.text
     assert "1,000,000円" in r.text
+    assert "ガソリン" in r.text
 
     # Q8ライフイベントを追加・表示・削除
     event_response = await client.post(
@@ -295,6 +306,8 @@ async def test_create_household_and_full_flow(client: AsyncClient) -> None:
     assert "年" in csv_response.content.decode("utf-8-sig")
     assert "固定資産税" in csv_response.content.decode("utf-8-sig")
     assert "乗り物売却" in csv_response.content.decode("utf-8-sig")
+    yearly_header = csv_response.content.decode("utf-8-sig").splitlines()[0].split(",")
+    assert yearly_header.index("金融資産合計") < yearly_header.index("ガソリン代")
     xlsx_response = await client.get(
         f"/households/{household_id}/export.xlsx?granularity=monthly"
     )

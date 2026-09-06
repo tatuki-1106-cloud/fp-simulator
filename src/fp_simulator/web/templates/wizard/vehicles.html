@@ -7,16 +7,17 @@
 
 <div class="form-card">
   <h2>登録済みの乗り物</h2>
-  <p>FP-UNIV準拠で、所有期間中の購入・維持費・税金/修繕費・車検・買替を計算します。買替時は売却額を収入、次の取得価格を支出に計上します。</p>
+  <p>所有期間中の購入・維持費・走行距離連動の燃料費/電気代・税金・車検・買替を計算します。買替時は売却額を収入、次の取得価格を支出に計上します。</p>
   {% if household.vehicles %}
   <table>
-    <thead><tr><th>名称</th><th>所有期間</th><th>取得価格</th><th>維持費/月</th><th>買替周期</th><th>売却額</th><th>買替ローン</th><th></th></tr></thead>
+    <thead><tr><th>名称</th><th>所有期間</th><th>取得価格</th><th>エネルギー</th><th>維持費/月</th><th>買替周期</th><th>売却額</th><th>買替ローン</th><th></th></tr></thead>
     <tbody>
     {% for vehicle in household.vehicles %}
     <tr>
       <td>{{ vehicle.name }}</td>
       <td>{{ vehicle.ownership_start_year }}/{{ vehicle.ownership_start_month }}〜{{ vehicle.ownership_end_year }}/{{ vehicle.ownership_end_month }}</td>
       <td>{{ "{:,}".format(vehicle.purchase_price) }}円</td>
+      <td>{{ vehicle.energy_type }}</td>
       <td>{{ "{:,}".format(vehicle.monthly_maintenance) }}円</td>
       <td>{{ vehicle.replacement_cycle_years or "なし" }}{% if vehicle.replacement_cycle_years %}年{% endif %}</td>
       <td>{{ "{:,}".format(vehicle.sale_price) }}円</td>
@@ -56,9 +57,60 @@
      <small class="field-hint">所有終了は所有開始より後の年月にしてください。</small></p>
   <p><label>取得価格: <input type="number" name="purchase_price" min="0" required value="{{ v.purchase_price if v else '' }}"></label>円</p>
   <p><label>維持費: <input type="number" name="monthly_maintenance" min="0" value="{{ v.monthly_maintenance if v else 0 }}"></label>円/月</p>
+  <fieldset>
+    <legend>走行距離連動の燃料・電気代</legend>
+    <p><label>エネルギー種別:
+      {% set current_energy = v.energy_type if v else "なし" %}
+      <select name="energy_type">
+        <option value="なし" {% if current_energy == "なし" %}selected{% endif %}>設定なし</option>
+        <option value="ガソリン" {% if current_energy == "ガソリン" %}selected{% endif %}>ガソリン</option>
+        <option value="電気" {% if current_energy == "電気" %}selected{% endif %}>電気</option>
+      </select>
+    </label></p>
+    <p><label>車両区分:
+      {% set current_category = v.vehicle_category if v else "普通乗用車" %}
+      <select name="vehicle_category">
+        <option value="普通乗用車" {% if current_category == "普通乗用車" %}selected{% endif %}>普通乗用車</option>
+        <option value="軽自動車" {% if current_category == "軽自動車" %}selected{% endif %}>軽自動車</option>
+        <option value="二輪車" {% if current_category == "二輪車" %}selected{% endif %}>二輪車</option>
+      </select>
+    </label></p>
+    <p><label>月間走行距離: <input type="number" name="monthly_distance_km" min="0" step="0.1" value="{{ v.monthly_distance_km if v else 0 }}"></label>km/月</p>
+    <p><label>燃費: <input type="number" name="fuel_efficiency_km_per_liter" min="0" step="0.1" value="{{ v.fuel_efficiency_km_per_liter if v else 0 }}"></label>km/L
+       <label>ガソリン単価: <input type="number" name="fuel_price_per_liter" min="0" value="{{ v.fuel_price_per_liter if v else 0 }}"></label>円/L</p>
+    <p><label>電費: <input type="number" name="electricity_consumption_kwh_per_100km" min="0" step="0.1" value="{{ v.electricity_consumption_kwh_per_100km if v else 0 }}"></label>kWh/100km
+       <label>電気単価: <input type="number" name="electricity_price_per_kwh" min="0" value="{{ v.electricity_price_per_kwh if v else 0 }}"></label>円/kWh</p>
+    <small class="field-hint">月間走行距離÷燃費×単価、または月間走行距離×電費÷100×単価で毎月計上します。</small>
+  </fieldset>
   <p><label>税金・修繕費: <input type="number" name="annual_tax_repair" min="0" value="{{ v.annual_tax_repair if v else 0 }}"></label>円/年</p>
+  <fieldset>
+    <legend>自動車税・重量税</legend>
+    <p><label>自動車税（減税前）: <input type="number" name="annual_automobile_tax" min="0" value="{{ v.annual_automobile_tax if v else 0 }}"></label>円/年
+       <label>エコカー減税率: <input type="number" name="automobile_tax_reduction_rate" min="0" max="1" step="0.01" value="{{ v.automobile_tax_reduction_rate if v else 0 }}"></label></p>
+    <p><label>排気量（自動計算用）: <input type="number" name="engine_displacement_cc" min="0" value="{{ v.engine_displacement_cc if v else 0 }}"></label>cc</p>
+    <p><label>重量税（減税前）: <input type="number" name="weight_tax_per_inspection" min="0" value="{{ v.weight_tax_per_inspection if v else 0 }}"></label>円/車検
+       <label>エコカー減税率: <input type="number" name="weight_tax_reduction_rate" min="0" max="1" step="0.01" value="{{ v.weight_tax_reduction_rate if v else 0 }}"></label></p>
+    <p><label>車両重量（自動計算用）: <input type="number" name="vehicle_weight_kg" min="0" value="{{ v.vehicle_weight_kg if v else 0 }}"></label>kg</p>
+    <small class="field-hint">金額を入力するとその値を優先します。0円で排気量・車両重量を入力した場合は標準区分から概算します。二輪車の重量税は手入力してください。自動車税は毎年の所有開始月、重量税は車検月に計上します。</small>
+  </fieldset>
   <p><label>買替周期: <input type="number" name="replacement_cycle_years" min="0" value="{{ v.replacement_cycle_years if v else 0 }}"></label>年（0=買替なし）</p>
-  <p><label>売却額: <input type="number" name="sale_price" min="0" value="{{ v.sale_price if v else 0 }}"></label>円（買替・所有終了時）</p>
+  <fieldset>
+    <legend>売却額の計算</legend>
+    <p><label>計算方式:
+      {% set current_sale_mode = v.sale_price_mode if v else "手入力" %}
+      <select name="sale_price_mode">
+        <option value="手入力" {% if current_sale_mode == "手入力" %}selected{% endif %}>手入力</option>
+        <option value="残価率" {% if current_sale_mode == "残価率" %}selected{% endif %}>残価率</option>
+        <option value="定額法" {% if current_sale_mode == "定額法" %}selected{% endif %}>定額法</option>
+        <option value="定率法" {% if current_sale_mode == "定率法" %}selected{% endif %}>定率法</option>
+      </select>
+    </label></p>
+    <p><label>売却額（手入力）: <input type="number" name="sale_price" min="0" value="{{ v.sale_price if v else 0 }}"></label>円</p>
+    <p><label>残価率/最低残価率: <input type="number" name="residual_value_rate" min="0" max="1" step="0.01" value="{{ v.residual_value_rate if v else 0 }}"></label>
+       <label>償却年数: <input type="number" name="depreciation_years" min="0" value="{{ v.depreciation_years if v else 0 }}"></label>年</p>
+    <p><label>定率法の年間償却率: <input type="number" name="declining_depreciation_rate" min="0" max="1" step="0.01" value="{{ v.declining_depreciation_rate if v else 0 }}"></label></p>
+    <small class="field-hint">残価率は取得価格に乗算します。定額法・定率法は所有年数に応じて算出し、最低残価率を下限にします。</small>
+  </fieldset>
   <p><label>車検費用: <input type="number" name="inspection_cost" min="0" value="{{ v.inspection_cost if v else 0 }}"></label>円</p>
   <p><label>車検周期: <input type="number" name="inspection_cycle_years" min="1" max="10" value="{{ v.inspection_cycle_years if v else 2 }}"></label>年
      <small class="field-hint">1〜10年の範囲で入力してください。</small></p>

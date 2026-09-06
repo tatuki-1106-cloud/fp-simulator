@@ -186,7 +186,18 @@ async def get_cashflow(household_id: str, year: int, month: int | None = None) -
                     "retirement": m.retirement_income,
                 },
                 "tax_si": {"social_insurance": m.social_insurance, "income_tax": m.income_tax, "resident_tax": m.resident_tax},
-                "expense": {"living": m.living_expense, "event": m.event_expense},
+                "expense": {
+                    "living": m.living_expense,
+                    "event": m.event_expense,
+                    "vehicle_purchase": m.vehicle_purchase_expense,
+                    "vehicle_maintenance": m.vehicle_maintenance,
+                    "vehicle_fuel": m.vehicle_fuel_expense,
+                    "vehicle_electricity": m.vehicle_electricity_expense,
+                    "vehicle_tax_repair": m.vehicle_tax_repair,
+                    "automobile_tax": m.vehicle_automobile_tax,
+                    "weight_tax": m.vehicle_weight_tax,
+                    "vehicle_inspection": m.vehicle_inspection_expense,
+                },
                 "net": m.net,
                 "balance": m.balance,
                 "traces": [{"item": t.item, "amount": t.amount, "basis": t.basis} for t in m.traces],
@@ -210,6 +221,17 @@ async def get_cashflow(household_id: str, year: int, month: int | None = None) -
                 for m in year_data
             ),
             "total_expense": sum(m.total_expense for m in year_data),
+            "vehicle_expense": sum(
+                m.vehicle_purchase_expense
+                + m.vehicle_maintenance
+                + m.vehicle_fuel_expense
+                + m.vehicle_electricity_expense
+                + m.vehicle_tax_repair
+                + m.vehicle_automobile_tax
+                + m.vehicle_weight_tax
+                + m.vehicle_inspection_expense
+                for m in year_data
+            ),
             "total_tax_si": sum(m.total_tax_si for m in year_data),
             "net": sum(m.net for m in year_data),
             "balance_end": year_data[-1].balance,

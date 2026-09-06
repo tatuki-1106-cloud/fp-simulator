@@ -659,6 +659,174 @@ class TestCashflowIntegration:
         assert replacement.vehicle_inspection_expense == 100_000
         assert ending.vehicle_sale_income == 500_000
 
+    def test_vehicle_distance_taxes_and_residual_sale_are_calculated(
+        self, store, household: Household
+    ) -> None:
+        """走行距離、減税率、残価率から車両費を計算する."""
+        household.vehicles.append(
+            Vehicle(
+                id="efficient-car",
+                vehicle_type="中古車",
+                ownership_start_year=2026,
+                ownership_end_year=2030,
+                purchase_price=2_000_000,
+                energy_type="ガソリン",
+                monthly_distance_km=1_000,
+                fuel_efficiency_km_per_liter=10,
+                fuel_price_per_liter=180,
+                annual_automobile_tax=30_000,
+                automobile_tax_reduction_rate=0.5,
+                weight_tax_per_inspection=10_000,
+                weight_tax_reduction_rate=0.2,
+                replacement_cycle_years=3,
+                sale_price_mode="残価率",
+                residual_value_rate=0.2,
+                inspection_cost=100_000,
+                inspection_cycle_years=2,
+            )
+        )
+        result = simulate(store, household)
+        initial = next(m for m in result.monthly if m.date == datetime.date(2026, 1, 1))
+        next_year = next(m for m in result.monthly if m.date == datetime.date(2027, 1, 1))
+        replacement = next(m for m in result.monthly if m.date == datetime.date(2029, 1, 1))
+
+        assert initial.vehicle_fuel_expense == 18_000
+        assert initial.vehicle_automobile_tax == 15_000
+        assert initial.vehicle_inspection_expense == 100_000
+        assert initial.vehicle_weight_tax == 8_000
+        assert next_year.vehicle_automobile_tax == 15_000
+        assert replacement.vehicle_purchase_expense == 2_000_000
+        assert replacement.vehicle_sale_income == 400_000
+
+    def test_vehicle_electricity_cost_is_distance_based(
+        self, store, household: Household
+    ) -> None:
+        """電気自動車の電気代を走行距離と電費から計算する."""
+        household.vehicles.append(
+            Vehicle(
+                id="ev",
+                ownership_start_year=2026,
+                ownership_end_year=2026,
+                purchase_price=3_000_000,
+                energy_type="電気",
+                monthly_distance_km=500,
+                electricity_consumption_kwh_per_100km=15,
+                electricity_price_per_kwh=30,
+            )
+        )
+        result = simulate(store, household)
+        january = next(m for m in result.monthly if m.date == datetime.date(2026, 1, 1))
+        assert january.vehicle_electricity_expense == 2_250
+
+    def test_vehicle_taxes_can_be_derived_from_displacement_and_weight(
+        self, store, household: Household
+    ) -> None:
+        """税額未入力時に排気量・重量の標準区分から概算する."""
+        household.vehicles.append(
+            Vehicle(
+                id="tax-calculated-car",
+                ownership_start_year=2026,
+                ownership_end_year=2030,
+                purchase_price=2_000_000,
+                engine_displacement_cc=1_500,
+                vehicle_weight_kg=1_000,
+                inspection_cost=100_000,
+                inspection_cycle_years=2,
+            )
+        )
+        result = simulate(store, household)
+        january = next(m for m in result.monthly if m.date == datetime.date(2026, 1, 1))
+        first_inspection = next(
+            m for m in result.monthly if m.date == datetime.date(2029, 1, 1)
+        )
+
+        assert january.vehicle_automobile_tax == 30_500
+        assert first_inspection.vehicle_weight_tax == 24_600
+
+    def test_vehicle_sale_at_replacement_boundary_uses_elapsed_cycle(
+        self, store, household: Household
+    ) -> None:
+        """所有終了月が買替周期の境界でも、経過期間を0年扱いしない."""
+        household.vehicles.append(
+            Vehicle(
+                id="boundary-sale-car",
+                ownership_start_year=2026,
+                ownership_end_year=2029,
+                ownership_end_month=1,
+                purchase_price=3_000_000,
+                replacement_cycle_years=3,
+                sale_price_mode="定額法",
+                depreciation_years=6,
+            )
+        )
+
+        result = simulate(store, household)
+        ending = next(m for m in result.monthly if m.date == datetime.date(2029, 1, 1))
+
+        assert ending.vehicle_purchase_expense == 0
+        assert ending.vehicle_sale_income == 1_500_000
+
+    def test_vehicle_weight_tax_uses_category_and_inspection_period(
+        self, store, household: Household
+    ) -> None:
+        """重量税の自動計算が車両区分・車検期間・新車初回期間を反映する."""
+        household.vehicles.extend(
+            [
+                Vehicle(
+                    id="light-tax-car",
+                    vehicle_category="軽自動車",
+                    vehicle_type="中古車",
+                    ownership_start_year=2026,
+                    ownership_end_year=2026,
+                    purchase_price=1_000_000,
+                    inspection_cycle_years=1,
+                    vehicle_weight_kg=1_000,
+                ),
+                Vehicle(
+                    id="new-tax-car",
+                    vehicle_type="新車",
+                    ownership_start_year=2026,
+                    ownership_end_year=2029,
+                    purchase_price=2_000_000,
+                    inspection_cycle_years=2,
+                    vehicle_weight_kg=1_000,
+                ),
+            ]
+        )
+
+        result = simulate(store, household)
+        used_inspection = next(
+            m for m in result.monthly if m.date == datetime.date(2026, 1, 1)
+        )
+        new_first_inspection = next(
+            m for m in result.monthly if m.date == datetime.date(2029, 1, 1)
+        )
+
+        assert used_inspection.vehicle_weight_tax == 3_300
+        assert new_first_inspection.vehicle_weight_tax == 24_600
+
+    def test_motorcycle_automobile_tax_uses_motorcycle_displacement_band(
+        self, store, household: Household
+    ) -> None:
+        """二輪車の自動車税は乗用車ではなく二輪車の排気量区分で概算する."""
+        household.vehicles.append(
+            Vehicle(
+                id="motorcycle",
+                vehicle_category="二輪車",
+                ownership_start_year=2026,
+                ownership_end_year=2026,
+                purchase_price=500_000,
+                engine_displacement_cc=250,
+                vehicle_weight_kg=200,
+            )
+        )
+
+        result = simulate(store, household)
+        january = next(m for m in result.monthly if m.date == datetime.date(2026, 1, 1))
+
+        assert january.vehicle_automobile_tax == 3_600
+        assert january.vehicle_weight_tax == 0
+
     def test_vehicle_rejects_invalid_ownership_period(
         self, store, household: Household
     ) -> None:

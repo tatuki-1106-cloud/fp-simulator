@@ -126,6 +126,7 @@ def _export_rows(result, granularity: str) -> list[list[object]]:
             "年", "年齢", "収入", "休業給付", "乗り物売却", "支出", "住宅頭金", "固定資産税", "修繕費",
             "乗り物購入", "乗り物維持費", "乗り物税金・修繕", "車検", "税・社保", "収支",
             "現金・預金", "iDeCo", "NISA", "iDeCo受取", "NISA取崩", "金融資産合計",
+            "ガソリン代", "電気代", "自動車税", "重量税",
         ]]
         rows.extend([
             [
@@ -137,7 +138,9 @@ def _export_rows(result, granularity: str) -> list[list[object]]:
                 item["tax_si"], item["net"], item["balance_end"],
                 item["ideco_balance_end"], item["nisa_balance_end"],
                 item["ideco_withdrawal"], item["nisa_withdrawal"],
-                item["total_assets_end"],
+                item["total_assets_end"], item["vehicle_fuel_expense"],
+                item["vehicle_electricity_expense"], item["vehicle_automobile_tax"],
+                item["vehicle_weight_tax"],
             ]
             for item in yearly
         ])
@@ -148,9 +151,11 @@ def _export_rows(result, granularity: str) -> list[list[object]]:
         "年金収入", "退職金", "その他収入",
         "死亡保険金", "乗り物売却", "iDeCo受取", "NISA取崩", "社会保険", "所得税", "住民税",
         "iDeCo受取時税", "生活費", "イベント支出",
-        "住宅頭金", "固定資産税", "修繕費", "乗り物購入", "乗り物維持費", "乗り物税金・修繕", "車検",
+        "住宅頭金", "固定資産税", "修繕費", "乗り物購入", "乗り物維持費",
+        "乗り物税金・修繕", "車検",
         "ローン返済", "教育費", "保険料", "iDeCo掛金", "NISA投資",
         "収支", "現金・預金", "iDeCo残高", "NISA残高", "金融資産合計",
+        "ガソリン代", "電気代", "自動車税", "重量税",
     ]]
     rows.extend([
         [
@@ -166,7 +171,9 @@ def _export_rows(result, granularity: str) -> list[list[object]]:
             month.loan_payment, month.education_expense, month.insurance_premium,
             month.ideco_contribution, month.nisa_investment, month.net,
             month.balance, month.ideco_balance, month.nisa_balance,
-            month.total_assets,
+            month.total_assets, month.vehicle_fuel_expense,
+            month.vehicle_electricity_expense, month.vehicle_automobile_tax,
+            month.vehicle_weight_tax,
         ]
         for month in result.monthly
     ])
@@ -1379,15 +1386,32 @@ async def vehicles_add(
     household_id: str,
     name: str = Form("自動車"),
     vehicle_type: str = Form("新車"),
+    vehicle_category: str = Form("普通乗用車"),
     ownership_start_year: int = Form(2026),
     ownership_start_month: int = Form(1),
     ownership_end_year: int = Form(2090),
     ownership_end_month: int = Form(12),
     purchase_price: int = Form(...),
     monthly_maintenance: int = Form(0),
+    energy_type: str = Form("なし"),
+    monthly_distance_km: float = Form(0.0),
+    fuel_efficiency_km_per_liter: float = Form(0.0),
+    fuel_price_per_liter: int = Form(0),
+    electricity_consumption_kwh_per_100km: float = Form(0.0),
+    electricity_price_per_kwh: int = Form(0),
     annual_tax_repair: int = Form(0),
+    annual_automobile_tax: int = Form(0),
+    automobile_tax_reduction_rate: float = Form(0.0),
+    engine_displacement_cc: int = Form(0),
+    weight_tax_per_inspection: int = Form(0),
+    weight_tax_reduction_rate: float = Form(0.0),
+    vehicle_weight_kg: int = Form(0),
     replacement_cycle_years: int = Form(0),
     sale_price: int = Form(0),
+    sale_price_mode: str = Form("手入力"),
+    residual_value_rate: float = Form(0.0),
+    depreciation_years: int = Form(0),
+    declining_depreciation_rate: float = Form(0.0),
     inspection_cost: int = Form(0),
     inspection_cycle_years: int = Form(2),
     loan_id: str = Form(""),
@@ -1405,15 +1429,32 @@ async def vehicles_add(
     values = {
         "name": name,
         "vehicle_type": vehicle_type,
+        "vehicle_category": vehicle_category,
         "ownership_start_year": ownership_start_year,
         "ownership_start_month": ownership_start_month,
         "ownership_end_year": ownership_end_year,
         "ownership_end_month": ownership_end_month,
         "purchase_price": purchase_price,
         "monthly_maintenance": monthly_maintenance,
+        "energy_type": energy_type,
+        "monthly_distance_km": monthly_distance_km,
+        "fuel_efficiency_km_per_liter": fuel_efficiency_km_per_liter,
+        "fuel_price_per_liter": fuel_price_per_liter,
+        "electricity_consumption_kwh_per_100km": electricity_consumption_kwh_per_100km,
+        "electricity_price_per_kwh": electricity_price_per_kwh,
         "annual_tax_repair": annual_tax_repair,
+        "annual_automobile_tax": annual_automobile_tax,
+        "automobile_tax_reduction_rate": automobile_tax_reduction_rate,
+        "engine_displacement_cc": engine_displacement_cc,
+        "weight_tax_per_inspection": weight_tax_per_inspection,
+        "weight_tax_reduction_rate": weight_tax_reduction_rate,
+        "vehicle_weight_kg": vehicle_weight_kg,
         "replacement_cycle_years": replacement_cycle_years,
         "sale_price": sale_price,
+        "sale_price_mode": sale_price_mode,
+        "residual_value_rate": residual_value_rate,
+        "depreciation_years": depreciation_years,
+        "declining_depreciation_rate": declining_depreciation_rate,
         "inspection_cost": inspection_cost,
         "inspection_cycle_years": inspection_cycle_years,
         "loan_id": loan_id,
@@ -1431,6 +1472,12 @@ async def vehicles_add(
     }
     if vehicle_type not in {"新車", "中古車"}:
         return _wizard_error(request, "wizard/vehicles.html", context, "車種区分が正しくありません", values)
+    if vehicle_category not in {"普通乗用車", "軽自動車", "二輪車"}:
+        return _wizard_error(request, "wizard/vehicles.html", context, "車両区分が正しくありません", values)
+    if energy_type not in {"なし", "ガソリン", "電気"}:
+        return _wizard_error(request, "wizard/vehicles.html", context, "エネルギー種別が正しくありません", values)
+    if sale_price_mode not in {"手入力", "残価率", "定額法", "定率法"}:
+        return _wizard_error(request, "wizard/vehicles.html", context, "売却額の計算方式が正しくありません", values)
     if loan_id and not any(loan.id == loan_id for loan in household.loans):
         return _wizard_error(request, "wizard/vehicles.html", context, "紐付けるローンが見つかりません", values)
     if any(
@@ -1438,9 +1485,19 @@ async def vehicles_add(
         for value in (
             purchase_price,
             monthly_maintenance,
+            monthly_distance_km,
+            fuel_efficiency_km_per_liter,
+            fuel_price_per_liter,
+            electricity_consumption_kwh_per_100km,
+            electricity_price_per_kwh,
             annual_tax_repair,
+            annual_automobile_tax,
+            engine_displacement_cc,
+            weight_tax_per_inspection,
+            vehicle_weight_kg,
             replacement_cycle_years,
             sale_price,
+            depreciation_years,
             inspection_cost,
             replacement_loan_principal,
             replacement_loan_years,
@@ -1448,6 +1505,30 @@ async def vehicles_add(
         )
     ):
         return _wizard_error(request, "wizard/vehicles.html", context, "金額・年数は0以上で入力してください", values)
+    if (
+        replacement_loan_annual_rate < 0
+        or automobile_tax_reduction_rate < 0
+        or automobile_tax_reduction_rate > 1
+        or weight_tax_reduction_rate < 0
+        or weight_tax_reduction_rate > 1
+        or residual_value_rate < 0
+        or residual_value_rate > 1
+        or declining_depreciation_rate < 0
+        or declining_depreciation_rate > 1
+    ):
+        return _wizard_error(request, "wizard/vehicles.html", context, "率は0〜1の範囲で入力してください", values)
+    if energy_type == "ガソリン" and monthly_distance_km > 0 and fuel_efficiency_km_per_liter <= 0:
+        return _wizard_error(request, "wizard/vehicles.html", context, "ガソリン車は燃費を0より大きく入力してください", values)
+    if (
+        energy_type == "電気"
+        and monthly_distance_km > 0
+        and electricity_consumption_kwh_per_100km <= 0
+    ):
+        return _wizard_error(request, "wizard/vehicles.html", context, "電気自動車は電費を0より大きく入力してください", values)
+    if sale_price_mode in {"定額法", "定率法"} and depreciation_years <= 0:
+        return _wizard_error(request, "wizard/vehicles.html", context, "減価償却方式では償却年数が必要です", values)
+    if sale_price_mode == "定率法" and declining_depreciation_rate <= 0:
+        return _wizard_error(request, "wizard/vehicles.html", context, "定率法では償却率が必要です", values)
     if replacement_loan_annual_rate < 0:
         return _wizard_error(request, "wizard/vehicles.html", context, "買い替えローンの金利は0以上で入力してください", values)
     if replacement_loan_repayment_type not in {"元利均等", "元金均等"}:
@@ -1475,15 +1556,32 @@ async def vehicles_add(
         id=edit_id or str(uuid.uuid4()),
         name=name,
         vehicle_type=vehicle_type,
+        vehicle_category=vehicle_category,
         ownership_start_year=ownership_start_year,
         ownership_start_month=ownership_start_month,
         ownership_end_year=ownership_end_year,
         ownership_end_month=ownership_end_month,
         purchase_price=purchase_price,
         monthly_maintenance=monthly_maintenance,
+        energy_type=energy_type,
+        monthly_distance_km=monthly_distance_km,
+        fuel_efficiency_km_per_liter=fuel_efficiency_km_per_liter,
+        fuel_price_per_liter=fuel_price_per_liter,
+        electricity_consumption_kwh_per_100km=electricity_consumption_kwh_per_100km,
+        electricity_price_per_kwh=electricity_price_per_kwh,
         annual_tax_repair=annual_tax_repair,
+        annual_automobile_tax=annual_automobile_tax,
+        automobile_tax_reduction_rate=automobile_tax_reduction_rate,
+        engine_displacement_cc=engine_displacement_cc,
+        weight_tax_per_inspection=weight_tax_per_inspection,
+        weight_tax_reduction_rate=weight_tax_reduction_rate,
+        vehicle_weight_kg=vehicle_weight_kg,
         replacement_cycle_years=replacement_cycle_years,
         sale_price=sale_price,
+        sale_price_mode=sale_price_mode,
+        residual_value_rate=residual_value_rate,
+        depreciation_years=depreciation_years,
+        declining_depreciation_rate=declining_depreciation_rate,
         inspection_cost=inspection_cost,
         inspection_cycle_years=inspection_cycle_years,
         loan_id=loan_id or None,
@@ -2256,7 +2354,11 @@ def _yearly_summary(monthly) -> list[dict]:
                 "repair_expense": 0,
                 "vehicle_purchase_expense": 0,
                 "vehicle_maintenance": 0,
+                "vehicle_fuel_expense": 0,
+                "vehicle_electricity_expense": 0,
                 "vehicle_tax_repair": 0,
+                "vehicle_automobile_tax": 0,
+                "vehicle_weight_tax": 0,
                 "vehicle_inspection_expense": 0,
                 "living_expense_reduction": 0,
                 "tax_si": 0,
@@ -2284,7 +2386,11 @@ def _yearly_summary(monthly) -> list[dict]:
         summary["repair_expense"] += month.repair_expense
         summary["vehicle_purchase_expense"] += month.vehicle_purchase_expense
         summary["vehicle_maintenance"] += month.vehicle_maintenance
+        summary["vehicle_fuel_expense"] += month.vehicle_fuel_expense
+        summary["vehicle_electricity_expense"] += month.vehicle_electricity_expense
         summary["vehicle_tax_repair"] += month.vehicle_tax_repair
+        summary["vehicle_automobile_tax"] += month.vehicle_automobile_tax
+        summary["vehicle_weight_tax"] += month.vehicle_weight_tax
         summary["vehicle_inspection_expense"] += month.vehicle_inspection_expense
         summary["living_expense_reduction"] += next(
             (
@@ -2497,7 +2603,11 @@ async def simulate_result(
         "乗り物関連": sum(
             m.vehicle_purchase_expense
             + m.vehicle_maintenance
+            + m.vehicle_fuel_expense
+            + m.vehicle_electricity_expense
             + m.vehicle_tax_repair
+            + m.vehicle_automobile_tax
+            + m.vehicle_weight_tax
             + m.vehicle_inspection_expense
             for m in result.monthly
         ),
@@ -2893,7 +3003,11 @@ def _monthly_detail_items(month) -> list[tuple[str, int]]:
         ("修繕費", month.repair_expense),
         ("乗り物購入", month.vehicle_purchase_expense),
         ("乗り物維持費", month.vehicle_maintenance),
+        ("ガソリン代", month.vehicle_fuel_expense),
+        ("電気代", month.vehicle_electricity_expense),
         ("乗り物税金・修繕", month.vehicle_tax_repair),
+        ("自動車税", month.vehicle_automobile_tax),
+        ("重量税", month.vehicle_weight_tax),
         ("車検", month.vehicle_inspection_expense),
         ("iDeCo受取", month.ideco_withdrawal),
         ("NISA取崩", month.nisa_withdrawal),

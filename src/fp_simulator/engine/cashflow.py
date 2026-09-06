@@ -131,7 +131,11 @@ class MonthlyCashflow:
     repair_expense: int = 0
     vehicle_purchase_expense: int = 0
     vehicle_maintenance: int = 0
+    vehicle_fuel_expense: int = 0
+    vehicle_electricity_expense: int = 0
     vehicle_tax_repair: int = 0
+    vehicle_automobile_tax: int = 0
+    vehicle_weight_tax: int = 0
     vehicle_inspection_expense: int = 0
     loan_payment: int = 0  # ローン返済
     loan_interest: int = 0  # うち利息
@@ -170,7 +174,11 @@ class MonthlyCashflow:
             + self.repair_expense
             + self.vehicle_purchase_expense
             + self.vehicle_maintenance
+            + self.vehicle_fuel_expense
+            + self.vehicle_electricity_expense
             + self.vehicle_tax_repair
+            + self.vehicle_automobile_tax
+            + self.vehicle_weight_tax
             + self.vehicle_inspection_expense
             + self.loan_payment
             + self.education_expense
@@ -2017,6 +2025,89 @@ def _apply_housing(
         )
 
 
+def _vehicle_sale_price(
+    vehicle,
+    months_since_purchase: int,
+    inflation_factor: float,
+) -> int:
+    """売却額を手入力・残価率・減価償却の設定から算出する."""
+    if vehicle.sale_price_mode == "手入力":
+        base_price = vehicle.sale_price
+    elif vehicle.sale_price_mode == "残価率":
+        base_price = vehicle.purchase_price * vehicle.residual_value_rate
+    else:
+        age_years = months_since_purchase / 12
+        depreciation_years = vehicle.depreciation_years
+        if vehicle.sale_price_mode == "定額法":
+            remaining_rate = max(
+                vehicle.residual_value_rate,
+                1 - age_years / depreciation_years,
+            )
+        else:
+            remaining_rate = max(
+                vehicle.residual_value_rate,
+                (1 - vehicle.declining_depreciation_rate) ** age_years,
+            )
+        base_price = vehicle.purchase_price * remaining_rate
+    return int(base_price * inflation_factor)
+
+
+def _automobile_tax_before_reduction(vehicle) -> tuple[int, str]:
+    """自動車税の減税前年額を入力値または排気量区分から算出する."""
+    if vehicle.annual_automobile_tax > 0:
+        return vehicle.annual_automobile_tax, "手入力"
+    if vehicle.vehicle_category == "軽自動車":
+        return 10_800, "軽自動車（自動計算）"
+    if vehicle.vehicle_category == "二輪車":
+        displacement = vehicle.engine_displacement_cc
+        if displacement <= 0:
+            return 0, "未設定"
+        motorcycle_tax_by_displacement = (
+            (90, 2_000),
+            (125, 2_400),
+            (250, 3_600),
+        )
+        for maximum_cc, amount in motorcycle_tax_by_displacement:
+            if displacement <= maximum_cc:
+                return amount, "二輪車排気量区分（自動計算）"
+        return 6_000, "二輪車排気量区分（自動計算）"
+    displacement = vehicle.engine_displacement_cc
+    if displacement <= 0 and vehicle.energy_type != "電気":
+        return 0, "未設定"
+    tax_by_displacement = (
+        (1_000, 25_000),
+        (1_500, 30_500),
+        (2_000, 36_000),
+        (2_500, 43_500),
+        (3_000, 50_000),
+        (3_500, 57_000),
+        (4_000, 65_500),
+        (4_500, 75_500),
+        (6_000, 87_000),
+    )
+    for maximum_cc, amount in tax_by_displacement:
+        if displacement <= maximum_cc:
+            return amount, "排気量区分（自動計算）"
+    return 110_000, "排気量区分（自動計算）"
+
+
+def _weight_tax_before_reduction(
+    vehicle, inspection_period_years: int | None = None
+) -> tuple[int, str]:
+    """重量税の車検期間分を入力値または車両区分・重量から算出する."""
+    if vehicle.weight_tax_per_inspection > 0:
+        return vehicle.weight_tax_per_inspection, "手入力"
+    if vehicle.vehicle_category == "二輪車" or vehicle.vehicle_weight_kg <= 0:
+        return 0, "未設定"
+    period_years = inspection_period_years or vehicle.inspection_cycle_years
+    if vehicle.vehicle_category == "軽自動車":
+        amount = int(6_600 * period_years / 2)
+    else:
+        half_ton_units = (vehicle.vehicle_weight_kg + 499) // 500
+        amount = int(half_ton_units * 8_200 * period_years / 2)
+    return amount, "車両区分・重量区分（自動計算）"
+
+
 def _apply_vehicle_expenses(
     household: Household,
     current: datetime.date,
@@ -2027,7 +2118,7 @@ def _apply_vehicle_expenses(
     vehicle_replacement_dates: dict[str, list[datetime.date]],
     vehicle_replacement_principal: dict[tuple[str, datetime.date], int],
 ) -> None:
-    """車両の購入・維持・税修繕・車検・売却を月次CFへ反映する."""
+    """車両の購入・維持・エネルギー・税・車検・売却を月次CFへ反映する."""
     for vehicle in household.vehicles:
         start_date = datetime.date(
             vehicle.ownership_start_year, vehicle.ownership_start_month, 1
@@ -2047,12 +2138,19 @@ def _apply_vehicle_expenses(
             else 0
         )
         is_replacement = current in vehicle_replacement_dates[vehicle.id]
+        is_end_sale = current == end_date and not is_replacement
         months_since_purchase = (
             months_owned % replacement_months
             if replacement_months > 0
             else months_owned
         )
-        is_end_sale = current == end_date and not is_replacement
+        if (
+            is_end_sale
+            and replacement_months > 0
+            and months_owned > 0
+            and months_since_purchase == 0
+        ):
+            months_since_purchase = replacement_months
         inflation_factor = (1 + assumptions.inflation_rate) ** (
             year - assumptions.base_year
         )
@@ -2103,24 +2201,110 @@ def _apply_vehicle_expenses(
                     },
                 )
             )
-            if is_replacement and vehicle.sale_price > 0:
-                sale_amount = int(vehicle.sale_price * inflation_factor)
+            if is_replacement:
+                sale_amount = _vehicle_sale_price(
+                    vehicle,
+                    replacement_months or months_since_purchase,
+                    inflation_factor,
+                )
+            else:
+                sale_amount = 0
+            if is_replacement and sale_amount > 0:
                 cf.vehicle_sale_income += sale_amount
                 cf.traces.append(
                     TraceEntry(
                         "乗り物売却収入",
                         sale_amount,
-                        {"乗り物": vehicle.name, "買替": True},
+                        {
+                            "乗り物": vehicle.name,
+                            "買替": True,
+                            "売却額計算": vehicle.sale_price_mode,
+                        },
                     )
                 )
-        elif is_end_sale and vehicle.sale_price > 0:
-            sale_amount = int(vehicle.sale_price * inflation_factor)
-            cf.vehicle_sale_income += sale_amount
+        elif is_end_sale:
+            sale_amount = _vehicle_sale_price(
+                vehicle, months_since_purchase, inflation_factor
+            )
+            sale_amount = max(0, sale_amount)
+            if sale_amount > 0:
+                cf.vehicle_sale_income += sale_amount
+                cf.traces.append(
+                    TraceEntry(
+                        "乗り物売却収入",
+                        sale_amount,
+                        {
+                            "乗り物": vehicle.name,
+                            "所有終了": True,
+                            "売却額計算": vehicle.sale_price_mode,
+                        },
+                    )
+                )
+
+        if vehicle.energy_type == "ガソリン" and vehicle.monthly_distance_km > 0:
+            fuel_amount = int(
+                vehicle.monthly_distance_km
+                / vehicle.fuel_efficiency_km_per_liter
+                * vehicle.fuel_price_per_liter
+                * inflation_factor
+            )
+            if fuel_amount > 0:
+                cf.vehicle_fuel_expense += fuel_amount
+                cf.traces.append(
+                    TraceEntry(
+                        "ガソリン代",
+                        fuel_amount,
+                        {
+                            "乗り物": vehicle.name,
+                            "走行距離(km)": vehicle.monthly_distance_km,
+                            "燃費(km/L)": vehicle.fuel_efficiency_km_per_liter,
+                            "単価(円/L)": vehicle.fuel_price_per_liter,
+                        },
+                    )
+                )
+        elif vehicle.energy_type == "電気" and vehicle.monthly_distance_km > 0:
+            electricity_amount = int(
+                vehicle.monthly_distance_km
+                / 100
+                * vehicle.electricity_consumption_kwh_per_100km
+                * vehicle.electricity_price_per_kwh
+                * inflation_factor
+            )
+            if electricity_amount > 0:
+                cf.vehicle_electricity_expense += electricity_amount
+                cf.traces.append(
+                    TraceEntry(
+                        "電気代",
+                        electricity_amount,
+                        {
+                            "乗り物": vehicle.name,
+                            "走行距離(km)": vehicle.monthly_distance_km,
+                            "電費(kWh/100km)": vehicle.electricity_consumption_kwh_per_100km,
+                            "単価(円/kWh)": vehicle.electricity_price_per_kwh,
+                        },
+                    )
+                )
+
+        automobile_tax_before_reduction, automobile_tax_basis = (
+            _automobile_tax_before_reduction(vehicle)
+        )
+        if month == vehicle.ownership_start_month and automobile_tax_before_reduction > 0:
+            amount = int(
+                automobile_tax_before_reduction
+                * (1 - vehicle.automobile_tax_reduction_rate)
+                * inflation_factor
+            )
+            cf.vehicle_automobile_tax += amount
             cf.traces.append(
                 TraceEntry(
-                    "乗り物売却収入",
-                    sale_amount,
-                    {"乗り物": vehicle.name, "所有終了": True},
+                    "自動車税",
+                    amount,
+                    {
+                        "乗り物": vehicle.name,
+                        "減税前年額": automobile_tax_before_reduction,
+                        "計算方式": automobile_tax_basis,
+                        "エコカー減税率": vehicle.automobile_tax_reduction_rate,
+                    },
                 )
             )
 
@@ -2145,22 +2329,52 @@ def _apply_vehicle_expenses(
                 )
             )
         inspection_start_month = 36 if vehicle.vehicle_type == "新車" else 0
-        if vehicle.inspection_cost > 0 and months_since_purchase >= inspection_start_month:
+        if months_since_purchase >= inspection_start_month:
             inspection_cycle_months = vehicle.inspection_cycle_years * 12
             if (
                 months_since_purchase - inspection_start_month
             ) % inspection_cycle_months == 0:
-                cf.vehicle_inspection_expense += vehicle.inspection_cost
-                cf.traces.append(
-                    TraceEntry(
-                        "車検費用",
-                        vehicle.inspection_cost,
-                        {
-                            "乗り物": vehicle.name,
-                            "周期年数": vehicle.inspection_cycle_years,
-                        },
+                if vehicle.inspection_cost > 0:
+                    inspection_amount = int(vehicle.inspection_cost * inflation_factor)
+                    cf.vehicle_inspection_expense += inspection_amount
+                    cf.traces.append(
+                        TraceEntry(
+                            "車検費用",
+                            inspection_amount,
+                            {
+                                "乗り物": vehicle.name,
+                                "周期年数": vehicle.inspection_cycle_years,
+                            },
+                        )
                     )
+                inspection_period_years = (
+                    3
+                    if vehicle.vehicle_type == "新車"
+                    and months_since_purchase == inspection_start_month
+                    else vehicle.inspection_cycle_years
                 )
+                weight_tax_before_reduction, weight_tax_basis = (
+                    _weight_tax_before_reduction(vehicle, inspection_period_years)
+                )
+                if weight_tax_before_reduction > 0:
+                    weight_tax = int(
+                        weight_tax_before_reduction
+                        * (1 - vehicle.weight_tax_reduction_rate)
+                        * inflation_factor
+                    )
+                    cf.vehicle_weight_tax += weight_tax
+                    cf.traces.append(
+                        TraceEntry(
+                            "重量税",
+                            weight_tax,
+                            {
+                                "乗り物": vehicle.name,
+                                "減税前車検時税額": weight_tax_before_reduction,
+                                "計算方式": weight_tax_basis,
+                                "エコカー減税率": vehicle.weight_tax_reduction_rate,
+                            },
+                        )
+                    )
 
 
 def simulate(
