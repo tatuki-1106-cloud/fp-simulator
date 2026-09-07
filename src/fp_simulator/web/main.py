@@ -1256,8 +1256,22 @@ async def loans_delete(request: Request, household_id: str, loan_id: str) -> Res
 
 EDUCATION_STAGE_NAMES = tuple(EDUCATION_STAGE_OPTIONS)
 EDUCATION_DEFAULT_TYPES = {
-    "公立": dict(zip(EDUCATION_STAGE_NAMES, ("認可", "公立", "公立", "公立", "公立", "国立"))),
-    "私立": dict(zip(EDUCATION_STAGE_NAMES, ("認可", "私立", "私立", "私立", "私立", "私立文系"))),
+    "公立": {
+        "保育園": "認可",
+        "幼稚園": "公立",
+        "小学校": "公立",
+        "中学校": "公立",
+        "高校": "公立",
+        "大学": "国立",
+    },
+    "私立": {
+        "保育園": "認可",
+        "幼稚園": "私立",
+        "小学校": "私立",
+        "中学校": "私立",
+        "高校": "私立",
+        "大学": "私立文系",
+    },
 }
 
 
