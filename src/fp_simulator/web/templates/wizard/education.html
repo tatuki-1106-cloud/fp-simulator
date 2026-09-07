@@ -43,8 +43,8 @@
   <p><label>進学パス:
     <select name="path">
       {% set current_path = form_values.path %}
-      <option value="公立" {% if current_path == "公立" %}selected{% endif %}>公立(保育園〜大学国立)</option>
-      <option value="私立" {% if current_path == "私立" %}selected{% endif %}>私立(保育園〜大学私立)</option>
+      <option value="公立" {% if current_path == "公立" %}selected{% endif %}>公立(保育園認可〜大学国立)</option>
+      <option value="私立" {% if current_path == "私立" %}selected{% endif %}>私立(保育園認可〜大学私立文系)</option>
     </select></label>
      <small class="field-hint">詳細設定を使わない場合の初期値です。段階ごとに変更できます。</small></p>
 
@@ -55,7 +55,7 @@
       <tr><th>段階</th><th>進学先</th><th>費用</th><th>入学金</th><th>教材費(年額)</th><th>通学費(年額)</th><th>その他(年額)</th><th>支援・奨学金(年額)</th><th>通学形態</th><th>生活費(月額)</th></tr>
     </thead>
     <tbody>
-    {% for stage in ("保育園", "幼稚園", "小学校", "中学校", "高校", "大学") %}
+    {% for stage in stage_names %}
       {% set sv = form_values.stages[stage] %}
       <tr>
         <td>{{ stage }}</td>

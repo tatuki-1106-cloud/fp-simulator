@@ -1437,6 +1437,7 @@ async def education_edit(request: Request, household_id: str, edit_id: str = "")
             "active_q": "Q5",
             "edit_target": edit_target,
             "form_values": _education_form_values(edit_target),
+            "stage_names": EDUCATION_STAGE_NAMES,
             "stage_options": _education_stage_options(),
         },
     )
@@ -1462,6 +1463,7 @@ async def education_add(
         "household": household,
         "active_q": "Q5",
         "form_values": form_values,
+        "stage_names": EDUCATION_STAGE_NAMES,
         "stage_options": _education_stage_options(),
         "edit_target": (
             next((e for e in household.education_plans if e.id == edit_id), None) if edit_id else None
