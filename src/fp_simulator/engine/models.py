@@ -239,6 +239,20 @@ class EducationStage(BaseModel):
     living_arrangement: Literal["自宅", "一人暮らし"] = "自宅"
     monthly_living_cost: int = Field(default=0, ge=0)
 
+    @model_validator(mode="after")
+    def validate_school_type(self) -> EducationStage:
+        allowed_school_types = {
+            "保育園": {"認可", "未定"},
+            "幼稚園": {"公立", "私立", "未定"},
+            "小学校": {"公立", "私立", "未定"},
+            "中学校": {"公立", "私立", "未定"},
+            "高校": {"公立", "私立", "未定"},
+            "大学": {"国立", "私立文系", "私立理系", "専門学校", "未定"},
+        }
+        if self.school_type not in allowed_school_types[self.stage]:
+            raise ValueError(f"invalid school type for {self.stage}: {self.school_type}")
+        return self
+
 
 class EducationPlan(BaseModel):
     """教育費プラン(子ごと)."""

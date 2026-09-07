@@ -6,6 +6,7 @@ import datetime
 import pathlib
 
 import pytest
+from pydantic import ValidationError
 
 from fp_simulator.engine.childcare_leave import (
     childcare_benefit,
@@ -70,6 +71,11 @@ class TestEducation:
         monthly, schools = monthly_education_costs(store, D2025, 3, "公立")
         assert monthly == 223000 // 12
         assert "幼稚園.公立" in schools
+
+    def test_stage_rejects_invalid_school_type_combination(self) -> None:
+        """保育園に大学種別などの不正な組み合わせは許可しない."""
+        with pytest.raises(ValidationError):
+            EducationStage(stage="保育園", school_type="私立文系")
 
     def test_stage_specific_custom_costs_and_support(self, store) -> None:
         """段階別の個別費用・一時費用・支援・一人暮らしを反映する."""
