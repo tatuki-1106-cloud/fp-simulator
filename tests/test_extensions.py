@@ -61,8 +61,9 @@ class TestEducation:
 
     def test_nursery_public_toddler(self, store) -> None:
         """2歳は保育園費を計上する."""
-        monthly, _schools = monthly_education_costs(store, D2025, 2, "公立")
+        monthly, schools = monthly_education_costs(store, D2025, 2, "公立")
         assert monthly == 300000 // 12
+        assert "保育園.認可" in schools
 
     def test_kindergarten_starts_after_nursery(self, store) -> None:
         """3歳になると保育園ではなく幼稚園の標準費用へ切り替わる."""
