@@ -12,6 +12,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
+EDUCATION_STAGE_NAMES = ("保育園", "幼稚園", "小学校", "中学校", "高校", "大学")
+
 EDUCATION_STAGE_OPTIONS: dict[str, tuple[str, ...]] = {
     "保育園": ("認可", "未定"),
     "幼稚園": ("公立", "私立", "未定"),

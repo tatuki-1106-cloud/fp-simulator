@@ -35,6 +35,7 @@ from fp_simulator.db.database import (
 from fp_simulator.engine.childcare_leave import leave_periods
 from fp_simulator.engine.insurance import InsurancePolicy, analyze_coverage
 from fp_simulator.engine.models import (
+    EDUCATION_STAGE_NAMES,
     EDUCATION_STAGE_OPTIONS,
     Account,
     ChildcareLeave,
@@ -1254,7 +1255,6 @@ async def loans_delete(request: Request, household_id: str, loan_id: str) -> Res
     return RedirectResponse(f"/households/{household_id}/loans", status_code=303)
 
 
-EDUCATION_STAGE_NAMES = tuple(EDUCATION_STAGE_OPTIONS)
 EDUCATION_DEFAULT_TYPES = {
     "公立": {
         "保育園": "認可",
