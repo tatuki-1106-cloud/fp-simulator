@@ -12,6 +12,17 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
+EDUCATION_STAGE_NAMES = ("保育園", "幼稚園", "小学校", "中学校", "高校", "大学")
+
+EDUCATION_STAGE_OPTIONS: dict[str, tuple[str, ...]] = {
+    "保育園": ("認可", "未定"),
+    "幼稚園": ("公立", "私立", "未定"),
+    "小学校": ("公立", "私立", "未定"),
+    "中学校": ("公立", "私立", "未定"),
+    "高校": ("公立", "私立", "未定"),
+    "大学": ("国立", "私立文系", "私立理系", "専門学校", "未定"),
+}
+
 
 class Relationship(str, Enum):
     """続柄."""
@@ -227,8 +238,8 @@ class Vehicle(BaseModel):
 class EducationStage(BaseModel):
     """教育段階ごとの進学・費用設定."""
 
-    stage: Literal["幼稚園", "小学校", "中学校", "高校", "大学"]
-    school_type: Literal["公立", "私立", "国立", "私立文系", "私立理系", "専門学校", "未定"] = "未定"
+    stage: Literal["保育園", "幼稚園", "小学校", "中学校", "高校", "大学"]
+    school_type: Literal["認可", "公立", "私立", "国立", "私立文系", "私立理系", "専門学校", "未定"] = "未定"
     cost_mode: Literal["平均", "個別"] = "平均"
     annual_cost: int | None = Field(default=None, ge=0)
     admission_fee: int = Field(default=0, ge=0)
@@ -238,6 +249,16 @@ class EducationStage(BaseModel):
     annual_support: int = Field(default=0, ge=0)
     living_arrangement: Literal["自宅", "一人暮らし"] = "自宅"
     monthly_living_cost: int = Field(default=0, ge=0)
+
+    @model_validator(mode="after")
+    def validate_school_type(self) -> EducationStage:
+        allowed_school_types = EDUCATION_STAGE_OPTIONS[self.stage]
+        if self.school_type not in allowed_school_types:
+            allowed = " / ".join(allowed_school_types)
+            raise ValueError(
+                f"{self.stage}で選べる進学先は {allowed} です: {self.school_type}"
+            )
+        return self
 
 
 class EducationPlan(BaseModel):

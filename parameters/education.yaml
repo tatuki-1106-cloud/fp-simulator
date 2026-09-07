@@ -8,6 +8,13 @@
       value: 223000
       source: https://www.mext.go.jp/b_menu/toukei/chousa01/kihon/1268095.htm
 
+- path: 教育費.保育園.認可
+  description: 保育園(認可)の年間費用目安(自治体・所得で変動するため個別入力で調整推奨)
+  values:
+    - from: 2013-01-01
+      value: 300000
+      source: https://www.cfa.go.jp/policies/kokoseido/mushouka/about/faq1/
+
 - path: 教育費.幼稚園.私立
   description: 幼稚園(私立)の年間費用
   values:

@@ -35,6 +35,8 @@ from fp_simulator.db.database import (
 from fp_simulator.engine.childcare_leave import leave_periods
 from fp_simulator.engine.insurance import InsurancePolicy, analyze_coverage
 from fp_simulator.engine.models import (
+    EDUCATION_STAGE_NAMES,
+    EDUCATION_STAGE_OPTIONS,
     Account,
     ChildcareLeave,
     EducationPlan,
@@ -1253,17 +1255,23 @@ async def loans_delete(request: Request, household_id: str, loan_id: str) -> Res
     return RedirectResponse(f"/households/{household_id}/loans", status_code=303)
 
 
-EDUCATION_STAGE_NAMES = ("幼稚園", "小学校", "中学校", "高校", "大学")
-EDUCATION_STAGE_OPTIONS = {
-    "幼稚園": ("公立", "私立", "未定"),
-    "小学校": ("公立", "私立", "未定"),
-    "中学校": ("公立", "私立", "未定"),
-    "高校": ("公立", "私立", "未定"),
-    "大学": ("国立", "私立文系", "私立理系", "専門学校", "未定"),
-}
 EDUCATION_DEFAULT_TYPES = {
-    "公立": dict(zip(EDUCATION_STAGE_NAMES, ("公立", "公立", "公立", "公立", "国立"))),
-    "私立": dict(zip(EDUCATION_STAGE_NAMES, ("私立", "私立", "私立", "私立", "私立文系"))),
+    "公立": {
+        "保育園": "認可",
+        "幼稚園": "公立",
+        "小学校": "公立",
+        "中学校": "公立",
+        "高校": "公立",
+        "大学": "国立",
+    },
+    "私立": {
+        "保育園": "認可",
+        "幼稚園": "私立",
+        "小学校": "私立",
+        "中学校": "私立",
+        "高校": "私立",
+        "大学": "私立文系",
+    },
 }
 
 
@@ -1429,6 +1437,7 @@ async def education_edit(request: Request, household_id: str, edit_id: str = "")
             "active_q": "Q5",
             "edit_target": edit_target,
             "form_values": _education_form_values(edit_target),
+            "stage_names": EDUCATION_STAGE_NAMES,
             "stage_options": _education_stage_options(),
         },
     )
@@ -1454,6 +1463,7 @@ async def education_add(
         "household": household,
         "active_q": "Q5",
         "form_values": form_values,
+        "stage_names": EDUCATION_STAGE_NAMES,
         "stage_options": _education_stage_options(),
         "edit_target": (
             next((e for e in household.education_plans if e.id == edit_id), None) if edit_id else None
