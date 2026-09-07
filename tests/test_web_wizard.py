@@ -913,6 +913,7 @@ async def test_education_edit_and_delete(client: AsyncClient) -> None:
     r = await client.get(f"/households/{household_id}/education?edit_id={plan_id}")
     assert r.status_code == 200
     assert ">更新<" in r.text
+    assert "保育園" in r.text
 
     r = await client.post(
         f"/households/{household_id}/education",

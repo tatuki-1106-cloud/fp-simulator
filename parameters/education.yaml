@@ -8,12 +8,26 @@
       value: 223000
       source: https://www.mext.go.jp/b_menu/toukei/chousa01/kihon/1268095.htm
 
+- path: 教育費.保育園.公立
+  description: 保育園(公立)の年間費用(初期値・個別入力で調整可能)
+  values:
+    - from: 2013-01-01
+      value: 300000
+      source: https://kyoikuhi.com/nursery-costs/
+
 - path: 教育費.幼稚園.私立
   description: 幼稚園(私立)の年間費用
   values:
     - from: 2013-01-01
       value: 526000
       source: https://www.mext.go.jp/b_menu/toukei/chousa01/kihon/1268095.htm
+
+- path: 教育費.保育園.私立
+  description: 保育園(私立)の年間費用(初期値・個別入力で調整可能)
+  values:
+    - from: 2013-01-01
+      value: 300000
+      source: https://kyoikuhi.com/nursery-costs/
 
 - path: 教育費.小学校.公立
   description: 小学校(公立)の年間費用

@@ -41,6 +41,7 @@ class EducationCostBreakdown:
 # 旧形式の進学パス。新形式では段階ごとの設定が優先される。
 STANDARD_PATHS: dict[str, list[EducationPeriod]] = {
     "公立": [
+        EducationPeriod("保育園", "公立", 0, 3),
         EducationPeriod("幼稚園", "公立", 3, 3),
         EducationPeriod("小学校", "公立", 6, 6),
         EducationPeriod("中学校", "公立", 12, 3),
@@ -48,6 +49,7 @@ STANDARD_PATHS: dict[str, list[EducationPeriod]] = {
         EducationPeriod("大学", "国立", 18, 4),
     ],
     "私立": [
+        EducationPeriod("保育園", "私立", 0, 3),
         EducationPeriod("幼稚園", "私立", 3, 3),
         EducationPeriod("小学校", "私立", 6, 6),
         EducationPeriod("中学校", "私立", 12, 3),

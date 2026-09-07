@@ -227,7 +227,7 @@ class Vehicle(BaseModel):
 class EducationStage(BaseModel):
     """教育段階ごとの進学・費用設定."""
 
-    stage: Literal["幼稚園", "小学校", "中学校", "高校", "大学"]
+    stage: Literal["保育園", "幼稚園", "小学校", "中学校", "高校", "大学"]
     school_type: Literal["公立", "私立", "国立", "私立文系", "私立理系", "専門学校", "未定"] = "未定"
     cost_mode: Literal["平均", "個別"] = "平均"
     annual_cost: int | None = Field(default=None, ge=0)

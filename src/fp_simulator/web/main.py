@@ -1253,8 +1253,9 @@ async def loans_delete(request: Request, household_id: str, loan_id: str) -> Res
     return RedirectResponse(f"/households/{household_id}/loans", status_code=303)
 
 
-EDUCATION_STAGE_NAMES = ("幼稚園", "小学校", "中学校", "高校", "大学")
+EDUCATION_STAGE_NAMES = ("保育園", "幼稚園", "小学校", "中学校", "高校", "大学")
 EDUCATION_STAGE_OPTIONS = {
+    "保育園": ("公立", "私立", "未定"),
     "幼稚園": ("公立", "私立", "未定"),
     "小学校": ("公立", "私立", "未定"),
     "中学校": ("公立", "私立", "未定"),
@@ -1262,8 +1263,8 @@ EDUCATION_STAGE_OPTIONS = {
     "大学": ("国立", "私立文系", "私立理系", "専門学校", "未定"),
 }
 EDUCATION_DEFAULT_TYPES = {
-    "公立": dict(zip(EDUCATION_STAGE_NAMES, ("公立", "公立", "公立", "公立", "国立"))),
-    "私立": dict(zip(EDUCATION_STAGE_NAMES, ("私立", "私立", "私立", "私立", "私立文系"))),
+    "公立": dict(zip(EDUCATION_STAGE_NAMES, ("公立", "公立", "公立", "公立", "公立", "国立"))),
+    "私立": dict(zip(EDUCATION_STAGE_NAMES, ("私立", "私立", "私立", "私立", "私立", "私立文系"))),
 }
 
 
