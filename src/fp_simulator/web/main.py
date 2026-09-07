@@ -35,6 +35,7 @@ from fp_simulator.db.database import (
 from fp_simulator.engine.childcare_leave import leave_periods
 from fp_simulator.engine.insurance import InsurancePolicy, analyze_coverage
 from fp_simulator.engine.models import (
+    EDUCATION_STAGE_OPTIONS,
     Account,
     ChildcareLeave,
     EducationPlan,
@@ -1253,15 +1254,7 @@ async def loans_delete(request: Request, household_id: str, loan_id: str) -> Res
     return RedirectResponse(f"/households/{household_id}/loans", status_code=303)
 
 
-EDUCATION_STAGE_NAMES = ("保育園", "幼稚園", "小学校", "中学校", "高校", "大学")
-EDUCATION_STAGE_OPTIONS = {
-    "保育園": ("認可", "未定"),
-    "幼稚園": ("公立", "私立", "未定"),
-    "小学校": ("公立", "私立", "未定"),
-    "中学校": ("公立", "私立", "未定"),
-    "高校": ("公立", "私立", "未定"),
-    "大学": ("国立", "私立文系", "私立理系", "専門学校", "未定"),
-}
+EDUCATION_STAGE_NAMES = tuple(EDUCATION_STAGE_OPTIONS)
 EDUCATION_DEFAULT_TYPES = {
     "公立": dict(zip(EDUCATION_STAGE_NAMES, ("認可", "公立", "公立", "公立", "公立", "国立"))),
     "私立": dict(zip(EDUCATION_STAGE_NAMES, ("認可", "私立", "私立", "私立", "私立", "私立文系"))),
