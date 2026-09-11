@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% from "lifemap.html" import lifemap %}
+{% from "wizard/_form_helpers.html" import error_banner %}
+{% block content %}
+<h1>共通スケジュール — {{ household.name }}</h1>
+{{ lifemap(household) }}
+<p>収入・支出・積立を同じ年月・年齢ベースの形式で登録します。</p>
+{{ error_banner(error) }}
+{% if household.schedules %}
+<table>
+  <thead><tr><th>名前</th><th>種類</th><th>金額</th><th>期間</th><th></th></tr></thead>
+  <tbody>
+  {% for item in household.schedules %}
+    <tr>
+      <td>{{ item.name }}</td><td>{{ item.kind }}</td><td>{{ "{:,}".format(item.amount) }}円</td>
+      <td>{{ item.start_age }}歳〜{{ item.end_age if item.end_age is not none else "生涯" }}</td>
+      <td><form method="post" action="/households/{{ household.id }}/schedules/{{ item.id }}/delete"><button type="submit">削除</button></form></td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+<form method="post" action="/households/{{ household.id }}/schedules">
+  <label>スケジュール(JSON):<br>
+    <textarea name="schedule_json" rows="8" cols="80" required placeholder='{"id":"bonus","name":"副業","kind":"income","amount":50000,"start_age":35,"end_age":60,"cycle":"monthly"}'>{{ values.schedule_json if values else '' }}</textarea>
+  </label>
+  <p><button type="submit">追加</button></p>
+</form>
+{% endblock %}

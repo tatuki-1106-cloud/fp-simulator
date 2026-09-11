@@ -135,8 +135,17 @@ class Loan(BaseModel):
     deferment_months: int = 0
     start_year: int = 2026
     start_month: int = 1
+    rate_schedule: list[LoanRateChange] = Field(default_factory=list)
     # 繰上返済計画: [(年, 月, 金額, タイプ)]
     early_repayments: list[tuple[int, int, int, str]] = Field(default_factory=list)
+
+
+class LoanRateChange(BaseModel):
+    """ローン金利の適用開始年月."""
+
+    year: int = Field(ge=1900, le=2200)
+    month: int = Field(ge=1, le=12)
+    annual_rate: float = Field(ge=0, le=1)
 
 
 class OwnedHousingPlan(BaseModel):
@@ -148,6 +157,7 @@ class OwnedHousingPlan(BaseModel):
     purchase_month: int = Field(default=1, ge=1, le=12)
     annual_property_tax: int = Field(default=0, ge=0)  # 固定資産税(年額)
     annual_repair_cost: int = Field(default=0, ge=0)  # 修繕費(年額)
+    cost_schedules: list[HousingCostSchedule] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def validate_down_payment(self) -> OwnedHousingPlan:
@@ -356,6 +366,10 @@ class Insurance(BaseModel):
     end_month: int = Field(default=12, ge=1, le=12)
     death_benefit: int = Field(default=0, ge=0)
     surrender_value_rate: float = Field(default=0.0, ge=0, le=1)  # 累計保険料に対する割合
+    payment_frequency: Literal["monthly", "yearly", "every_n_years", "once"] = "monthly"
+    payment_month: int = Field(default=1, ge=1, le=12)
+    payment_interval_years: int = Field(default=5, ge=1, le=30)
+    payment_amount: int | None = Field(default=None, ge=0)
 
     @model_validator(mode="after")
     def validate_period(self) -> Insurance:
@@ -415,6 +429,35 @@ class Account(BaseModel):
     account_type: Literal["現金", "預金"] = "預金"
     balance: int = 0  # 月初残高(円)
     interest_rate: float = 0.0  # 年利(例: 0.001 = 0.1%)
+    investment_schedules: list[InvestmentSchedule] = Field(default_factory=list)
+
+
+class InvestmentSchedule(BaseModel):
+    """一般口座の積立スケジュール."""
+
+    start_age: int = Field(default=0, ge=0, le=120)
+    end_age: int | None = Field(default=None, ge=0, le=120)
+    start_year: int | None = Field(default=None, ge=1900, le=2200)
+    start_month: int = Field(default=1, ge=1, le=12)
+    end_year: int | None = Field(default=None, ge=1900, le=2200)
+    end_month: int = Field(default=12, ge=1, le=12)
+    monthly_amount: int = Field(default=0, ge=0)
+    annual_raise_rate: float = Field(default=0.0, ge=-1, le=1)
+    annual_return_rate: float | None = Field(default=None, ge=-1, le=1)
+
+
+class HousingCostSchedule(BaseModel):
+    """住宅保有コストの期間・支払周期."""
+
+    cost_type: Literal["管理費", "修繕積立金", "固定資産税", "修繕費"]
+    amount: int = Field(ge=0)
+    start_year: int = Field(ge=1900, le=2200)
+    start_month: int = Field(default=1, ge=1, le=12)
+    end_year: int | None = Field(default=None, ge=1900, le=2200)
+    end_month: int = Field(default=12, ge=1, le=12)
+    cycle: Literal["monthly", "yearly"] = "monthly"
+    payment_month: int = Field(default=1, ge=1, le=12)
+    annual_raise_rate: float = Field(default=0.0, ge=-1, le=1)
 
 
 class PlanAssumptions(BaseModel):
@@ -444,8 +487,10 @@ class Household(BaseModel):
     ideco_plans: list[IdecoPlan] = Field(default_factory=list)
     nisa_plans: list[NisaPlan] = Field(default_factory=list)
     insurances: list[Insurance] = Field(default_factory=list)
+    schedules: list[ScheduleEntry] = Field(default_factory=list)
     childcare_leaves: list[ChildcareLeave] = Field(default_factory=list)
     assumptions: PlanAssumptions = Field(default_factory=PlanAssumptions)
+
 
     def validate_childcare_leave_links(self) -> Household:
         """産休育休の対象者・収入リンクとレコード間の重複を検証する."""
@@ -506,3 +551,30 @@ class Household(BaseModel):
             if m.relationship == Relationship.HOUSEHOLDER:
                 return m
         raise ValueError("世帯主が見つかりません")
+
+
+class ScheduleEntry(BaseModel):
+    """収入・支出・積立を共通形式で表す汎用スケジュール."""
+
+    id: str
+    name: str
+    kind: Literal["income", "expense", "account_contribution"]
+    amount: int = Field(ge=0)
+    member_id: str | None = None
+    account_id: str | None = None
+    start_age: int = Field(default=0, ge=0, le=120)
+    end_age: int | None = Field(default=None, ge=0, le=120)
+    start_year: int | None = Field(default=None, ge=1900, le=2200)
+    start_month: int = Field(default=1, ge=1, le=12)
+    end_year: int | None = Field(default=None, ge=1900, le=2200)
+    end_month: int = Field(default=12, ge=1, le=12)
+    cycle: Literal["monthly", "yearly", "once"] = "monthly"
+    payment_month: int = Field(default=1, ge=1, le=12)
+    payment_day: int = Field(default=1, ge=1, le=31)
+    annual_raise_rate: float = Field(default=0.0, ge=-1, le=1)
+
+
+Loan.model_rebuild()
+OwnedHousingPlan.model_rebuild()
+Account.model_rebuild()
+Household.model_rebuild()

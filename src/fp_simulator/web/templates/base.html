@@ -159,6 +159,12 @@
         <span class="q-num">{{ q }}</span>{{ label }}
       </a>
       {% endfor %}
+      <a href="/households/{{ household.id }}/schedules" class="{% if active_q == 'schedule' %}active{% endif %}">
+        共通スケジュール
+      </a>
+      <a href="/households/{{ household.id }}/import/fp-univ" class="{% if active_q == 'import' %}active{% endif %}">
+        FP UNIVインポート
+      </a>
       <a href="/households/{{ household.id }}/simulate" class="{% if active_q == 'sim' %}active{% endif %}" style="margin-top:1rem;border-top:1px solid #ddd;font-weight:600;">
         ▶ シミュレーション
       </a>

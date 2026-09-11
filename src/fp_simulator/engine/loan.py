@@ -26,6 +26,7 @@ class LoanTerms:
     bonus_months: list[int] = field(default_factory=list)  # ボーナス支払月(例: [6, 12])
     deferment_months: int = 0  # 据置期間(月数、利息のみ支払い)
     start_date: datetime.date = datetime.date(2026, 1, 1)  # 借入年月
+    rate_schedule: list[tuple[datetime.date, float]] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -52,7 +53,40 @@ def equal_payment_monthly(principal: int, annual_rate: float, months: int) -> in
     if r == 0:
         return principal // months
     payment = principal * r * (1 + r) ** months / ((1 + r) ** months - 1)
-    return int(round(payment))
+    return round(payment)
+
+
+def _equal_payment_with_bonus(
+    principal: int,
+    annual_rate: float,
+    payment_months: list[int],
+    bonus_amount: int,
+    bonus_months: list[int],
+) -> int:
+    """固定ボーナス払いを除いた元利均等の月額を返す."""
+    months = len(payment_months)
+    if months <= 0 or principal <= 0:
+        return 0
+    if bonus_amount <= 0 or not bonus_months:
+        return equal_payment_monthly(principal, annual_rate, months)
+
+    monthly_rate = _monthly_rate(annual_rate)
+    if monthly_rate == 0:
+        bonus_total = bonus_amount * sum(
+            month in bonus_months for month in payment_months
+        )
+        return max(0, principal - bonus_total) // months
+
+    bonus_present_value = sum(
+        bonus_amount / (1 + monthly_rate) ** index
+        for index, month in enumerate(payment_months, start=1)
+        if month in bonus_months
+    )
+    return equal_payment_monthly(
+        max(0, round(principal - bonus_present_value)),
+        annual_rate,
+        months,
+    )
 
 
 def equal_principal_payment(
@@ -85,15 +119,23 @@ def loan_schedule(
         early_repayments = []
 
     total_months = terms.years * 12
-    r = _monthly_rate(terms.annual_rate)
     balance = terms.principal
     results: list[MonthlyRepayment] = []
+    rate_changes = sorted(terms.rate_schedule, key=lambda item: item[0])
+    rate_index = 0
+    current_rate = terms.annual_rate
 
     # 元利均等の基本月額(ボーナス分は別枠)
-    monthly_base = equal_payment_monthly(
-        terms.principal - terms.bonus_amount * len(terms.bonus_months) * terms.years,
-        terms.annual_rate,
-        total_months,
+    payment_months = [
+        (terms.start_date.month - 1 + index) % 12 + 1
+        for index in range(total_months)
+    ]
+    monthly_base = _equal_payment_with_bonus(
+        terms.principal,
+        current_rate,
+        payment_months,
+        terms.bonus_amount,
+        terms.bonus_months,
     )
 
     early_map = {d: (amt, typ) for d, amt, typ in early_repayments}
@@ -106,14 +148,28 @@ def loan_schedule(
         if balance <= 0:
             break
 
+        rate_changed = False
+        while rate_index < len(rate_changes) and rate_changes[rate_index][0] <= date:
+            current_rate = rate_changes[rate_index][1]
+            rate_index += 1
+            rate_changed = True
+        if rate_changed and terms.repayment_type == "元利均等" and i >= terms.deferment_months:
+            monthly_base = _equal_payment_with_bonus(
+                balance,
+                current_rate,
+                payment_months[i:],
+                terms.bonus_amount,
+                terms.bonus_months,
+            )
+
         # 据置期間は利息のみ
         if i < terms.deferment_months:
-            interest = int(balance * r)
+            interest = int(balance * _monthly_rate(current_rate))
             results.append(MonthlyRepayment(date, interest, 0, interest, balance))
             continue
 
         # 利息
-        interest = int(balance * r)
+        interest = int(balance * _monthly_rate(current_rate))
 
         # 返済額
         is_bonus_month = month in terms.bonus_months
@@ -127,7 +183,7 @@ def loan_schedule(
                 principal_part += terms.bonus_amount
             payment = principal_part + interest
 
-        if principal_part > balance:
+        if principal_part > balance or i == total_months - 1:
             principal_part = balance
             payment = principal_part + interest
 
@@ -144,7 +200,13 @@ def loan_schedule(
                 # 残期間で再計算
                 remaining_months = total_months - i - 1
                 if remaining_months > 0 and balance > 0:
-                    monthly_base = equal_payment_monthly(balance, terms.annual_rate, remaining_months)
+                    monthly_base = _equal_payment_with_bonus(
+                        balance,
+                        current_rate,
+                        payment_months[i + 1 :],
+                        terms.bonus_amount,
+                        terms.bonus_months,
+                    )
 
     return results
 

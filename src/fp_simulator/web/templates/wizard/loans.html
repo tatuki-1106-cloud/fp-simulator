@@ -65,6 +65,10 @@
   <p><label>開始年: <input type="number" name="start_year" min="1900" max="2200" value="{{ v.start_year if v else 2026 }}"></label>
      <label>開始月: <input type="number" name="start_month" value="{{ v.start_month if v else 1 }}" min="1" max="12"></label></p>
   <p><label>ボーナス払い(1回): <input type="number" name="bonus_amount" min="0" value="{{ v.bonus_amount if v else 0 }}"></label>円(6月・12月)</p>
+  <p><label><input type="checkbox" name="is_variable_rate" value="true" {% if v and v.is_variable_rate %}checked{% endif %}> 変動金利として扱う</label></p>
+  <p><label>金利スケジュール(JSON):<br>
+    <textarea name="rate_schedule" rows="4" cols="70" placeholder='[{"year":2030,"month":1,"annual_rate":0.01}]'>{{ v.rate_schedule if v and v.rate_schedule is string else rate_schedule_json }}</textarea>
+  </label><br><small class="field-hint">適用開始年月と年利を配列で指定します。例: [{"year":2030,"month":1,"annual_rate":0.01}]</small></p>
   <p><button type="submit">{{ "更新" if edit_target else "追加" }}</button></p>
 </form>
 {% endblock %}

@@ -6,8 +6,10 @@
 from __future__ import annotations
 
 import datetime
-from dataclasses import dataclass
 from collections.abc import Iterable
+from dataclasses import dataclass
+
+from fp_simulator.engine.schedule import insurance_payment_amount
 
 
 @dataclass(frozen=True)
@@ -23,6 +25,10 @@ class InsurancePolicy:
     death_benefit: int = 0  # 死亡保険金
     surrender_value_rate: float = 0.0  # 解約返戻率(累計保険料に対する割合、簡易)
     insurance_type: str = "死亡保障"
+    payment_frequency: str = "monthly"
+    payment_month: int = 1
+    payment_interval_years: int = 5
+    payment_amount: int | None = None
 
 
 @dataclass(frozen=True)
@@ -41,7 +47,16 @@ def monthly_premium_in_period(
 ) -> int:
     """指定月の保険料を返す(期間内なら月額、期間外なら0)."""
     if policy.start_date <= date <= policy.end_date:
-        return policy.monthly_premium
+        return insurance_payment_amount(
+            monthly_premium=policy.monthly_premium,
+            payment_frequency=policy.payment_frequency,
+            payment_amount=policy.payment_amount,
+            payment_month=policy.payment_month,
+            payment_interval_years=policy.payment_interval_years,
+            current=date,
+            start_year=policy.start_date.year,
+            start_month=policy.start_date.month,
+        )
     return 0
 
 
@@ -63,8 +78,23 @@ def surrender_value(
     """
     if date < policy.start_date:
         return 0
-    months = (date.year - policy.start_date.year) * 12 + (date.month - policy.start_date.month)
-    total_paid = policy.monthly_premium * min(months, (policy.end_date.year - policy.start_date.year) * 12 + (policy.end_date.month - policy.start_date.month))
+    end_date = min(date, policy.end_date)
+    months = (
+        (end_date.year - policy.start_date.year) * 12
+        + end_date.month
+        - policy.start_date.month
+    )
+    total_paid = sum(
+        monthly_premium_in_period(
+            policy,
+            datetime.date(
+                policy.start_date.year + (index // 12),
+                (policy.start_date.month - 1 + index) % 12 + 1,
+                1,
+            ),
+        )
+        for index in range(max(0, months))
+    )
     return int(total_paid * policy.surrender_value_rate)
 
 
@@ -82,7 +112,7 @@ def analyze_coverage(
         by_type[policy.insurance_type] = by_type.get(policy.insurance_type, 0) + policy.death_benefit
     return InsuranceCoverageSummary(
         active_policy_count=len(active),
-        monthly_premium=sum(policy.monthly_premium for policy in active),
+        monthly_premium=sum(monthly_premium_in_period(policy, date) for policy in active),
         death_benefit=sum(policy.death_benefit for policy in active),
         surrender_value=sum(surrender_value(policy, date) for policy in active),
         by_type=by_type,

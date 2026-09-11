@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% from "lifemap.html" import lifemap %}
+{% from "wizard/_form_helpers.html" import error_banner %}
+{% block content %}
+<h1>FP UNIVインポート — {{ household.name }}</h1>
+{{ lifemap(household) }}
+<p>FP UNIVの入力値をJSONで貼り付け、反映前に差分と近似内容を確認できます。金額単位は <code>yen</code> または <code>10k_yen</code> です。</p>
+{{ error_banner(error) }}
+<form method="post" action="/households/{{ household.id }}/import/fp-univ/preview">
+  <textarea name="raw_json" rows="18" cols="100" required>{{ raw_json if raw_json else '' }}</textarea>
+  <p><button type="submit">プレビュー</button></p>
+</form>
+{% if preview %}
+<section class="form-card">
+  <h2>インポートプレビュー</h2>
+  {% if preview.additions %}<h3>追加</h3><ul>{% for item in preview.additions %}<li>{{ item }}</li>{% endfor %}</ul>{% endif %}
+  {% if preview.updates %}<h3>更新</h3><ul>{% for item in preview.updates %}<li>{{ item }}</li>{% endfor %}</ul>{% endif %}
+  {% if preview.warnings %}<h3>警告・近似</h3><ul>{% for item in preview.warnings %}<li>{{ item }}</li>{% endfor %}</ul>{% else %}<p>警告はありません。</p>{% endif %}
+  <form method="post" action="/households/{{ household.id }}/import/fp-univ/apply">
+    <input type="hidden" name="raw_json" value="{{ raw_json }}">
+    <button type="submit">この内容を反映</button>
+  </form>
+</section>
+{% endif %}
+{% endblock %}

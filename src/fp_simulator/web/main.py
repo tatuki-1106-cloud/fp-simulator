@@ -6,6 +6,7 @@ import contextlib
 import csv
 import datetime
 import io
+import json
 import os
 import pathlib
 import uuid
@@ -33,6 +34,11 @@ from fp_simulator.db.database import (
     save_plan_snapshot,
 )
 from fp_simulator.engine.childcare_leave import leave_periods
+from fp_simulator.engine.fp_univ_import import (
+    apply_fp_univ_import,
+    parse_import_json,
+    preview_fp_univ_import,
+)
 from fp_simulator.engine.insurance import InsurancePolicy, analyze_coverage
 from fp_simulator.engine.models import (
     EDUCATION_STAGE_NAMES,
@@ -43,16 +49,20 @@ from fp_simulator.engine.models import (
     EducationStage,
     Expense,
     Household,
+    HousingCostSchedule,
     IdecoPlan,
     Income,
     Insurance,
+    InvestmentSchedule,
     Loan,
+    LoanRateChange,
     Member,
     NisaPlan,
     OwnedHousingPlan,
     PensionRecordInput,
     PlanAssumptions,
     Relationship,
+    ScheduleEntry,
     SocialInsuranceType,
     Vehicle,
 )
@@ -1053,6 +1063,11 @@ async def accounts_edit(
             "edit_ideco": edit_ideco,
             "edit_nisa": edit_nisa,
             "ideco_limits": _ideco_limit_map(household),
+            "investment_schedule_json": (
+                json.dumps([item.model_dump() for item in edit_account.investment_schedules])
+                if edit_account
+                else ""
+            ),
         },
     )
 
@@ -1062,15 +1077,23 @@ async def accounts_add(
     request: Request,
     household_id: str,
     name: str = Form(...),
+    member_id: str | None = Form(None),
     balance: int = Form(...),
     interest_rate: float = Form(0.0),
+    investment_schedules: str = Form(""),
     edit_id: str = Form(""),
 ) -> Response:
     """口座を追加・更新."""
     household = await get_household(household_id)
     if household is None:
         return RedirectResponse("/", status_code=303)
-    values = {"name": name, "balance": balance, "interest_rate": interest_rate}
+    values = {
+        "name": name,
+        "member_id": member_id,
+        "balance": balance,
+        "interest_rate": interest_rate,
+        "investment_schedules": investment_schedules,
+    }
     context = {
         "title": "Q11 貯蓄・資産",
         "household": household,
@@ -1089,11 +1112,36 @@ async def accounts_add(
         return _wizard_error(
             request, "wizard/accounts.html", context, "月初残高は0以上で入力してください", values, "account_values"
         )
+    if member_id and not any(member.id == member_id for member in household.members):
+        return _wizard_error(
+            request, "wizard/accounts.html", context, "対象メンバーが見つかりません", values, "account_values"
+        )
     if edit_id and not any(a.id == edit_id for a in household.accounts):
         return _wizard_error(
             request, "wizard/accounts.html", context, "編集対象の口座が見つかりません", values, "account_values"
         )
-    account = Account(id=edit_id or str(uuid.uuid4()), name=name, balance=balance, interest_rate=interest_rate)
+    try:
+        parsed_investment_schedules = [
+            InvestmentSchedule.model_validate(item)
+            for item in (json.loads(investment_schedules) if investment_schedules.strip() else [])
+        ]
+    except (json.JSONDecodeError, TypeError, ValueError) as exc:
+        return _wizard_error(
+            request,
+            "wizard/accounts.html",
+            context,
+            f"積立スケジュールのJSONが正しくありません: {exc}",
+            values,
+            "account_values",
+        )
+    account = Account(
+        id=edit_id or str(uuid.uuid4()),
+        name=name,
+        member_id=member_id,
+        balance=balance,
+        interest_rate=interest_rate,
+        investment_schedules=parsed_investment_schedules,
+    )
     if edit_id:
         household.accounts = [account if a.id == edit_id else a for a in household.accounts]
     else:
@@ -1147,6 +1195,11 @@ async def loans_edit(
             "active_q": "Q9",
             "edit_target": edit_target,
             "error": error,
+            "rate_schedule_json": (
+                json.dumps([item.model_dump() for item in edit_target.rate_schedule])
+                if edit_target
+                else ""
+            ),
         },
     )
 
@@ -1164,6 +1217,8 @@ async def loans_add(
     start_year: int = Form(2026),
     start_month: int = Form(1),
     bonus_amount: int = Form(0),
+    is_variable_rate: bool = Form(False),
+    rate_schedule: str = Form(""),
     edit_id: str = Form(""),
 ) -> Response:
     """ローンを追加・更新."""
@@ -1180,6 +1235,8 @@ async def loans_add(
         "start_year": start_year,
         "start_month": start_month,
         "bonus_amount": bonus_amount,
+        "is_variable_rate": is_variable_rate,
+        "rate_schedule": rate_schedule,
     }
     context = {
         "title": "Q9 ローン",
@@ -1201,6 +1258,19 @@ async def loans_add(
         return _wizard_error(request, "wizard/loans.html", context, "開始年月が正しくありません", values)
     if edit_id and not any(l.id == edit_id for l in household.loans):
         return _wizard_error(request, "wizard/loans.html", context, "編集対象のローンが見つかりません", values)
+    try:
+        parsed_rate_schedule = [
+            LoanRateChange.model_validate(item)
+            for item in (json.loads(rate_schedule) if rate_schedule.strip() else [])
+        ]
+    except (json.JSONDecodeError, TypeError, ValueError) as exc:
+        return _wizard_error(
+            request,
+            "wizard/loans.html",
+            context,
+            f"金利スケジュールのJSONが正しくありません: {exc}",
+            values,
+        )
     loan = Loan(
         id=edit_id or str(uuid.uuid4()),
         member_id=member_id,
@@ -1213,6 +1283,8 @@ async def loans_add(
         start_month=start_month,
         bonus_amount=bonus_amount,
         bonus_months=[6, 12] if bonus_amount > 0 else [],
+        is_variable_rate=is_variable_rate or bool(parsed_rate_schedule),
+        rate_schedule=parsed_rate_schedule,
     )
     if edit_id:
         household.loans = [loan if l.id == edit_id else l for l in household.loans]
@@ -1584,7 +1656,16 @@ async def housing_edit(request: Request, household_id: str) -> HTMLResponse:
     return templates.TemplateResponse(
         request,
         "wizard/housing.html",
-        {"title": "Q6 住まい", "household": household, "active_q": "Q6"},
+        {
+            "title": "Q6 住まい",
+            "household": household,
+            "active_q": "Q6",
+            "cost_schedule_json": (
+                json.dumps([item.model_dump() for item in household.owned_housing.cost_schedules])
+                if household.owned_housing
+                else ""
+            ),
+        },
     )
 
 
@@ -1598,6 +1679,7 @@ async def housing_save(
     purchase_month: int = Form(1),
     annual_property_tax: int = Form(0),
     annual_repair_cost: int = Form(0),
+    cost_schedules: str = Form(""),
 ) -> Response:
     """所有住宅の設定を保存."""
     household = await get_household(household_id)
@@ -1610,6 +1692,7 @@ async def housing_save(
         "purchase_month": purchase_month,
         "annual_property_tax": annual_property_tax,
         "annual_repair_cost": annual_repair_cost,
+        "cost_schedules": cost_schedules,
     }
     context = {"title": "Q6 住まい", "household": household, "active_q": "Q6"}
     if property_price < 0 or down_payment < 0:
@@ -1626,6 +1709,19 @@ async def housing_save(
         )
     if not 1900 <= purchase_year <= 2200 or not 1 <= purchase_month <= 12:
         return _wizard_error(request, "wizard/housing.html", context, "購入年月が正しくありません", values)
+    try:
+        parsed_cost_schedules = [
+            HousingCostSchedule.model_validate(item)
+            for item in (json.loads(cost_schedules) if cost_schedules.strip() else [])
+        ]
+    except (json.JSONDecodeError, TypeError, ValueError) as exc:
+        return _wizard_error(
+            request,
+            "wizard/housing.html",
+            context,
+            f"住宅コストスケジュールのJSONが正しくありません: {exc}",
+            values,
+        )
     household.owned_housing = OwnedHousingPlan(
         property_price=property_price,
         down_payment=down_payment,
@@ -1633,6 +1729,7 @@ async def housing_save(
         purchase_month=purchase_month,
         annual_property_tax=annual_property_tax,
         annual_repair_cost=annual_repair_cost,
+        cost_schedules=parsed_cost_schedules,
     )
     await save_household(household)
     await add_audit_log(
@@ -2095,6 +2192,10 @@ async def insurance_edit(request: Request, household_id: str, edit_id: str = "")
             end_date=datetime.date(insurance.end_year, insurance.end_month, 1),
             death_benefit=insurance.death_benefit,
             surrender_value_rate=insurance.surrender_value_rate,
+            payment_frequency=insurance.payment_frequency,
+            payment_month=insurance.payment_month,
+            payment_interval_years=insurance.payment_interval_years,
+            payment_amount=insurance.payment_amount,
         )
         for insurance in household.insurances
     ]
@@ -2131,6 +2232,10 @@ async def insurance_add(
     end_month: int = Form(12),
     death_benefit: int = Form(0),
     surrender_value_rate: float = Form(0.0),
+    payment_frequency: str = Form("monthly"),
+    payment_month: int = Form(1),
+    payment_interval_years: int = Form(5),
+    payment_amount: int | None = Form(None),
     edit_id: str = Form(""),
 ) -> Response:
     household = await get_household(household_id)
@@ -2148,6 +2253,10 @@ async def insurance_add(
         "end_month": end_month,
         "death_benefit": death_benefit,
         "surrender_value_rate": surrender_value_rate,
+        "payment_frequency": payment_frequency,
+        "payment_month": payment_month,
+        "payment_interval_years": payment_interval_years,
+        "payment_amount": payment_amount,
     }
 
     def error_context() -> dict:
@@ -2162,6 +2271,10 @@ async def insurance_add(
                 end_date=datetime.date(insurance.end_year, insurance.end_month, 1),
                 death_benefit=insurance.death_benefit,
                 surrender_value_rate=insurance.surrender_value_rate,
+                payment_frequency=insurance.payment_frequency,
+                payment_month=insurance.payment_month,
+                payment_interval_years=insurance.payment_interval_years,
+                payment_amount=insurance.payment_amount,
             )
             for insurance in household.insurances
         ]
@@ -2191,6 +2304,14 @@ async def insurance_add(
         return _wizard_error(
             request, "wizard/insurance.html", error_context(), "解約返戻率は0〜1の範囲で入力してください", values
         )
+    if payment_frequency not in {"monthly", "yearly", "every_n_years", "once"}:
+        return _wizard_error(request, "wizard/insurance.html", error_context(), "支払周期が正しくありません", values)
+    if payment_amount is not None and payment_amount < 0:
+        return _wizard_error(request, "wizard/insurance.html", error_context(), "支払額は0以上で入力してください", values)
+    if payment_frequency != "monthly" and not 1 <= payment_month <= 12:
+        return _wizard_error(request, "wizard/insurance.html", error_context(), "支払月が正しくありません", values)
+    if payment_interval_years <= 0:
+        return _wizard_error(request, "wizard/insurance.html", error_context(), "支払間隔は1年以上で入力してください", values)
     if not 1900 <= start_year <= 2200 or not 1900 <= end_year <= 2200:
         return _wizard_error(request, "wizard/insurance.html", error_context(), "開始・終了年が正しくありません", values)
     if not 1 <= start_month <= 12 or not 1 <= end_month <= 12:
@@ -2218,6 +2339,10 @@ async def insurance_add(
         end_month=end_month,
         death_benefit=death_benefit,
         surrender_value_rate=surrender_value_rate,
+        payment_frequency=payment_frequency,
+        payment_month=payment_month,
+        payment_interval_years=payment_interval_years,
+        payment_amount=payment_amount,
     )
     if edit_id:
         household.insurances = [policy if i.id == edit_id else i for i in household.insurances]
@@ -2259,6 +2384,154 @@ async def insurance_delete(
         {"name": removed.name} if removed else {},
     )
     return RedirectResponse(f"/households/{household_id}/insurance", status_code=303)
+
+
+@app.get("/households/{household_id}/schedules", response_class=HTMLResponse)
+async def schedules_edit(request: Request, household_id: str) -> HTMLResponse:
+    """共通スケジュール設定."""
+    household = await get_household(household_id)
+    if household is None:
+        return RedirectResponse("/", status_code=303)
+    return templates.TemplateResponse(
+        request,
+        "wizard/schedules.html",
+        {"title": "共通スケジュール", "household": household, "active_q": "schedule"},
+    )
+
+
+@app.post("/households/{household_id}/schedules")
+async def schedules_add(
+    request: Request,
+    household_id: str,
+    schedule_json: str = Form(...),
+) -> Response:
+    """共通スケジュールをJSON形式で追加する."""
+    household = await get_household(household_id)
+    if household is None:
+        return RedirectResponse("/", status_code=303)
+    try:
+        schedule = ScheduleEntry.model_validate(json.loads(schedule_json))
+    except (json.JSONDecodeError, TypeError, ValueError) as exc:
+        return _wizard_error(
+            request,
+            "wizard/schedules.html",
+            {"title": "共通スケジュール", "household": household, "active_q": "schedule"},
+            f"スケジュールJSONが正しくありません: {exc}",
+            {"schedule_json": schedule_json},
+        )
+    if schedule.member_id and not any(member.id == schedule.member_id for member in household.members):
+        return _wizard_error(
+            request,
+            "wizard/schedules.html",
+            {"title": "共通スケジュール", "household": household, "active_q": "schedule"},
+            "対象メンバーが見つかりません",
+            {"schedule_json": schedule_json},
+        )
+    if schedule.account_id and not any(account.id == schedule.account_id for account in household.accounts):
+        return _wizard_error(
+            request,
+            "wizard/schedules.html",
+            {"title": "共通スケジュール", "household": household, "active_q": "schedule"},
+            "対象口座が見つかりません",
+            {"schedule_json": schedule_json},
+        )
+    household.schedules.append(schedule)
+    await save_household(household)
+    await add_audit_log(
+        household_id,
+        getattr(request.state, "authenticated_email", None) or "web-user",
+        "web",
+        "household.schedule.add",
+        schedule.id,
+        {"name": schedule.name, "kind": schedule.kind},
+    )
+    return RedirectResponse(f"/households/{household_id}/schedules", status_code=303)
+
+
+@app.post("/households/{household_id}/schedules/{schedule_id}/delete")
+async def schedules_delete(request: Request, household_id: str, schedule_id: str) -> RedirectResponse:
+    household = await get_household(household_id)
+    if household is None:
+        return RedirectResponse("/", status_code=303)
+    household.schedules = [schedule for schedule in household.schedules if schedule.id != schedule_id]
+    await save_household(household)
+    return RedirectResponse(f"/households/{household_id}/schedules", status_code=303)
+
+
+@app.get("/households/{household_id}/import/fp-univ", response_class=HTMLResponse)
+async def fp_univ_import_edit(request: Request, household_id: str) -> HTMLResponse:
+    household = await get_household(household_id)
+    if household is None:
+        return RedirectResponse("/", status_code=303)
+    return templates.TemplateResponse(
+        request,
+        "wizard/fp_univ_import.html",
+        {"title": "FP UNIVインポート", "household": household, "active_q": "import"},
+    )
+
+
+@app.post("/households/{household_id}/import/fp-univ/preview", response_class=HTMLResponse)
+async def fp_univ_import_preview(
+    request: Request,
+    household_id: str,
+    raw_json: str = Form(...),
+) -> HTMLResponse:
+    household = await get_household(household_id)
+    if household is None:
+        return RedirectResponse("/", status_code=303)
+    try:
+        payload = parse_import_json(raw_json)
+        preview = preview_fp_univ_import(payload, household)
+    except (TypeError, ValueError, json.JSONDecodeError) as exc:
+        return _wizard_error(
+            request,
+            "wizard/fp_univ_import.html",
+            {"title": "FP UNIVインポート", "household": household, "active_q": "import"},
+            str(exc),
+            {"raw_json": raw_json},
+        )
+    return templates.TemplateResponse(
+        request,
+        "wizard/fp_univ_import.html",
+        {
+            "title": "FP UNIVインポート",
+            "household": household,
+            "active_q": "import",
+            "raw_json": raw_json,
+            "preview": preview,
+        },
+    )
+
+
+@app.post("/households/{household_id}/import/fp-univ/apply")
+async def fp_univ_import_apply(
+    request: Request,
+    household_id: str,
+    raw_json: str = Form(...),
+) -> Response:
+    household = await get_household(household_id)
+    if household is None:
+        return RedirectResponse("/", status_code=303)
+    try:
+        payload = parse_import_json(raw_json)
+        preview = apply_fp_univ_import(payload, household)
+    except (TypeError, ValueError, json.JSONDecodeError) as exc:
+        return _wizard_error(
+            request,
+            "wizard/fp_univ_import.html",
+            {"title": "FP UNIVインポート", "household": household, "active_q": "import"},
+            str(exc),
+            {"raw_json": raw_json},
+        )
+    await save_household(household)
+    await add_audit_log(
+        household_id,
+        getattr(request.state, "authenticated_email", None) or "web-user",
+        "web",
+        "household.fp_univ_import",
+        details={"warnings": preview.warnings, "additions": preview.additions},
+    )
+    return RedirectResponse(f"/households/{household_id}/import/fp-univ", status_code=303)
 
 
 @app.post("/households/{household_id}/ideco")

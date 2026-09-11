@@ -9,7 +9,7 @@
 <section class="form-card">
   <h2>保障分析（{{ household.assumptions.base_year }}/{{ household.assumptions.base_month }}時点）</h2>
   <p>有効契約: {{ insurance_analysis.active_policy_count }}件</p>
-  <p>月額保険料: {{ "{:,}".format(insurance_analysis.monthly_premium) }}円</p>
+  <p>基準月の保険料支払額: {{ "{:,}".format(insurance_analysis.monthly_premium) }}円</p>
   <p>死亡保障合計: {{ "{:,}".format(insurance_analysis.death_benefit) }}円</p>
   <p>解約返戻金（簡易推計）: {{ "{:,}".format(insurance_analysis.surrender_value) }}円</p>
   <ul>
@@ -27,7 +27,7 @@
       <td>{{ i.insurance_type }}</td>
       <td>{{ i.name }}</td>
       <td>{{ insured.name if insured else i.insured_member_id }}</td>
-      <td>{{ "{:,}".format(i.monthly_premium) }}円</td>
+      <td>{{ "{:,}".format(i.monthly_premium) }}円/{{ i.payment_frequency }}</td>
       <td>{{ i.start_year }}/{{ i.start_month }}〜{{ i.end_year }}/{{ i.end_month }}</td>
       <td>{{ "{:,}".format(i.death_benefit) }}円</td>
       <td>
@@ -72,6 +72,19 @@
     </select></label>
      <small class="field-hint">保険料を支払う契約者です。</small></p>
   <p><label>月額保険料: <input type="number" name="monthly_premium" required min="0" value="{{ v.monthly_premium if v else '' }}"></label>円</p>
+  <p><label>支払周期:
+    {% set current_pf = v.payment_frequency if v else "monthly" %}
+    <select name="payment_frequency">
+      <option value="monthly" {% if current_pf == "monthly" %}selected{% endif %}>月払</option>
+      <option value="yearly" {% if current_pf == "yearly" %}selected{% endif %}>年払</option>
+      <option value="every_n_years" {% if current_pf == "every_n_years" %}selected{% endif %}>複数年ごと</option>
+      <option value="once" {% if current_pf == "once" %}selected{% endif %}>一括払</option>
+    </select>
+  </label></p>
+  <p><label>支払月: <input type="number" name="payment_month" min="1" max="12" value="{{ v.payment_month if v else 1 }}"></label>
+     <label>支払間隔(年): <input type="number" name="payment_interval_years" min="1" value="{{ v.payment_interval_years if v else 5 }}"></label></p>
+  <p><label>実際の支払額(任意): <input type="number" name="payment_amount" min="0" value="{{ v.payment_amount if v and v.payment_amount is not none else '' }}"></label>円
+     <small class="field-hint">未入力時は月額×周期で計算します。</small></p>
   <p><label>開始: <input type="number" name="start_year" value="{{ v.start_year if v else 2026 }}">年<input type="number" name="start_month" value="{{ v.start_month if v else 1 }}" min="1" max="12">月</label></p>
   <p><label>終了: <input type="number" name="end_year" value="{{ v.end_year if v else 2060 }}">年<input type="number" name="end_month" value="{{ v.end_month if v else 12 }}" min="1" max="12">月</label>
      <small class="field-hint">満了は開始年月より後にしてください。</small></p>

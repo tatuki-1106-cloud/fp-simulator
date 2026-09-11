@@ -308,6 +308,21 @@ class TestInsurance:
         assert summary.death_benefit == 10_000_000
         assert summary.by_type == {"死亡保障": 10_000_000}
 
+    def test_analyze_coverage_uses_payment_due_in_reference_month(self) -> None:
+        """年払契約は支払月だけ基準月の支払額へ含める."""
+        policy = InsurancePolicy(
+            name="年払保険",
+            insured_member_id="m1",
+            payer_member_id="m1",
+            monthly_premium=10_000,
+            start_date=datetime.date(2020, 1, 1),
+            end_date=datetime.date(2060, 12, 1),
+            payment_frequency="yearly",
+            payment_month=4,
+        )
+        assert analyze_coverage([policy], datetime.date(2025, 4, 1)).monthly_premium == 120_000
+        assert analyze_coverage([policy], datetime.date(2025, 5, 1)).monthly_premium == 0
+
     def test_insurance_model_rejects_invalid_period(self) -> None:
         """終了が開始より前の保険はモデル段階で拒否する."""
         from fp_simulator.engine.models import Insurance

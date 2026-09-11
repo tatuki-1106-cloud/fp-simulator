@@ -36,10 +36,19 @@
   {% set av = account_values if account_values else edit_account %}
   <p><label>口座名: <input type="text" name="name" required placeholder="例: 普通預金" value="{{ av.name if av else '' }}"></label>
      <small class="field-hint">現金・普通預金・定期預金など、資金の保管先ごとに登録します。</small></p>
+  <p><label>名義人:
+    {% set current_account_member = av.member_id if av else '' %}
+    <select name="member_id"><option value="">世帯共有</option>
+      {% for m in household.members %}<option value="{{ m.id }}" {% if m.id == current_account_member %}selected{% endif %}>{{ m.name }}</option>{% endfor %}
+    </select>
+  </label></p>
   <p><label>月初残高: <input type="number" name="balance" required min="0" value="{{ av.balance if av else '' }}"></label>円
      <small class="field-hint">シミュレーション基準月({{ household.assumptions.base_year }}年{{ household.assumptions.base_month }}月)の月初時点の残高です。</small></p>
   <p><label>金利(年率): <input type="number" name="interest_rate" value="{{ av.interest_rate if av else 0 }}" step="0.001"></label>(例: 0.001 = 0.1%)
      <small class="field-hint">単利で毎年の利息を概算します。</small></p>
+  <p><label>積立スケジュール(JSON):<br>
+    <textarea name="investment_schedules" rows="4" cols="70" placeholder='[{"start_age":30,"end_age":60,"monthly_amount":30000,"annual_return_rate":0.03}]'>{{ av.investment_schedules if av and av.investment_schedules is string else (investment_schedule_json if edit_account else '') }}</textarea>
+  </label><br><small class="field-hint">一般口座の積立を年齢・年月で設定できます。</small></p>
   <p><button type="submit">{{ "更新" if edit_account else "追加" }}</button></p>
 </form>
 

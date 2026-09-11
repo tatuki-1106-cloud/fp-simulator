@@ -45,7 +45,6 @@ from fp_simulator.engine.income_tax import (
 from fp_simulator.engine.insurance import (
     InsurancePolicy,
     death_benefit_if_died,
-    monthly_premium_in_period,
 )
 from fp_simulator.engine.investment import (
     IdecoAccount,
@@ -81,6 +80,12 @@ from fp_simulator.engine.retirement import (
     retirement_income,
     retirement_income_deduction,
     retirement_tax,
+)
+from fp_simulator.engine.schedule import (
+    housing_schedule_amount,
+    insurance_payment_amount,
+    investment_schedule_amount,
+    schedule_amount,
 )
 from fp_simulator.engine.social_insurance import monthly_social_insurance, standard_remuneration
 from fp_simulator.parameters.loader import ParameterStore
@@ -143,6 +148,11 @@ class MonthlyCashflow:
     insurance_premium: int = 0  # 保険料
     ideco_contribution: int = 0  # iDeCo掛金(所得控除対象)
     nisa_investment: int = 0  # NISA投資
+    account_investment: int = 0  # 一般口座の積立
+    scheduled_income: int = 0  # 汎用スケジュール収入
+    scheduled_expense: int = 0  # 汎用スケジュール支出
+    account_investment_balance: int = 0
+    scheduled_investment_balance: int = 0
     ideco_balance: int = 0  # iDeCo運用残高
     nisa_balance: int = 0  # NISA運用残高
     # 収支
@@ -162,6 +172,7 @@ class MonthlyCashflow:
             + self.ideco_withdrawal
             + self.nisa_withdrawal
             + self.vehicle_sale_income
+            + self.scheduled_income
         )
 
     @property
@@ -185,6 +196,8 @@ class MonthlyCashflow:
             + self.insurance_premium
             + self.ideco_contribution
             + self.nisa_investment
+            + self.account_investment
+            + self.scheduled_expense
         )
 
     @property
@@ -204,7 +217,13 @@ class MonthlyCashflow:
     @property
     def total_assets(self) -> int:
         """現金・預金とiDeCo/NISAを合算した金融資産残高."""
-        return self.balance + self.ideco_balance + self.nisa_balance
+        return (
+            self.balance
+            + self.ideco_balance
+            + self.nisa_balance
+            + self.account_investment_balance
+            + self.scheduled_investment_balance
+        )
 
     # 残高
     balance: int = 0  # 当月末の世帯総残高
@@ -584,6 +603,10 @@ def _prepare_financing(
             bonus_months=loan.bonus_months,
             deferment_months=loan.deferment_months,
             start_date=datetime.date(loan.start_year, loan.start_month, 1),
+            rate_schedule=[
+                (datetime.date(item.year, item.month, 1), item.annual_rate)
+                for item in loan.rate_schedule
+            ],
         )
         early = [
             (datetime.date(y, m, 1), amount, repayment_type)
@@ -1832,6 +1855,92 @@ def _apply_investments(
         nisa_accounts[nisa.id] = updated
 
 
+def _member_age_for_account(
+    household: Household, member_id: str | None, current: datetime.date
+) -> int:
+    member = next((item for item in household.members if item.id == member_id), None)
+    return age_at(member.birth_date, current) if member else age_at(household.householder().birth_date, current)
+
+
+def _apply_account_schedules(
+    household: Household,
+    current: datetime.date,
+    age: int,
+    base_year: int,
+    balances: dict[str, int],
+    scheduled_balances: dict[str, int],
+    cf: MonthlyCashflow,
+) -> int:
+    """一般口座の積立と汎用スケジュールを適用する."""
+    account_investment_balance = 0
+    for account in household.accounts:
+        account_age = _member_age_for_account(household, account.member_id, current)
+        balance = balances[account.id]
+        active_schedule_rates = [
+            investment.annual_return_rate
+            for investment in account.investment_schedules
+            if investment.annual_return_rate is not None
+            and investment_schedule_amount(
+                investment, current, account_age, base_year=base_year
+            )
+            > 0
+        ]
+        effective_rate = max([account.interest_rate, *active_schedule_rates])
+        if effective_rate:
+            balance = int(balance * (1 + effective_rate / 12))
+        for investment in account.investment_schedules:
+            contribution = investment_schedule_amount(
+                investment, current, account_age, base_year=base_year
+            )
+            if contribution <= 0:
+                continue
+            balance += contribution
+            cf.account_investment += contribution
+            cf.traces.append(
+                TraceEntry(
+                    "一般口座積立",
+                    contribution,
+                    {"account": account.name, "年齢": account_age},
+                )
+            )
+        balances[account.id] = balance
+        account_investment_balance += max(0, balance - account.balance)
+
+    for schedule in household.schedules:
+        schedule_age = (
+            _member_age_for_account(household, schedule.member_id, current)
+            if schedule.member_id
+            else age
+        )
+        amount = schedule_amount(schedule, current, schedule_age, base_year=base_year)
+        if amount <= 0:
+            continue
+        if schedule.kind == "income":
+            cf.scheduled_income += amount
+            cf.traces.append(TraceEntry("汎用スケジュール収入", amount, {"name": schedule.name}))
+        elif schedule.kind == "expense":
+            cf.scheduled_expense += amount
+            cf.traces.append(TraceEntry("汎用スケジュール支出", amount, {"name": schedule.name}))
+        else:
+            cf.account_investment += amount
+            if schedule.account_id in balances:
+                balances[schedule.account_id] += amount
+                account_investment_balance += amount
+            else:
+                scheduled_balances[schedule.id] = (
+                    scheduled_balances.get(schedule.id, 0) + amount
+                )
+            cf.traces.append(
+                TraceEntry(
+                    "汎用積立",
+                    amount,
+                    {"name": schedule.name, "account_id": schedule.account_id},
+                )
+            )
+    cf.scheduled_investment_balance = sum(scheduled_balances.values())
+    return account_investment_balance
+
+
 def _apply_expenses(
     household: Household,
     current: datetime.date,
@@ -1944,6 +2053,10 @@ def _apply_insurance(
             death_benefit=ins.death_benefit,
             surrender_value_rate=ins.surrender_value_rate,
             insurance_type=ins.insurance_type,
+            payment_frequency=ins.payment_frequency,
+            payment_month=ins.payment_month,
+            payment_interval_years=ins.payment_interval_years,
+            payment_amount=ins.payment_amount,
         )
         payer = next(
             (m for m in household.members if m.id == ins.payer_member_id), None
@@ -1954,11 +2067,18 @@ def _apply_insurance(
         # 被保険者の死亡で契約は消滅するため、以後の保険料は計上しない
         insured_alive = insured is None or member_alive(insured, current)
         payer_alive = payer is None or member_alive(payer, current)
-        premium = (
-            monthly_premium_in_period(policy, current)
-            if insured_alive and payer_alive
-            else 0
-        )
+        premium = 0
+        if insured_alive and payer_alive and policy.start_date <= current <= policy.end_date:
+            premium = insurance_payment_amount(
+                monthly_premium=ins.monthly_premium,
+                payment_frequency=ins.payment_frequency,
+                payment_amount=ins.payment_amount,
+                payment_month=ins.payment_month,
+                payment_interval_years=ins.payment_interval_years,
+                current=current,
+                start_year=ins.start_year,
+                start_month=ins.start_month,
+            )
         cf.insurance_premium += premium
         if premium > 0:
             cf.traces.append(
@@ -1994,6 +2114,7 @@ def _apply_housing(
     current: datetime.date,
     month: int,
     cf: MonthlyCashflow,
+    base_year: int = 0,
 ) -> None:
     """所有住宅の頭金・固定資産税・修繕費を月次CFへ反映する."""
     if housing is None:
@@ -2016,9 +2137,7 @@ def _apply_housing(
                 },
             )
         )
-    if month != housing.purchase_month:
-        return
-    if housing.annual_property_tax > 0:
+    if month == housing.purchase_month and housing.annual_property_tax > 0:
         cf.property_tax = housing.annual_property_tax
         cf.traces.append(
             TraceEntry(
@@ -2027,13 +2146,36 @@ def _apply_housing(
                 {"年額": housing.annual_property_tax},
             )
         )
-    if housing.annual_repair_cost > 0:
+    if month == housing.purchase_month and housing.annual_repair_cost > 0:
         cf.repair_expense = housing.annual_repair_cost
         cf.traces.append(
             TraceEntry(
                 "住宅修繕費",
                 housing.annual_repair_cost,
                 {"年額": housing.annual_repair_cost},
+            )
+        )
+    for schedule in housing.cost_schedules:
+        amount = housing_schedule_amount(
+            schedule,
+            current,
+            base_year=base_year or current.year,
+        )
+        if amount <= 0:
+            continue
+        if schedule.cost_type in {"固定資産税"}:
+            cf.property_tax += amount
+        else:
+            cf.repair_expense += amount
+        cf.traces.append(
+            TraceEntry(
+                f"住宅{schedule.cost_type}",
+                amount,
+                {
+                    "支払周期": schedule.cycle,
+                    "適用開始": f"{schedule.start_year}/{schedule.start_month}",
+                    "上昇率": schedule.annual_raise_rate,
+                },
             )
         )
 
@@ -2425,6 +2567,7 @@ def simulate(
 
     # 口座残高の初期値(基準月の月初残高)
     balances: dict[str, int] = {acc.id: acc.balance for acc in household.accounts}
+    scheduled_balances: dict[str, int] = {}
     total_balance = sum(balances.values())
     ideco_accounts = {
         plan.id: IdecoAccount(balance=plan.initial_balance)
@@ -2556,7 +2699,13 @@ def simulate(
             )
 
         # --- 支出 ---
-        _apply_housing(household.owned_housing, current, month, cf)
+        _apply_housing(
+            household.owned_housing,
+            current,
+            month,
+            cf,
+            base_year=assumptions.base_year,
+        )
         _apply_vehicle_expenses(
             household=household,
             current=current,
@@ -2635,6 +2784,15 @@ def simulate(
 
         cf.ideco_balance = sum(account.balance for account in ideco_accounts.values())
         cf.nisa_balance = sum(account.balance for account in nisa_accounts.values())
+        cf.account_investment_balance = _apply_account_schedules(
+            household=household,
+            current=current,
+            age=age,
+            base_year=assumptions.base_year,
+            balances=balances,
+            scheduled_balances=scheduled_balances,
+            cf=cf,
+        )
 
         # --- 口座残高 ---
         total_balance += cf.net

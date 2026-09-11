@@ -34,6 +34,9 @@
      <small class="field-hint">毎年の固定資産税・都市計画税の目安です。</small></p>
   <p><label>修繕費: <input type="number" name="annual_repair_cost" min="0" required value="{{ v.annual_repair_cost if v else (household.owned_housing.annual_repair_cost if household.owned_housing else 0) }}"></label>円/年
      <small class="field-hint">マンション管理費・修繕積立金や戸建ての修繕費の年間目安です。</small></p>
+  <p><label>住宅コストスケジュール(JSON):<br>
+    <textarea name="cost_schedules" rows="5" cols="70" placeholder='[{"cost_type":"管理費","amount":20000,"start_year":2026,"cycle":"monthly"}]'>{{ v.cost_schedules if v and v.cost_schedules is string else cost_schedule_json }}</textarea>
+  </label><br><small class="field-hint">管理費・修繕積立金・固定資産税を期間別に設定できます。</small></p>
   <p><button type="submit">保存</button></p>
 </form>
 
