@@ -894,6 +894,85 @@ async def test_accounts_ideco_nisa_edit_and_delete(client: AsyncClient) -> None:
     assert household.nisa_plans == []
 
 
+async def test_account_investment_schedules_use_repeatable_form(client: AsyncClient) -> None:
+    """積立スケジュールを年齢・西暦の通常フォームで複数保存できる."""
+    from fp_simulator.db.database import get_household
+
+    household_id = await _new_household(client)
+    await _add_member(client, household_id)
+
+    page = await client.get(f"/households/{household_id}/accounts")
+    assert page.status_code == 200
+    assert "積立スケジュール(JSON)" not in page.text
+    assert 'id="add-investment-schedule"' in page.text
+    assert "積立をしない口座では、期間を追加する必要はありません" in page.text
+
+    response = await client.post(
+        f"/households/{household_id}/accounts",
+        data={
+            "name": "積立預金",
+            "balance": "1000000",
+            "interest_rate": "0.001",
+            "schedule_mode": ["age", "year"],
+            "schedule_start_age": ["30", ""],
+            "schedule_end_age": ["40", ""],
+            "schedule_start_year": ["", "2040"],
+            "schedule_end_year": ["", "2050"],
+            "schedule_start_month": ["4", "1"],
+            "schedule_end_month": ["3", "12"],
+            "schedule_monthly_amount": ["30000", "50000"],
+            "schedule_annual_raise_rate_percent": ["2", "0"],
+            "schedule_return_mode": ["custom", "account"],
+            "schedule_annual_return_rate_percent": ["3", ""],
+        },
+    )
+    assert response.status_code == 303
+
+    household = await get_household(household_id)
+    schedules = household.accounts[0].investment_schedules
+    assert len(schedules) == 2
+    assert schedules[0].start_age == 30
+    assert schedules[0].end_age == 40
+    assert schedules[0].start_year is None
+    assert schedules[0].annual_raise_rate == 0.02
+    assert schedules[0].annual_return_rate == 0.03
+    assert schedules[1].start_age == 0
+    assert schedules[1].start_year == 2040
+    assert schedules[1].end_year == 2050
+    assert schedules[1].annual_return_rate is None
+
+    account_id = household.accounts[0].id
+    edit_page = await client.get(
+        f"/households/{household_id}/accounts?edit_account_id={account_id}"
+    )
+    assert edit_page.status_code == 200
+    assert 'value="30000"' in edit_page.text
+    assert 'value="50000"' in edit_page.text
+    assert 'value="2040"' in edit_page.text
+
+    invalid = await client.post(
+        f"/households/{household_id}/accounts",
+        data={
+            "name": "入力エラー",
+            "balance": "0",
+            "schedule_mode": ["age"],
+            "schedule_start_age": ["50"],
+            "schedule_end_age": ["40"],
+            "schedule_start_year": [""],
+            "schedule_end_year": [""],
+            "schedule_start_month": ["1"],
+            "schedule_end_month": ["12"],
+            "schedule_monthly_amount": ["10000"],
+            "schedule_annual_raise_rate_percent": ["0"],
+            "schedule_return_mode": ["account"],
+            "schedule_annual_return_rate_percent": [""],
+        },
+    )
+    assert invalid.status_code == 400
+    assert "終了年齢は開始年齢以降にしてください" in invalid.text
+    assert 'value="10000"' in invalid.text
+
+
 async def test_loans_edit_and_vehicle_referenced_delete_guard(client: AsyncClient) -> None:
     """ローンの編集(上書き)と、乗り物から参照中のローンは削除されないガードを確認する."""
     from fp_simulator.db.database import get_household

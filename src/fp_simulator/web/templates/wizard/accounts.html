@@ -2,6 +2,19 @@
 {% from "lifemap.html" import lifemap %}
 {% from "wizard/_form_helpers.html" import error_banner, edit_mode_banner %}
 {% block content %}
+<style>
+  .investment-schedule-list { display: grid; gap: 0.8rem; margin: 0.8rem 0; }
+  .investment-schedule-card { border: 1px solid #ccd7df; border-radius: 6px; padding: 0.8rem; }
+  .investment-schedule-card legend { font-weight: 600; padding: 0 0.35rem; }
+  .investment-schedule-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+    gap: 0.6rem 1rem;
+  }
+  .investment-schedule-grid label { display: block; }
+  .investment-schedule-grid input, .investment-schedule-grid select { width: 100%; }
+  .investment-schedule-actions { display: flex; justify-content: flex-end; margin-top: 0.7rem; }
+</style>
 <h1>Q11. 貯蓄・資産 — {{ household.name }}</h1>
 {{ lifemap(household) }}
 
@@ -46,11 +59,126 @@
      <small class="field-hint">シミュレーション基準月({{ household.assumptions.base_year }}年{{ household.assumptions.base_month }}月)の月初時点の残高です。</small></p>
   <p><label>金利(年率): <input type="number" name="interest_rate" value="{{ av.interest_rate if av else 0 }}" step="0.001"></label>(例: 0.001 = 0.1%)
      <small class="field-hint">単利で毎年の利息を概算します。</small></p>
-  <p><label>積立スケジュール(JSON):<br>
-    <textarea name="investment_schedules" rows="4" cols="70" placeholder='[{"start_age":30,"end_age":60,"monthly_amount":30000,"annual_return_rate":0.03}]'>{{ av.investment_schedules if av and av.investment_schedules is string else (investment_schedule_json if edit_account else '') }}</textarea>
-  </label><br><small class="field-hint">一般口座の積立を年齢・年月で設定できます。</small></p>
+  <fieldset>
+    <legend>積立スケジュール</legend>
+    <p class="field-hint">
+      毎月の積立額と期間を設定します。途中で積立額を変更する場合は、期間を分けて追加してください。
+      年齢指定は口座の名義人（世帯共有の場合は世帯主）の年齢を基準にします。
+    </p>
+    <div id="investment-schedule-list" class="investment-schedule-list">
+      {% for schedule in investment_schedule_values %}
+      <fieldset class="investment-schedule-card" data-investment-schedule>
+        <legend>積立期間 <span data-schedule-number>{{ loop.index }}</span></legend>
+        <div class="investment-schedule-grid">
+          <label>期間の指定方法
+            <select name="schedule_mode" data-schedule-mode>
+              <option value="age" {% if schedule.mode == "age" %}selected{% endif %}>名義人の年齢で指定</option>
+              <option value="year" {% if schedule.mode == "year" %}selected{% endif %}>西暦で指定</option>
+            </select>
+          </label>
+          <label>月額積立
+            <span><input type="number" name="schedule_monthly_amount" min="0" required value="{{ schedule.monthly_amount }}">円</span>
+          </label>
+          <label data-age-field>開始年齢
+            <span><input type="number" name="schedule_start_age" min="0" max="120" value="{{ schedule.start_age }}">歳</span>
+          </label>
+          <label data-age-field>終了年齢
+            <span><input type="number" name="schedule_end_age" min="0" max="120" value="{{ schedule.end_age if schedule.end_age is not none else '' }}">歳</span>
+          </label>
+          <label data-year-field>開始年
+            <span><input type="number" name="schedule_start_year" min="1900" max="2200" value="{{ schedule.start_year if schedule.start_year is not none else '' }}">年</span>
+          </label>
+          <label data-year-field>終了年
+            <span><input type="number" name="schedule_end_year" min="1900" max="2200" value="{{ schedule.end_year if schedule.end_year is not none else '' }}">年</span>
+          </label>
+          <label>開始月
+            <select name="schedule_start_month">
+              {% for month in range(1, 13) %}<option value="{{ month }}" {% if month == schedule.start_month | int %}selected{% endif %}>{{ month }}月</option>{% endfor %}
+            </select>
+          </label>
+          <label>終了月
+            <select name="schedule_end_month">
+              {% for month in range(1, 13) %}<option value="{{ month }}" {% if month == schedule.end_month | int %}selected{% endif %}>{{ month }}月</option>{% endfor %}
+            </select>
+          </label>
+          <label>積立額の年間増加率
+            <span><input type="number" name="schedule_annual_raise_rate_percent" min="-100" max="100" step="0.1" value="{{ schedule.annual_raise_rate_percent }}">%</span>
+          </label>
+          <label>運用利回り
+            <select name="schedule_return_mode" data-return-mode>
+              <option value="account" {% if schedule.return_mode == "account" %}selected{% endif %}>口座の年利を使用</option>
+              <option value="custom" {% if schedule.return_mode == "custom" %}selected{% endif %}>この期間だけ個別に設定</option>
+            </select>
+          </label>
+          <label data-custom-return-field>個別の運用利回り
+            <span><input type="number" name="schedule_annual_return_rate_percent" min="-100" max="100" step="0.1" value="{{ schedule.annual_return_rate_percent }}">%</span>
+          </label>
+        </div>
+        <div class="investment-schedule-actions">
+          <button type="button" class="btn-danger" data-remove-schedule>この期間を削除</button>
+        </div>
+      </fieldset>
+      {% endfor %}
+    </div>
+    <button type="button" class="btn-secondary" id="add-investment-schedule">積立期間を追加</button>
+    <small class="field-hint">積立をしない口座では、期間を追加する必要はありません。</small>
+  </fieldset>
   <p><button type="submit">{{ "更新" if edit_account else "追加" }}</button></p>
 </form>
+
+<template id="investment-schedule-template">
+  <fieldset class="investment-schedule-card" data-investment-schedule>
+    <legend>積立期間 <span data-schedule-number></span></legend>
+    <div class="investment-schedule-grid">
+      <label>期間の指定方法
+        <select name="schedule_mode" data-schedule-mode>
+          <option value="age">名義人の年齢で指定</option>
+          <option value="year">西暦で指定</option>
+        </select>
+      </label>
+      <label>月額積立
+        <span><input type="number" name="schedule_monthly_amount" min="0" required value="0">円</span>
+      </label>
+      <label data-age-field>開始年齢
+        <span><input type="number" name="schedule_start_age" min="0" max="120" value="0">歳</span>
+      </label>
+      <label data-age-field>終了年齢
+        <span><input type="number" name="schedule_end_age" min="0" max="120">歳</span>
+      </label>
+      <label data-year-field>開始年
+        <span><input type="number" name="schedule_start_year" min="1900" max="2200">年</span>
+      </label>
+      <label data-year-field>終了年
+        <span><input type="number" name="schedule_end_year" min="1900" max="2200">年</span>
+      </label>
+      <label>開始月
+        <select name="schedule_start_month">
+          {% for month in range(1, 13) %}<option value="{{ month }}">{{ month }}月</option>{% endfor %}
+        </select>
+      </label>
+      <label>終了月
+        <select name="schedule_end_month">
+          {% for month in range(1, 13) %}<option value="{{ month }}" {% if month == 12 %}selected{% endif %}>{{ month }}月</option>{% endfor %}
+        </select>
+      </label>
+      <label>積立額の年間増加率
+        <span><input type="number" name="schedule_annual_raise_rate_percent" min="-100" max="100" step="0.1" value="0">%</span>
+      </label>
+      <label>運用利回り
+        <select name="schedule_return_mode" data-return-mode>
+          <option value="account">口座の年利を使用</option>
+          <option value="custom">この期間だけ個別に設定</option>
+        </select>
+      </label>
+      <label data-custom-return-field>個別の運用利回り
+        <span><input type="number" name="schedule_annual_return_rate_percent" min="-100" max="100" step="0.1">%</span>
+      </label>
+    </div>
+    <div class="investment-schedule-actions">
+      <button type="button" class="btn-danger" data-remove-schedule>この期間を削除</button>
+    </div>
+  </fieldset>
+</template>
 
 <hr style="margin: 2rem 0;">
 
@@ -170,6 +298,52 @@
   <p><button type="submit">{{ "更新" if edit_nisa else "NISAを追加" }}</button></p>
 </form>
 <script>
+(function () {
+  var list = document.getElementById("investment-schedule-list");
+  var addButton = document.getElementById("add-investment-schedule");
+  var template = document.getElementById("investment-schedule-template");
+  if (!list || !addButton || !template) return;
+
+  function updateCard(card) {
+    var mode = card.querySelector("[data-schedule-mode]").value;
+    card.querySelectorAll("[data-age-field]").forEach(function (field) {
+      field.hidden = mode !== "age";
+    });
+    card.querySelectorAll("[data-year-field]").forEach(function (field) {
+      field.hidden = mode !== "year";
+    });
+    card.querySelector('[name="schedule_start_age"]').required = mode === "age";
+    card.querySelector('[name="schedule_start_year"]').required = mode === "year";
+
+    var customReturn = card.querySelector("[data-return-mode]").value === "custom";
+    var customField = card.querySelector("[data-custom-return-field]");
+    customField.hidden = !customReturn;
+    customField.querySelector("input").required = customReturn;
+  }
+
+  function updateCards() {
+    list.querySelectorAll("[data-investment-schedule]").forEach(function (card, index) {
+      card.querySelector("[data-schedule-number]").textContent = index + 1;
+      updateCard(card);
+    });
+  }
+
+  addButton.addEventListener("click", function () {
+    list.appendChild(template.content.cloneNode(true));
+    updateCards();
+  });
+  list.addEventListener("change", function (event) {
+    var card = event.target.closest("[data-investment-schedule]");
+    if (card) updateCard(card);
+  });
+  list.addEventListener("click", function (event) {
+    if (!event.target.matches("[data-remove-schedule]")) return;
+    event.target.closest("[data-investment-schedule]").remove();
+    updateCards();
+  });
+  updateCards();
+})();
+
 (function () {
   var sel = document.getElementById("ideco-subscriber-type");
   var input = document.getElementById("ideco-monthly-contribution");

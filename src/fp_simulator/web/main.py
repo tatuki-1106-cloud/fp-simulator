@@ -1129,6 +1129,124 @@ def _ideco_limit_map(household: Household) -> dict[int, int]:
     return {t: ideco_contribution_limit(store, base, t) for t in (1, 2, 3)}
 
 
+def _investment_schedule_form_values(
+    schedules: list[InvestmentSchedule],
+) -> list[dict[str, object]]:
+    """積立スケジュールを通常フォーム向けの値へ変換する."""
+    return [
+        {
+            "mode": "year" if schedule.start_year is not None else "age",
+            "start_age": schedule.start_age,
+            "end_age": schedule.end_age,
+            "start_year": schedule.start_year,
+            "start_month": schedule.start_month,
+            "end_year": schedule.end_year,
+            "end_month": schedule.end_month,
+            "monthly_amount": schedule.monthly_amount,
+            "annual_raise_rate_percent": schedule.annual_raise_rate * 100,
+            "return_mode": (
+                "custom" if schedule.annual_return_rate is not None else "account"
+            ),
+            "annual_return_rate_percent": (
+                schedule.annual_return_rate * 100
+                if schedule.annual_return_rate is not None
+                else ""
+            ),
+        }
+        for schedule in schedules
+    ]
+
+
+def _parse_investment_schedule_form(
+    modes: list[str],
+    start_ages: list[str],
+    end_ages: list[str],
+    start_years: list[str],
+    start_months: list[str],
+    end_years: list[str],
+    end_months: list[str],
+    monthly_amounts: list[str],
+    annual_raise_rate_percents: list[str],
+    return_modes: list[str],
+    annual_return_rate_percents: list[str],
+) -> list[InvestmentSchedule]:
+    """通常フォームから積立スケジュールを検証して生成する."""
+    fields = (
+        start_ages,
+        end_ages,
+        start_years,
+        start_months,
+        end_years,
+        end_months,
+        monthly_amounts,
+        annual_raise_rate_percents,
+        return_modes,
+        annual_return_rate_percents,
+    )
+    if any(len(field) != len(modes) for field in fields):
+        raise ValueError("積立期間の入力項目数が一致しません")
+
+    schedules = []
+    for index, mode in enumerate(modes):
+        item_number = index + 1
+        if mode not in {"age", "year"}:
+            raise ValueError(f"積立期間{item_number}の期間指定方法が正しくありません")
+        if return_modes[index] not in {"account", "custom"}:
+            raise ValueError(f"積立期間{item_number}の利回り設定が正しくありません")
+
+        try:
+            start_month = int(start_months[index])
+            end_month = int(end_months[index])
+            monthly_amount = int(monthly_amounts[index])
+            annual_raise_rate = float(annual_raise_rate_percents[index] or 0) / 100
+            start_age = int(start_ages[index] or 0) if mode == "age" else 0
+            end_age = (
+                int(end_ages[index])
+                if mode == "age" and end_ages[index].strip()
+                else None
+            )
+            start_year = int(start_years[index]) if mode == "year" else None
+            end_year = (
+                int(end_years[index])
+                if mode == "year" and end_years[index].strip()
+                else None
+            )
+            annual_return_rate = (
+                float(annual_return_rate_percents[index]) / 100
+                if return_modes[index] == "custom"
+                else None
+            )
+        except ValueError as exc:
+            raise ValueError(f"積立期間{item_number}に数値を入力してください") from exc
+
+        if mode == "age" and end_age is not None and end_age < start_age:
+            raise ValueError(f"積立期間{item_number}の終了年齢は開始年齢以降にしてください")
+        if (
+            mode == "year"
+            and end_year is not None
+            and (end_year, end_month) < (start_year, start_month)
+        ):
+            raise ValueError(f"積立期間{item_number}の終了年月は開始年月以降にしてください")
+
+        try:
+            schedules.append(
+                InvestmentSchedule(
+                    start_age=start_age,
+                    end_age=end_age,
+                    start_year=start_year,
+                    start_month=start_month,
+                    end_year=end_year,
+                    end_month=end_month,
+                    monthly_amount=monthly_amount,
+                    annual_raise_rate=annual_raise_rate,
+                    annual_return_rate=annual_return_rate,
+                )
+            )
+        except ValueError as exc:
+            raise ValueError(f"積立期間{item_number}の入力内容を確認してください: {exc}") from exc
+    return schedules
+
+
 @app.get("/households/{household_id}/accounts", response_class=HTMLResponse)
 async def accounts_edit(
     request: Request,
@@ -1161,10 +1279,10 @@ async def accounts_edit(
             "edit_ideco": edit_ideco,
             "edit_nisa": edit_nisa,
             "ideco_limits": _ideco_limit_map(household),
-            "investment_schedule_json": (
-                json.dumps([item.model_dump() for item in edit_account.investment_schedules])
+            "investment_schedule_values": (
+                _investment_schedule_form_values(edit_account.investment_schedules)
                 if edit_account
-                else ""
+                else []
             ),
         },
     )
@@ -1179,6 +1297,17 @@ async def accounts_add(
     balance: int = Form(...),
     interest_rate: float = Form(0.0),
     investment_schedules: str = Form(""),
+    schedule_mode: list[str] = Form([]),
+    schedule_start_age: list[str] = Form([]),
+    schedule_end_age: list[str] = Form([]),
+    schedule_start_year: list[str] = Form([]),
+    schedule_start_month: list[str] = Form([]),
+    schedule_end_year: list[str] = Form([]),
+    schedule_end_month: list[str] = Form([]),
+    schedule_monthly_amount: list[str] = Form([]),
+    schedule_annual_raise_rate_percent: list[str] = Form([]),
+    schedule_return_mode: list[str] = Form([]),
+    schedule_annual_return_rate_percent: list[str] = Form([]),
     edit_id: str = Form(""),
 ) -> Response:
     """口座を追加・更新."""
@@ -1192,6 +1321,37 @@ async def accounts_add(
         "interest_rate": interest_rate,
         "investment_schedules": investment_schedules,
     }
+    schedule_values = [
+        {
+            "mode": mode,
+            "start_age": schedule_start_age[index],
+            "end_age": schedule_end_age[index],
+            "start_year": schedule_start_year[index],
+            "start_month": schedule_start_month[index],
+            "end_year": schedule_end_year[index],
+            "end_month": schedule_end_month[index],
+            "monthly_amount": schedule_monthly_amount[index],
+            "annual_raise_rate_percent": schedule_annual_raise_rate_percent[index],
+            "return_mode": schedule_return_mode[index],
+            "annual_return_rate_percent": schedule_annual_return_rate_percent[index],
+        }
+        for index, mode in enumerate(schedule_mode)
+        if all(
+            index < len(field)
+            for field in (
+                schedule_start_age,
+                schedule_end_age,
+                schedule_start_year,
+                schedule_start_month,
+                schedule_end_year,
+                schedule_end_month,
+                schedule_monthly_amount,
+                schedule_annual_raise_rate_percent,
+                schedule_return_mode,
+                schedule_annual_return_rate_percent,
+            )
+        )
+    ]
     context = {
         "title": "Q11 貯蓄・資産",
         "household": household,
@@ -1201,6 +1361,7 @@ async def accounts_add(
         "edit_ideco": None,
         "edit_nisa": None,
         "ideco_limits": _ideco_limit_map(household),
+        "investment_schedule_values": schedule_values,
     }
     if not name.strip():
         return _wizard_error(
@@ -1219,16 +1380,33 @@ async def accounts_add(
             request, "wizard/accounts.html", context, "編集対象の口座が見つかりません", values, "account_values"
         )
     try:
-        parsed_investment_schedules = [
-            InvestmentSchedule.model_validate(item)
-            for item in (json.loads(investment_schedules) if investment_schedules.strip() else [])
-        ]
+        if schedule_mode:
+            parsed_investment_schedules = _parse_investment_schedule_form(
+                schedule_mode,
+                schedule_start_age,
+                schedule_end_age,
+                schedule_start_year,
+                schedule_start_month,
+                schedule_end_year,
+                schedule_end_month,
+                schedule_monthly_amount,
+                schedule_annual_raise_rate_percent,
+                schedule_return_mode,
+                schedule_annual_return_rate_percent,
+            )
+        else:
+            parsed_investment_schedules = [
+                InvestmentSchedule.model_validate(item)
+                for item in (
+                    json.loads(investment_schedules) if investment_schedules.strip() else []
+                )
+            ]
     except (json.JSONDecodeError, TypeError, ValueError) as exc:
         return _wizard_error(
             request,
             "wizard/accounts.html",
             context,
-            f"積立スケジュールのJSONが正しくありません: {exc}",
+            f"積立スケジュールを保存できません: {exc}",
             values,
             "account_values",
         )
