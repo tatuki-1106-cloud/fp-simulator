@@ -12,7 +12,14 @@ from httpx import ASGITransport, AsyncClient
 os.environ["FP_DB_PATH"] = tempfile.mktemp(suffix=".db")
 
 from fp_simulator.db.database import init_db
-from fp_simulator.web.main import app
+from fp_simulator.engine.models import (
+    Household,
+    Income,
+    Member,
+    PlanAssumptions,
+    Relationship,
+)
+from fp_simulator.web.main import _income_chart_context, app
 
 
 @pytest.fixture()
@@ -21,6 +28,72 @@ async def client() -> AsyncClient:
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as c:
         yield c
+
+
+def test_income_chart_groups_income_by_member_and_omits_redundant_total() -> None:
+    household = Household(
+        id="chart-test",
+        name="グラフテスト",
+        assumptions=PlanAssumptions(base_year=2026, base_month=1),
+        members=[
+            Member(
+                id="householder",
+                name="たろう",
+                relationship=Relationship.HOUSEHOLDER,
+                birth_date="1996-04-01",
+            ),
+            Member(
+                id="spouse",
+                name="はなこ",
+                relationship=Relationship.SPOUSE,
+                birth_date="1998-07-01",
+            ),
+        ],
+        incomes=[
+            Income(
+                id="salary",
+                member_id="householder",
+                name="給与",
+                start_age=0,
+                end_age=60,
+                monthly_amount=300_000,
+            ),
+            Income(
+                id="side-job",
+                member_id="householder",
+                name="副業",
+                start_age=0,
+                end_age=60,
+                monthly_amount=100_000,
+            ),
+        ],
+    )
+
+    chart = _income_chart_context(household)
+    assert chart["income_chart_series_labels"] == ["たろう（世帯主）"]
+    assert chart["income_chart_series_values"][0][0] == 4_800_000
+
+    household.incomes.append(
+        Income(
+            id="spouse-salary",
+            member_id="spouse",
+            name="給与",
+            start_age=0,
+            end_age=60,
+            monthly_amount=200_000,
+        )
+    )
+    chart = _income_chart_context(household)
+    assert chart["income_chart_series_labels"] == [
+        "世帯合計",
+        "たろう（世帯主）",
+        "はなこ（配偶者）",
+    ]
+    assert [values[0] for values in chart["income_chart_series_values"]] == [
+        7_200_000,
+        4_800_000,
+        2_400_000,
+    ]
 
 
 async def test_create_household_and_full_flow(client: AsyncClient) -> None:

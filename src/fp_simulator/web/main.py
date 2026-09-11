@@ -141,11 +141,13 @@ def _income_chart_context(household: Household) -> dict[str, list]:
         )
         labels.append(f"{age_label} ({year}年)")
 
-    series_labels: list[str] = []
-    series_values: list[list[int]] = []
+    member_series = {
+        member.id: [0] * len(years)
+        for member in household.members
+        if any(income.member_id == member.id for income in valid_incomes)
+    }
     for income in valid_incomes:
         member = members_by_id[income.member_id]
-        series_labels.append(f"{member.name} / {income.name}")
         values = []
         for year in years:
             raise_factor = (1 + income.annual_raise_rate) ** (year - base_year)
@@ -165,13 +167,26 @@ def _income_chart_context(household: Household) -> dict[str, list]:
             ):
                 annual_amount += income.retirement_allowance
             values.append(annual_amount)
-        series_values.append(values)
+        member_series[member.id] = [
+            total + amount for total, amount in zip(member_series[member.id], values, strict=True)
+        ]
 
-    totals = [sum(values[index] for values in series_values) for index in range(len(years))]
+    series_labels = [
+        f"{members_by_id[member_id].name}（{members_by_id[member_id].relationship.value}）"
+        for member_id in member_series
+    ]
+    series_values = list(member_series.values())
+    if len(series_values) > 1:
+        totals = [
+            sum(values[index] for values in series_values) for index in range(len(years))
+        ]
+        series_labels.insert(0, "世帯合計")
+        series_values.insert(0, totals)
+
     return {
         "income_chart_labels": labels,
-        "income_chart_series_labels": ["世帯合計", *series_labels],
-        "income_chart_series_values": [totals, *series_values],
+        "income_chart_series_labels": series_labels,
+        "income_chart_series_values": series_values,
     }
 
 
