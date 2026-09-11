@@ -6,9 +6,26 @@
 from __future__ import annotations
 
 import datetime
-from typing import Any
 
+from fp_simulator.engine.dependency import age_at
+from fp_simulator.engine.models import Income, Member
 from fp_simulator.parameters.loader import ParameterStore
+
+
+def income_is_active(income: Income, member: Member, current: datetime.date) -> bool:
+    """指定月に収入が発生するかを判定する."""
+    member_age = age_at(member.birth_date, current)
+    if member_age < income.start_age:
+        return False
+    if income.end_age is not None and member_age > income.end_age:
+        return False
+    if member_age == income.start_age and current.month < income.start_month:
+        return False
+    return not (
+        income.end_age is not None
+        and member_age == income.end_age
+        and current.month > income.end_month
+    )
 
 
 def salary_deduction(store: ParameterStore, date: datetime.date, salary_income: int) -> int:

@@ -34,7 +34,7 @@ from fp_simulator.engine.dependency import (
     calc_deductions_for_household,
 )
 from fp_simulator.engine.education import education_cost_breakdown
-from fp_simulator.engine.income import salary_income_after_deduction
+from fp_simulator.engine.income import income_is_active, salary_income_after_deduction
 from fp_simulator.engine.income_tax import (
     Deductions,
     calc_annual_income_tax,
@@ -711,22 +711,6 @@ def _record_event_expense(
         )
 
 
-def _income_is_active(income: Income, member: Member, current: datetime.date) -> bool:
-    """指定月に収入が発生するかを判定する."""
-    member_age = age_at(member.birth_date, current)
-    if member_age < income.start_age:
-        return False
-    if income.end_age is not None and member_age > income.end_age:
-        return False
-    if member_age == income.start_age and current.month < income.start_month:
-        return False
-    return not (
-        income.end_age is not None
-        and member_age == income.end_age
-        and current.month > income.end_month
-    )
-
-
 def _income_month_compensation(
     household: Household,
     income: Income,
@@ -735,7 +719,7 @@ def _income_month_compensation(
     assumptions: PlanAssumptions,
 ) -> IncomeMonthCompensation | None:
     """休業日数を反映した収入1件の月次支給額を返す."""
-    if not _income_is_active(income, member, current):
+    if not income_is_active(income, member, current):
         return None
 
     days_in_month = calendar.monthrange(current.year, current.month)[1]
@@ -780,7 +764,7 @@ def _annual_salary_estimate(
             member = next((m for m in household.members if m.id == income.member_id), None)
             if member is None or not member_alive(member, current):
                 continue
-            if reference_date is not None and not _income_is_active(income, member, reference_date):
+            if reference_date is not None and not income_is_active(income, member, reference_date):
                 continue
             compensation = _income_month_compensation(
                 household, income, member, current, assumptions
@@ -812,7 +796,7 @@ def _annual_social_insurance_estimate(
             member = next((m for m in household.members if m.id == income.member_id), None)
             if member is None or not member_alive(member, current):
                 continue
-            if reference_date is not None and not _income_is_active(income, member, reference_date):
+            if reference_date is not None and not income_is_active(income, member, reference_date):
                 continue
             compensation = _income_month_compensation(
                 household, income, member, current, assumptions
@@ -1453,7 +1437,7 @@ def _apply_income_tax(
         (member := next((m for m in household.members if m.id == income.member_id), None))
         is not None
         and member_alive(member, current)
-        and _income_is_active(income, member, current)
+        and income_is_active(income, member, current)
         for income in household.incomes
     )
     est_annual = (

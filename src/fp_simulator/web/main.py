@@ -39,6 +39,7 @@ from fp_simulator.engine.fp_univ_import import (
     parse_import_json,
     preview_fp_univ_import,
 )
+from fp_simulator.engine.income import income_is_active
 from fp_simulator.engine.insurance import InsurancePolicy, analyze_coverage
 from fp_simulator.engine.models import (
     EDUCATION_STAGE_NAMES,
@@ -96,6 +97,84 @@ app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 templates = Jinja2Templates(directory=BASE_DIR / "templates")
 
 
+def _income_chart_context(household: Household) -> dict[str, list]:
+    """収入入力から年次の額面収入推移を作る."""
+    if not household.incomes or not household.members:
+        return {
+            "income_chart_labels": [],
+            "income_chart_series_labels": [],
+            "income_chart_series_values": [],
+        }
+
+    members_by_id = {member.id: member for member in household.members}
+    valid_incomes = [
+        income for income in household.incomes if income.member_id in members_by_id
+    ]
+    if not valid_incomes:
+        return {
+            "income_chart_labels": [],
+            "income_chart_series_labels": [],
+            "income_chart_series_values": [],
+        }
+
+    householder = household.householder()
+    base_year = household.assumptions.base_year
+    final_year = base_year
+    for income in valid_incomes:
+        member = members_by_id[income.member_id]
+        end_age = income.end_age if income.end_age is not None else member.life_expectancy_age
+        final_year = max(final_year, member.birth_date.year + end_age)
+        if income.retirement_age is not None and income.retirement_allowance > 0:
+            final_year = max(final_year, member.birth_date.year + income.retirement_age)
+
+    years = list(range(base_year, final_year + 1))
+    labels = []
+    for year in years:
+        age_at_start = year - householder.birth_date.year - (
+            (1, 1) < (householder.birth_date.month, householder.birth_date.day)
+        )
+        age_at_end = year - householder.birth_date.year
+        age_label = (
+            f"{age_at_start}歳"
+            if age_at_start == age_at_end
+            else f"{age_at_start}〜{age_at_end}歳"
+        )
+        labels.append(f"{age_label} ({year}年)")
+
+    series_labels: list[str] = []
+    series_values: list[list[int]] = []
+    for income in valid_incomes:
+        member = members_by_id[income.member_id]
+        series_labels.append(f"{member.name} / {income.name}")
+        values = []
+        for year in years:
+            raise_factor = (1 + income.annual_raise_rate) ** (year - base_year)
+            monthly_amount = int(income.monthly_amount * raise_factor)
+            bonus_amount = int(income.bonus_amount * raise_factor)
+            annual_amount = 0
+            for month in range(1, 13):
+                current = datetime.date(year, month, 1)
+                if not income_is_active(income, member, current):
+                    continue
+                annual_amount += monthly_amount
+                if month in income.bonus_months:
+                    annual_amount += bonus_amount
+            if (
+                income.retirement_age is not None
+                and year == member.birth_date.year + income.retirement_age
+            ):
+                annual_amount += income.retirement_allowance
+            values.append(annual_amount)
+        series_values.append(values)
+
+    totals = [sum(values[index] for values in series_values) for index in range(len(years))]
+    return {
+        "income_chart_labels": labels,
+        "income_chart_series_labels": ["世帯合計", *series_labels],
+        "income_chart_series_values": [totals, *series_values],
+    }
+
+
 def _wizard_error(
     request: Request,
     template_name: str,
@@ -107,6 +186,8 @@ def _wizard_error(
 ) -> HTMLResponse:
     """入力エラー時に、送信済みの値を保持したまま同じフォームをHTTP 400で再表示する."""
     ctx = dict(context)
+    if template_name == "wizard/incomes.html" and isinstance(ctx.get("household"), Household):
+        ctx.update(_income_chart_context(ctx["household"]))
     ctx[error_key] = error
     ctx[values_key] = values
     return templates.TemplateResponse(request, template_name, ctx, status_code=400)
@@ -464,17 +545,19 @@ async def incomes_edit(
         if leave_edit_id
         else None
     )
+    context = {
+        "title": "Q2 収入",
+        "household": household,
+        "si_types": list(SocialInsuranceType),
+        "active_q": "Q2",
+        "edit_target": edit_target,
+        "leave_edit_target": leave_edit_target,
+    }
+    context.update(_income_chart_context(household))
     return templates.TemplateResponse(
         request,
         "wizard/incomes.html",
-        {
-            "title": "Q2 収入",
-            "household": household,
-            "si_types": list(SocialInsuranceType),
-            "active_q": "Q2",
-            "edit_target": edit_target,
-            "leave_edit_target": leave_edit_target,
-        },
+        context,
     )
 
 

@@ -76,6 +76,13 @@ async def test_create_household_and_full_flow(client: AsyncClient) -> None:
         },
     )
     assert r.status_code == 303
+    r = await client.get(f"/households/{household_id}/incomes")
+    assert r.status_code == 200
+    assert "年間収入の推移（簡易見込み）" in r.text
+    assert 'id="incomeTrendChart"' in r.text
+    assert "本人の年齢" in r.text
+    assert "const incomeTrendLabels =" in r.text
+    assert "24600000" in r.text
 
     # 4. 年金追加
     r = await client.post(

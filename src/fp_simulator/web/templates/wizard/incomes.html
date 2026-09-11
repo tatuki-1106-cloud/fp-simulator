@@ -6,6 +6,17 @@
 {{ lifemap(household) }}
 
 {% if household.incomes %}
+<section class="form-card" aria-labelledby="income-chart-title">
+  <h2 id="income-chart-title">年間収入の推移（簡易見込み）</h2>
+  <p class="field-hint">
+    月給・賞与・退職金を含む額面収入です。昇給率は毎年複利で反映し、
+    税・社会保険料および産休・育休による休業は反映していません。
+  </p>
+  <div style="height: 360px;">
+    <canvas id="incomeTrendChart" aria-label="年間収入の推移を示す折れ線グラフ" role="img"></canvas>
+  </div>
+</section>
+
 <table>
   <thead><tr><th>名前</th><th>対象者</th><th>種別</th><th>期間</th><th>月額(額面)</th><th>昇給率</th><th>賞与</th><th>退職金</th><th></th></tr></thead>
   <tbody>
@@ -137,7 +148,7 @@
      <small class="field-hint">加入する社会保険(年金・保険)の区分を選びます。会社員は「給与(厚生年金)」が一般的です。</small></p>
   <p><label>開始年齢: <input type="number" name="start_age" value="{{ v.start_age if v else 0 }}"></label>
      <label>終了年齢: <input type="number" name="end_age" value="{{ v.end_age if v else 60 }}"></label>
-     <small class="field-hint">収入が発生する期間(世帯主の基準年齢)を入力します。</small></p>
+     <small class="field-hint">収入が発生する期間を、対象者本人の年齢で入力します。</small></p>
   <p><label>月額(額面): <input type="number" name="monthly_amount" required min="0" value="{{ v.monthly_amount if v else '' }}"></label>円
      <small class="field-hint">税・社会保険料控除前の額面月収です。</small></p>
   <p><label>年間昇給率: <input type="number" name="annual_raise_rate" value="{{ v.annual_raise_rate if v else 0 }}" min="-1" max="1" step="0.001"></label> (例: 0.02 = 2%)
@@ -149,4 +160,52 @@
      <small class="field-hint">退職金は退職年齢の月に一括収入として計上します。</small></p>
   <p><button type="submit">{{ "更新" if edit_target else "追加" }}</button></p>
 </form>
+
+{% if household.incomes %}
+<script>
+const incomeTrendColors = [
+  '#1a3a5c', '#2e8b57', '#d2691e', '#9370db', '#c0392b',
+  '#4a90d9', '#8b7355', '#e67e22', '#16a085',
+];
+const incomeTrendLabels = {{ income_chart_series_labels | tojson }};
+const incomeTrendValues = {{ income_chart_series_values | tojson }};
+new Chart(document.getElementById('incomeTrendChart'), {
+  type: 'line',
+  data: {
+    labels: {{ income_chart_labels | tojson }},
+    datasets: incomeTrendLabels.map((label, index) => ({
+      label,
+      data: incomeTrendValues[index],
+      borderColor: incomeTrendColors[index % incomeTrendColors.length],
+      backgroundColor: incomeTrendColors[index % incomeTrendColors.length],
+      borderWidth: index === 0 ? 4 : 2,
+      borderDash: index === 0 ? [] : [5, 3],
+      pointRadius: index === 0 ? 2 : 1,
+      tension: 0.15,
+    })),
+  },
+  options: {
+    responsive: true,
+    maintainAspectRatio: false,
+    interaction: { mode: 'index', intersect: false },
+    scales: {
+      x: { ticks: { maxTicksLimit: 12 } },
+      y: {
+        beginAtZero: true,
+        ticks: { callback: value => (value / 10000).toLocaleString() + '万円' },
+      },
+    },
+    plugins: {
+      legend: { position: 'bottom' },
+      tooltip: {
+        callbacks: {
+          label: context =>
+            context.dataset.label + ': ' + context.parsed.y.toLocaleString() + '円',
+        },
+      },
+    },
+  },
+});
+</script>
+{% endif %}
 {% endblock %}
