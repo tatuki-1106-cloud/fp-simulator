@@ -367,6 +367,11 @@ async def test_create_household_and_full_flow(client: AsyncClient) -> None:
     assert 'id="expenseChart"' in r.text
     assert "年次収入構成" in r.text
     assert "生涯の支出内訳" in r.text
+    assert 'class="cashflow-table"' in r.text
+    assert 'colspan="3" scope="colgroup">収入<' in r.text
+    assert 'colspan="14" scope="colgroup">支出・税金<' in r.text
+    assert 'colspan="7" scope="colgroup">収支・資産<' in r.text
+    assert 'class="group-end" scope="col">税・社保<' in r.text
     # 円グラフのカテゴリラベルはJSON内でUnicodeエスケープされて出力される
     assert "\\u4e57\\u308a\\u7269\\u95a2\\u9023" in r.text  # 乗り物関連
 

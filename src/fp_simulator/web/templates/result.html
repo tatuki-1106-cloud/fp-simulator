@@ -38,6 +38,20 @@
   .chart-box canvas { max-width: 100%; }
   .chart-box h3 { margin: 0 0 0.5rem; font-size: 1rem; }
   .chart-box .chart-note { font-size: 0.8rem; color: #666; margin: 0 0 0.5rem; }
+  .cashflow-table thead .group-header th {
+    text-align: center;
+    font-size: 0.85rem;
+  }
+  .cashflow-table thead .group-basic { background: #edf2f7; }
+  .cashflow-table thead .group-income { background: #e8f4ee; }
+  .cashflow-table thead .group-expense { background: #fdf0e8; }
+  .cashflow-table thead .group-assets { background: #eef2fb; }
+  .cashflow-table thead .detail-header th {
+    font-size: 0.9rem;
+  }
+  .cashflow-table .group-end {
+    border-right: 3px solid #cfd8e3;
+  }
 </style>
 {% endblock %}
 {% block content %}
@@ -139,18 +153,51 @@
 </p>
 
 <h2>年次キャッシュフロー</h2>
-<table>
+<table class="cashflow-table">
   <thead>
-    <tr><th>年</th><th>年齢</th><th>収入</th><th>休業給付</th><th>乗り物売却</th><th>支出</th><th>教育費</th><th>住宅頭金</th><th>固定資産税</th><th>修繕費</th><th>乗り物購入</th><th>乗り物維持費</th><th>ガソリン代</th><th>電気代</th><th>乗り物税金・修繕</th><th>自動車税</th><th>重量税</th><th>車検</th><th>税・社保</th><th>収支</th><th>現金・預金</th><th>iDeCo</th><th>NISA</th><th>iDeCo受取</th><th>NISA取崩</th><th>金融資産合計</th>
+    <tr class="group-header">
+      <th class="group-basic" colspan="2" scope="colgroup">基本情報</th>
+      <th class="group-income" colspan="3" scope="colgroup">収入</th>
+      <th class="group-expense" colspan="14" scope="colgroup">支出・税金</th>
+      <th class="group-assets" colspan="7" scope="colgroup">収支・資産</th>
+    </tr>
+    <tr class="detail-header">
+      <th scope="col">年</th>
+      <th class="group-end" scope="col">年齢</th>
+      <th scope="col">収入</th>
+      <th scope="col">休業給付</th>
+      <th class="group-end" scope="col">乗り物売却</th>
+      <th scope="col">支出</th>
+      <th scope="col">教育費</th>
+      <th scope="col">住宅頭金</th>
+      <th scope="col">固定資産税</th>
+      <th scope="col">修繕費</th>
+      <th scope="col">乗り物購入</th>
+      <th scope="col">乗り物維持費</th>
+      <th scope="col">ガソリン代</th>
+      <th scope="col">電気代</th>
+      <th scope="col">乗り物税金・修繕</th>
+      <th scope="col">自動車税</th>
+      <th scope="col">重量税</th>
+      <th scope="col">車検</th>
+      <th class="group-end" scope="col">税・社保</th>
+      <th scope="col">収支</th>
+      <th scope="col">現金・預金</th>
+      <th scope="col">iDeCo</th>
+      <th scope="col">NISA</th>
+      <th scope="col">iDeCo受取</th>
+      <th scope="col">NISA取崩</th>
+      <th scope="col">金融資産合計</th>
+    </tr>
   </thead>
   <tbody>
   {% for y in yearly %}
     <tr {% if y.balance_end < 0 %}style="color:#c00;background:#fff5f5;"{% endif %}>
       <td><a href="/households/{{ household.id }}/simulate/monthly?year={{ y.year }}{% if plan_id %}&plan_id={{ plan_id }}{% endif %}">{{ y.year }}</a></td>
-      <td>{{ y.age }}</td>
+      <td class="group-end">{{ y.age }}</td>
       <td>{{ "{:,}".format(y.income) }}</td>
       <td>{{ "{:,}".format(y.leave_benefit) }}</td>
-      <td>{{ "{:,}".format(y.vehicle_sale_income) }}</td>
+      <td class="group-end">{{ "{:,}".format(y.vehicle_sale_income) }}</td>
       <td>{{ "{:,}".format(y.expense) }}</td>
       <td>{{ "{:,}".format(y.education_expense) }}</td>
       <td>{{ "{:,}".format(y.housing_down_payment) }}</td>
@@ -164,7 +211,7 @@
       <td>{{ "{:,}".format(y.vehicle_automobile_tax) }}</td>
       <td>{{ "{:,}".format(y.vehicle_weight_tax) }}</td>
       <td>{{ "{:,}".format(y.vehicle_inspection_expense) }}</td>
-      <td>{{ "{:,}".format(y.tax_si) }}</td>
+      <td class="group-end">{{ "{:,}".format(y.tax_si) }}</td>
       <td>{{ "{:,}".format(y.net) }}</td>
       <td>{{ "{:,}".format(y.balance_end) }}</td>
       <td>{{ "{:,}".format(y.ideco_balance_end) }}</td>
